@@ -6,7 +6,7 @@
     - !<own> f5d74682-203a-4970-81ea-9fa7b88c96bb
     - !<own> f154efdb-5438-4eb4-81ea-00548435cb43
     - !<own> 050089c0-1eaf-4713-9d4c-c50ffb26a14d
-    - !<own> 663dadb2-0e83-4fe1-998d-73501a3df569
+    - !<own> 8b915ea8-e6d4-4440-87a5-96806a74eb61
   layers: !<Layers/267ee9a7-aff2-4f9d-9a49-f71214747d03>
     userLayers:
       - id: 1
@@ -539,7 +539,7 @@
   Enabled: true
   Layers: 1
   LocalTransform: !<TransformEntity>
-    Position: {x: -227.100006, y: -62.000000, z: -455.399994}
+    Position: {x: -234.199997, y: -79.500000, z: -469.700012}
     Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false
@@ -554,7 +554,7 @@
   Enabled: true
   Layers: 1
   LocalTransform: !<TransformEntity>
-    Position: {x: 196.000000, y: 14.000000, z: -320.700012}
+    Position: {x: 12.000000, y: -34.000000, z: 11.000000}
     Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false
@@ -794,6 +794,22 @@
     - !<own> e42bbb9f-e951-4432-be2e-3cc712b1fc33
   Components:
     []
+- !<ScriptComponent/34da09fd-7a89-4282-85dd-b3677775c36a>
+  PrefabRemaps:
+    []
+  Name: MessagingBridge
+  Enabled: true
+  ScriptAsset: !<reference> 9aa407db-2872-4afc-a162-cf7faf2a0f29
+  ScriptInputsDefault:
+    {}
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      {}
+  ScriptTypes:
+    "":
+      {}
 - !<RenderMeshVisual/35501b69-b651-41e6-9b64-72a252df8105>
   PrefabRemaps:
     []
@@ -852,7 +868,7 @@
   Enabled: true
   Layers: 1
   LocalTransform: !<TransformEntity>
-    Position: {x: -227.100006, y: -84.400002, z: -455.399994}
+    Position: {x: -234.199997, y: -80.000000, z: -469.700012}
     Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false
@@ -987,7 +1003,7 @@
   Enabled: true
   Layers: 1
   LocalTransform: !<TransformEntity>
-    Position: {x: -227.500000, y: -178.199997, z: -456.700012}
+    Position: {x: -234.199997, y: -180.500000, z: -469.700012}
     Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false
@@ -1085,6 +1101,7 @@
   ScriptInputsDefault:
     textColor: true
     designDistance: true
+    minScale: true
     maxWidth: true
   ScriptTypesDefault:
     {}
@@ -1092,6 +1109,7 @@
     "":
       textColor: !<Vec4> {x: 0.880000, y: 0.960000, z: 1.000000, w: 1.000000}
       designDistance: !<float> 110.000000
+      minScale: 0.300000
       maxWidth: !<float> 24.000000
   ScriptTypes:
     "":
@@ -1122,6 +1140,8 @@
     namePrefix: true
     questions: true
     designDistance: true
+    minScale: true
+    chipLift: true
     chipWidth: true
     questionWidth: true
     rowHeight: true
@@ -1141,8 +1161,10 @@
       questions: !<string[]>
         - "How does it make sound?"
       dotMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
-      stopOffset: !<Vec3> {x: 0.000000, y: -40.000000, z: 18.000000}
+      stopOffset: !<Vec3> {x: -1.400000, y: -24.500000, z: 39.000000}
       designDistance: !<float> 110.000000
+      minScale: 0.300000
+      chipLift: !<float> 0.000000
       chipWidth: !<float> 11.000000
       questionWidth: !<float> 21.000000
       rowHeight: 3.200000
@@ -1337,21 +1359,6 @@
     - !<own> 80574bd1-697b-4bb5-b9ce-13b340146d82
   Components:
     - !<own> ccf4d3bc-d3c2-4580-b9c5-62f164ef7eef
-- !<SceneObject/663dadb2-0e83-4fe1-998d-73501a3df569>
-  PrefabRemaps:
-    []
-  Name: LEAF Plugin Bridge
-  Enabled: true
-  Layers: 1
-  LocalTransform: !<TransformEntity>
-    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
-    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
-    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
-    HasSegmentScaleCompensation: false
-  Children:
-    []
-  Components:
-    - !<own> b0abb2c4-d21a-4f1d-9cc4-e41e47b13285
 - !<SceneObject/67f4dd69-5cd2-4e53-80db-d6eb8e61f056>
   PrefabRemaps:
     []
@@ -1359,7 +1366,7 @@
   Enabled: true
   Layers: 1
   LocalTransform: !<TransformEntity>
-    Position: {x: -102.300003, y: -135.899994, z: -456.200012}
+    Position: {x: -109.199997, y: -137.500000, z: -473.200012}
     Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false
@@ -1479,7 +1486,7 @@
   Enabled: true
   Layers: 1
   LocalTransform: !<TransformEntity>
-    Position: {x: 202.600006, y: -0.500000, z: -320.700012}
+    Position: {x: 11.500000, y: -42.000000, z: 9.500000}
     Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false
@@ -1794,6 +1801,21 @@
     []
   Components:
     - !<own> e96fa241-3fac-465c-ad2e-b71442b16bde
+- !<SceneObject/8b915ea8-e6d4-4440-87a5-96806a74eb61>
+  PrefabRemaps:
+    []
+  Name: LEAF Plugin Bridge
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 34da09fd-7a89-4282-85dd-b3677775c36a
 - !<RenderMeshVisual/8c3be019-7b67-4fb9-8158-1262f117b8e1>
   PrefabRemaps:
     []
@@ -1840,6 +1862,8 @@
   ScriptAsset: !<reference> 487889e6-e06f-4804-b814-fc5772b9741b
   ScriptInputsDefault:
     designDistance: true
+    minScale: true
+    chipLift: true
     chipWidth: true
     questionWidth: true
     rowHeight: true
@@ -1859,8 +1883,10 @@
       questions: !<string[]>
         - "How does it make light?"
       dotMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
-      stopOffset: !<Vec3> {x: 0.000000, y: -110.000000, z: 40.000000}
+      stopOffset: !<Vec3> {x: 0.000000, y: -92.000000, z: 40.000000}
       designDistance: !<float> 110.000000
+      minScale: 0.300000
+      chipLift: !<float> 0.000000
       chipWidth: !<float> 11.000000
       questionWidth: !<float> 21.000000
       rowHeight: 3.200000
@@ -2052,7 +2078,7 @@
   Enabled: true
   Layers: 1
   LocalTransform: !<TransformEntity>
-    Position: {x: -95.000000, y: -133.000000, z: -458.000000}
+    Position: {x: -97.300003, y: -137.500000, z: -483.399994}
     Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false
@@ -2135,22 +2161,6 @@
     - !<own> f6687ab7-52ac-408d-a892-8a9559125450
   Components:
     []
-- !<ScriptComponent/b0abb2c4-d21a-4f1d-9cc4-e41e47b13285>
-  PrefabRemaps:
-    []
-  Name: MessagingBridge
-  Enabled: true
-  ScriptAsset: !<reference> 9aa407db-2872-4afc-a162-cf7faf2a0f29
-  ScriptInputsDefault:
-    {}
-  ScriptTypesDefault:
-    {}
-  ScriptInputs:
-    "":
-      {}
-  ScriptTypes:
-    "":
-      {}
 - !<SceneObject/b22d97e6-4c06-4135-af29-d26adb2b9d86>
   PrefabRemaps:
     []
@@ -2497,6 +2507,7 @@
   ScriptAsset: !<reference> 487889e6-e06f-4804-b814-fc5772b9741b
   ScriptInputsDefault:
     designDistance: true
+    minScale: true
     chipWidth: true
     questionWidth: true
     rowHeight: true
@@ -2516,8 +2527,10 @@
       questions: !<string[]>
         - "How does it take a picture?"
       dotMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
-      stopOffset: !<Vec3> {x: 0.000000, y: -36.000000, z: 0.000000}
+      stopOffset: !<Vec3> {x: -10.800000, y: -12.700000, z: -9.800000}
       designDistance: !<float> 110.000000
+      minScale: 0.300000
+      chipLift: !<float> 8.000000
       chipWidth: !<float> 11.000000
       questionWidth: !<float> 21.000000
       rowHeight: 3.200000
@@ -2813,7 +2826,7 @@
   ScriptInputsDefault:
     coneModel: true
     shelfY: true
-    cameraFacing: true
+    cameraLabelSide: true
     gazeEnterDeg: true
     gazeExitDeg: true
   ScriptTypesDefault:
@@ -2837,7 +2850,8 @@
       chimeAudio: !<reference.AudioComponent> f36c4c48-d97d-4cc0-a43f-e50994519674
       coneModel: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
       shelfY: !<float> -144.000000
-      cameraFacing: !<Vec3> {x: -1.000000, y: 0.000000, z: 0.000000}
+      cameraFacing: !<Vec3> {x: -0.300000, y: 0.000000, z: -0.950000}
+      cameraLabelSide: !<Vec3> {x: -1.000000, y: 0.000000, z: 0.000000}
       gazeEnterDeg: !<float> 12.000000
       gazeExitDeg: !<float> 24.000000
   ScriptTypes:
@@ -2850,7 +2864,7 @@
   Enabled: true
   Layers: 1
   LocalTransform: !<TransformEntity>
-    Position: {x: -102.300003, y: -116.000000, z: -456.200012}
+    Position: {x: -100.900002, y: -131.500000, z: -480.299988}
     Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false

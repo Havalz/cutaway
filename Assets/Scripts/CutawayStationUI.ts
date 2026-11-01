@@ -2,7 +2,7 @@ import {Button} from "SpectaclesUIKit.lspkg/Scripts/Components/Button/Button"
 import Event from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import WorldCameraFinderProvider from "SpectaclesInteractionKit.lspkg/Providers/CameraProvider/WorldCameraFinderProvider"
 import {MeshKit, spawnMesh} from "./CutawayGeometry"
-import {Pop, yawToward} from "./CutawayTween"
+import {faceToward, Pop} from "./CutawayTween"
 
 // ---- Typography (skill type scale; sizes are for the 110 cm design distance) ----
 const FONT_SIZE_SCALE = 1.0
@@ -78,6 +78,16 @@ export class CutawayStationUI extends BaseScriptComponent {
   @hint("Distance (cm) at which the UI is shown 1:1. Farther stations are scaled up so text stays readable")
   @widget(new SliderWidget(60, 200, 5))
   designDistance: number = 110
+
+  @input
+  @hint("Smallest UI scale, for objects closer than the design distance (keeps the angular size, e.g. 0.4 at 44 cm)")
+  @widget(new SliderWidget(0.2, 1, 0.05))
+  minScale: number = 0.3
+
+  @input
+  @hint("Raise the chip and questions above the dot, in screen-up design cm (for objects seen close up, so the chip does not cover them)")
+  @widget(new SliderWidget(0, 30, 0.5))
+  chipLift: number = 0
 
   @input
   @hint("Chip width at design scale (cm)")
@@ -168,6 +178,8 @@ export class CutawayStationUI extends BaseScriptComponent {
   private camTransform: Transform | null = null
   private firstFrame = true
   private uiScale = 1
+  private captionTarget: vec3 | null = null
+  private keptQuestion = -1
 
   onAwake(): void {
     this.sceneObject.createComponent("Component.Canvas")
@@ -176,10 +188,11 @@ export class CutawayStationUI extends BaseScriptComponent {
 
     this.idleDot = this.buildIdleDot()
     this.chip = this.buildButton(this.panel, this.namePrefix + "Chip", new vec3(this.chipWidth, this.rowHeight, 1), "Capsule", this.chipStyle, this.objectName, "Button")
+    this.chip.pop.so.getTransform().setLocalPosition(new vec3(0, this.chipLift, 0))
     const qs = (this.questions ?? []).slice(0, 3)
     for (let i = 0; i < qs.length; i++) {
       const p = this.buildButton(this.panel, this.namePrefix + "Q" + i, new vec3(this.questionWidth, this.rowHeight, 1), "Capsule", this.questionStyle, qs[i], "Body")
-      const y = this.rowHeight / 2 + this.rowGap + this.rowHeight / 2 + i * (this.rowHeight + this.rowGap)
+      const y = this.chipLift + this.rowHeight / 2 + this.rowGap + this.rowHeight / 2 + i * (this.rowHeight + this.rowGap)
       p.pop.so.getTransform().setLocalPosition(new vec3(0, y, 0))
       this.questionPieces.push(p)
     }
@@ -232,10 +245,30 @@ export class CutawayStationUI extends BaseScriptComponent {
 
   /** Keep only the chosen question visible; the chip and other questions shrink away. */
   keepOnlyQuestion(index: number): void {
+    this.keptQuestion = index
     this.chip.pop.show(false)
     this.questionPieces.forEach((p, i) => {
       if (i !== index) p.pop.show(false)
     })
+  }
+
+  /**
+   * Hold the kept question caption at a world position while an explanation plays (null = back
+   * to its normal spot above the dot). The dots stay on the object.
+   */
+  setCaptionWorldPosition(p: vec3 | null): void {
+    this.captionTarget = p
+    if (!p) this.panel.getTransform().setLocalPosition(vec3.zero())
+  }
+
+  /** Move the Stop pill to a world position (e.g. a spot an explanation keeps clear). */
+  setStopWorldPosition(p: vec3): void {
+    this.stopAnchor.getTransform().setWorldPosition(p)
+  }
+
+  /** Put the Stop pill back at its authored offset from the object. */
+  resetStopPosition(): void {
+    this.stopAnchor.getTransform().setWorldPosition(this.sceneObject.getTransform().getWorldPosition().add(this.stopOffset))
   }
 
   setStop(v: boolean): void {
@@ -323,14 +356,19 @@ export class CutawayStationUI extends BaseScriptComponent {
   private onStart(): void {
     this.camTransform = WorldCameraFinderProvider.getInstance().getTransform()
     const root = this.sceneObject.getTransform().getWorldPosition()
-    // The user starts at the world origin; scale so the UI keeps its 110 cm angular size.
-    this.uiScale = Math.min(6, Math.max(1, root.length / this.designDistance))
-    const s = vec3.one().uniformScale(this.uiScale)
-    this.panel.getTransform().setLocalScale(s)
     this.stopAnchor.getTransform().setWorldPosition(root.add(this.stopOffset))
-    const stopDist = root.add(this.stopOffset).length
-    this.stopAnchor.getTransform().setLocalScale(vec3.one().uniformScale(Math.min(6, Math.max(1, stopDist / this.designDistance))))
+    this.updateScale()
     this.faceCamera()
+  }
+
+  /** Keep the UI at its 110 cm angular size from wherever the user is standing (near or far). */
+  private updateScale(): void {
+    const cam = this.camTransform ? this.camTransform.getWorldPosition() : vec3.zero()
+    const scaleFor = (p: vec3) => Math.min(6, Math.max(this.minScale, p.distance(cam) / this.designDistance))
+    this.uiScale = scaleFor(this.panel.getTransform().getWorldPosition())
+    this.panel.getTransform().setLocalScale(vec3.one().uniformScale(this.uiScale))
+    const stopTr = this.stopAnchor.getTransform()
+    stopTr.setLocalScale(vec3.one().uniformScale(scaleFor(stopTr.getWorldPosition())))
   }
 
   private onUpdate(): void {
@@ -341,15 +379,26 @@ export class CutawayStationUI extends BaseScriptComponent {
     }
     const dt = getDeltaTime()
     for (const p of this.pieces) p.pop.update(dt)
+    this.updateScale()
     this.faceCamera()
+    this.placeCaption()
+  }
+
+  private placeCaption(): void {
+    if (!this.captionTarget || this.keptQuestion < 0 || this.keptQuestion >= this.questionPieces.length) return
+    const ptr = this.panel.getTransform()
+    const qLocal = this.questionPieces[this.keptQuestion].pop.so.getTransform().getLocalPosition()
+    const off = ptr.getWorldRotation().multiplyVec3(qLocal.uniformScale(this.uiScale))
+    ptr.setWorldPosition(this.captionTarget.sub(off))
   }
 
   private faceCamera(): void {
     if (!this.camTransform) return
     const cam = this.camTransform.getWorldPosition()
+    const camUp = this.camTransform.up
     for (const so of [this.panel, this.stopAnchor]) {
       const tr = so.getTransform()
-      tr.setWorldRotation(yawToward(cam.sub(tr.getWorldPosition())))
+      tr.setWorldRotation(faceToward(cam.sub(tr.getWorldPosition()), camUp))
     }
   }
 }

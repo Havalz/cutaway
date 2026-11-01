@@ -30,6 +30,7 @@
   ScriptInputsHidden:
     designDistance: false
     maxWidth: false
+    minScale: false
     textColor: false
   ScriptTypesHidden:
     {}
@@ -42,6 +43,7 @@
   DefaultScriptInputs:
     - textColor: !<Vec4> {x: 0.880000, y: 0.960000, z: 1.000000, w: 1.000000}
       designDistance: !<float> 110.000000
+      minScale: 0.300000
       maxWidth: !<float> 24.000000
   ScriptTypes:
     -
@@ -51,4 +53,5 @@
     - '// @ui {"widget":"separator"}'
     - '// @input vec4 textColor = {0.88,0.96,1,1} {"hint":"Label text color (light colors only: dark is transparent on Specs)", "widget":"color"}'
     - '// @input float designDistance = 110 {"hint":"Distance (cm) at which labels are shown 1:1", "widget":"slider", "min":60, "max":200, "step":5}'
+    - '// @input float minScale = 0.3 {"hint":"Smallest label scale, for labels closer than the design distance (keeps the angular size)", "widget":"slider", "min":0.2, "max":1, "step":0.05}'
     - '// @input float maxWidth = 24 {"hint":"Maximum label width at design scale (cm)", "widget":"slider", "min":8, "max":40, "step":1}'

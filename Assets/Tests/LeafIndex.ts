@@ -18,6 +18,6 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "c3-lamp-explanation", typename: C3LampScenario.getTypeName()},
     {id: "c4-finish-dot-and-stop", typename: C4FinishAndStopScenario.getTypeName()},
     {id: "c5-reset-clears-dots", typename: C5ResetScenario.getTypeName()},
-    {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer"}}
+    {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer", untilPhase: "", extraMs: "0"}}
   ]
 }

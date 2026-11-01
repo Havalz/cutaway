@@ -1,5 +1,5 @@
 import WorldCameraFinderProvider from "SpectaclesInteractionKit.lspkg/Providers/CameraProvider/WorldCameraFinderProvider"
-import {Pop, yawToward} from "./CutawayTween"
+import {faceToward, Pop} from "./CutawayTween"
 
 const FONT_SIZE_SCALE = 1.0
 type TextRole = "Callout" | "Caption"
@@ -35,6 +35,11 @@ export class CutawayLabelsUI extends BaseScriptComponent {
   @hint("Distance (cm) at which labels are shown 1:1")
   @widget(new SliderWidget(60, 200, 5))
   designDistance: number = 110
+
+  @input
+  @hint("Smallest label scale, for labels closer than the design distance (keeps the angular size)")
+  @widget(new SliderWidget(0.2, 1, 0.05))
+  minScale: number = 0.3
 
   @input
   @hint("Maximum label width at design scale (cm)")
@@ -73,7 +78,7 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     label.text.text = text
     const tr = label.so.getTransform()
     tr.setWorldPosition(worldPos)
-    const s = Math.min(6, Math.max(1, this.distanceTo(worldPos) / this.designDistance))
+    const s = Math.min(6, Math.max(this.minScale, this.distanceTo(worldPos) / this.designDistance))
     label.pop.setBaseScale(vec3.one().uniformScale(s))
     label.pop.show(true)
     this.face(label)
@@ -108,7 +113,7 @@ export class CutawayLabelsUI extends BaseScriptComponent {
   private face(label: Label): void {
     if (!this.camTransform) return
     const tr = label.so.getTransform()
-    tr.setWorldRotation(yawToward(this.camTransform.getWorldPosition().sub(tr.getWorldPosition())))
+    tr.setWorldRotation(faceToward(this.camTransform.getWorldPosition().sub(tr.getWorldPosition()), this.camTransform.up))
   }
 
   private onUpdate(): void {

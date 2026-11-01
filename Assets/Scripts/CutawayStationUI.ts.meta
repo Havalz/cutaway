@@ -28,12 +28,14 @@
   ExportUid: 00000000-0000-0000-0000-000000000000
   PackagePolicy: CanBeUnpacked
   ScriptInputsHidden:
+    chipLift: false
     chipStyle: false
     chipWidth: false
     designDistance: false
     dotMaterial: false
     idleDotColor: false
     idleDotRadius: false
+    minScale: false
     namePrefix: false
     objectName: false
     questionStyle: false
@@ -60,6 +62,8 @@
       dotMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
       stopOffset: !<Vec3> {x: 0.000000, y: -40.000000, z: 15.000000}
       designDistance: !<float> 110.000000
+      minScale: 0.300000
+      chipLift: !<float> 0.000000
       chipWidth: !<float> 11.000000
       questionWidth: !<float> 21.000000
       rowHeight: 3.200000
@@ -83,6 +87,8 @@
     - '// @ui {"widget":"group_start", "label":"Layout"}'
     - '// @input vec3 stopOffset = {0,-40,15} {"hint":"Where the Stop pill sits relative to this object, in world cm (put it just under the real object)"}'
     - '// @input float designDistance = 110 {"hint":"Distance (cm) at which the UI is shown 1:1. Farther stations are scaled up so text stays readable", "widget":"slider", "min":60, "max":200, "step":5}'
+    - '// @input float minScale = 0.3 {"hint":"Smallest UI scale, for objects closer than the design distance (keeps the angular size, e.g. 0.4 at 44 cm)", "widget":"slider", "min":0.2, "max":1, "step":0.05}'
+    - '// @input float chipLift {"hint":"Raise the chip and questions above the dot, in screen-up design cm (for objects seen close up, so the chip does not cover them)", "widget":"slider", "min":0, "max":30, "step":0.5}'
     - '// @input float chipWidth = 11 {"hint":"Chip width at design scale (cm)", "widget":"slider", "min":6, "max":20, "step":0.5}'
     - '// @input float questionWidth = 21 {"hint":"Question button width at design scale (cm)", "widget":"slider", "min":12, "max":32, "step":0.5}'
     - '// @input float rowHeight = 3.2 {"hint":"Button height at design scale (cm)", "widget":"slider", "min":2.4, "max":5, "step":0.1}'

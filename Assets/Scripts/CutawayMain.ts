@@ -112,8 +112,12 @@ export class CutawayMain extends BaseScriptComponent {
   shelfY: number = -144
 
   @input
-  @hint("Direction the wall camera faces (into the room)")
-  cameraFacing: vec3 = new vec3(-1, 0, 0)
+  @hint("Direction the real camera's lens points (into the room)")
+  cameraFacing: vec3 = new vec3(-0.3, 0, -0.95)
+
+  @input
+  @hint("World direction with empty space beside the camera; its labels go on that side (away from the book)")
+  cameraLabelSide: vec3 = new vec3(-1, 0, 0)
   @ui.group_end
 
   @ui.group_start("Looking")
@@ -196,6 +200,7 @@ export class CutawayMain extends BaseScriptComponent {
     if (this.running) {
       this.running.exp.hideLabels()
       this.running.root.destroy()
+      this.stations[this.running.index].ui.setCaptionWorldPosition(null)
       this.running = null
     }
     this.labelsUI.hideAll()
@@ -268,10 +273,13 @@ export class CutawayMain extends BaseScriptComponent {
     if (s.key === "recordPlayer") {
       exp = new RecordPlayerExplanation(ctx, this.pos(this.needleMarker), this.pos(this.speakerMarker), this.shelfY)
     } else if (s.key === "camera") {
-      exp = new CameraExplanation(ctx, this.pos(this.cameraMarker), this.cameraFacing)
+      exp = new CameraExplanation(ctx, this.pos(this.cameraMarker), this.cameraFacing, this.cameraLabelSide)
     } else {
       exp = new LampExplanation(ctx, this.pos(this.lampMarker), this.pos(this.lampBaseMarker), this.pos(this.cordStartMarker))
     }
+    if (exp.stopHint) s.ui.setStopWorldPosition(exp.stopHint)
+    else s.ui.resetStopPosition()
+    s.ui.setCaptionWorldPosition(exp.captionHint)
     this.running = {index: i, exp, root, state: "playing", collapseT: 0, collapseDur: 0.3, completed: false}
   }
 
@@ -293,6 +301,7 @@ export class CutawayMain extends BaseScriptComponent {
     r.root.destroy()
     this.running = null
     const s = this.stations[r.index]
+    s.ui.setCaptionWorldPosition(null)
     if (r.completed) s.explained = true
     s.armed = false
     this.setMode(r.index, "rest")

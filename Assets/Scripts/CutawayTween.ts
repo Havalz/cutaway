@@ -125,6 +125,22 @@ export function easeIn(x: number): number {
   return t * t * t
 }
 
+/**
+ * Rotation that turns +Z straight at `dir` (pitches to face a viewer above or below) while
+ * keeping the panel's x axis level. Falls back to `fallbackUp` when `dir` is nearly vertical.
+ */
+export function faceToward(dir: vec3, fallbackUp: vec3 = vec3.up()): quat {
+  if (dir.length < 1e-4) return quat.quatIdentity()
+  const n = dir.normalize()
+  // Level panels for normal viewing; on steep looks (down at a shelf) blend toward the head's
+  // up so text near the edge of view does not appear rolled.
+  const k = clamp01((Math.abs(n.y) - 0.35) / 0.4)
+  const t = k * k * (3 - 2 * k)
+  let up = vec3.up().uniformScale(1 - t).add(fallbackUp.uniformScale(t))
+  if (up.length < 1e-3 || Math.abs(up.normalize().dot(n)) > 0.98) up = fallbackUp
+  return quat.lookAt(n, up.normalize())
+}
+
 /** Rotation that turns +Z toward `dir`, yaw only (keeps panels upright). */
 export function yawToward(dir: vec3): quat {
   const flat = new vec3(dir.x, 0, dir.z)

@@ -67,6 +67,11 @@ export abstract class Explanation {
     for (const p of this.pops) p.update(dt)
   }
 
+  /** Where this explanation wants the Stop pill (world), or null to keep the station's own spot. */
+  stopHint: vec3 | null = null
+  /** Where this explanation wants the question caption (world), or null to keep it above the dot. */
+  captionHint: vec3 | null = null
+
   hideLabels(): void {
     for (const id of this.labelIds) this.ctx.labels.hide(id)
   }
@@ -332,35 +337,69 @@ export class RecordPlayerExplanation extends Explanation {
 export class CameraExplanation extends Explanation {
   readonly duration = 15.5
 
-  constructor(ctx: ExplainContext, camMarker: vec3, facing: vec3) {
+  /**
+   * @param camCenter centre of the real camera (body + lens) — the DSLR on the shelf
+   * @param facing direction the real lens points (into the room)
+   * @param freeSide world direction with empty space beside the camera (labels go there, clear of the book)
+   */
+  constructor(ctx: ExplainContext, camCenter: vec3, facing: vec3, freeSide: vec3 = new vec3(-1, 0, 0)) {
     super(ctx)
-    const K = 1.5 // schematic is drawn 1.5x bigger than a typical wall camera
+    // The shell is drawn at the real DSLR's size (body ~14 x 10 cm, body + lens ~18 cm long).
+    const K = 0.65
     const f = flat(facing)
     const up = vec3.up()
     const s = up.cross(f).normalize()
     const cam = ctx.camPos()
-    const m = camMarker.add(f.uniformScale(16))
-    const sideSign = s.dot(cam.sub(m)) >= 0 ? 1 : -1
+    const m = camCenter
     const hx = 11 * K
     const hy = 8 * K
     const hz = 14 * K
-    const sensorLabelW = m.sub(f.uniformScale(hz + 36))
+    const edge = 0.2
+
+    // Viewer frame at start: labels sit to the viewer's left of the shell and face them.
+    const view = m.sub(cam).normalize()
+    const vRraw = view.cross(up)
+    const vR = vRraw.length > 1e-3 ? vRraw.normalize() : s
+    const vU = vR.cross(view).normalize()
+    const toCam = view.uniformScale(-1)
+    const sideDot = vR.dot(freeSide)
+    const side = Math.abs(sideDot) > 0.2 && sideDot > 0 ? vR : vR.uniformScale(-1)
+    // Rays spread across the lens along the axis the viewer sees best (vertical from the side,
+    // sideways from above), so the crossing and the flipped image stay readable.
+    const vp = view.sub(f.uniformScale(view.dot(f)))
+    let w = vp.length > 1e-3 ? f.cross(vp).normalize() : up
+    if (w.dot(vU) < 0) w = w.uniformScale(-1)
+    const p = f.cross(w).normalize()
+    const flipWord = Math.abs(w.dot(up)) > 0.7 ? "upside-down" : "flipped"
+    const ls = Math.min(1, Math.max(0.3, cam.distance(m) / 110)) // label scale (matches CutawayLabelsUI)
+    const extent = (v: vec3) => Math.abs(s.dot(v)) * hx + Math.abs(up.dot(v)) * hy + Math.abs(f.dot(v)) * hz
+
+    // Faces of the shell (the front, +f, holds the lens). The one the viewer sees best slides off.
+    const faces = [
+      {n: up, hn: hy, a: s, ha: hx, b: f, hb: hz},
+      {n: up.uniformScale(-1), hn: hy, a: s, ha: hx, b: f, hb: hz},
+      {n: s, hn: hx, a: f, ha: hz, b: up, hb: hy},
+      {n: s.uniformScale(-1), hn: hx, a: f, ha: hz, b: up, hb: hy},
+      {n: f.uniformScale(-1), hn: hz, a: s, ha: hx, b: up, hb: hy}
+    ]
+    let coverIdx = 0
+    for (const i of [2, 3]) if (faces[i].n.dot(toCam) > faces[coverIdx].n.dot(toCam)) coverIdx = i
+    const cf = faces[coverIdx]
 
     const shell = this.node("CutawayShell", m)
     shell.enabled = false
     const edges = new MeshKit()
-    edges.addBoxEdges(vec3.zero(), s.uniformScale(hx), up.uniformScale(hy), f.uniformScale(hz), 0.35, CYAN)
+    edges.addBoxEdges(vec3.zero(), s.uniformScale(hx), up.uniformScale(hy), f.uniformScale(hz), edge, CYAN)
     this.glow(shell, "ShellEdges", edges)
     const panels = new MeshKit()
     const pc = new vec4(0.6, 0.8, 1.0, 1)
-    panels.addQuad(up.uniformScale(hy), s.uniformScale(hx), f.uniformScale(hz), pc)
-    panels.addQuad(up.uniformScale(-hy), s.uniformScale(hx), f.uniformScale(hz), pc)
-    panels.addQuad(s.uniformScale(-hx * sideSign), f.uniformScale(hz), up.uniformScale(hy), pc)
-    panels.addQuad(f.uniformScale(-hz), s.uniformScale(hx), up.uniformScale(hy), pc)
+    faces.forEach((fc, i) => {
+      if (i !== coverIdx) panels.addQuad(fc.n.uniformScale(fc.hn), fc.a.uniformScale(fc.ha), fc.b.uniformScale(fc.hb), pc)
+    })
     this.model(shell, "ShellPanels", panels, 0.16)
     const coverKit = new MeshKit()
-    coverKit.addQuad(vec3.zero(), f.uniformScale(hz), up.uniformScale(hy), new vec4(0.7, 0.88, 1.0, 1))
-    const cover = this.model(shell, "ShellCover", coverKit, 0.55, s.uniformScale(hx * sideSign))
+    coverKit.addQuad(vec3.zero(), cf.a.uniformScale(cf.ha), cf.b.uniformScale(cf.hb), new vec4(0.7, 0.88, 1.0, 1))
+    const cover = this.model(shell, "ShellCover", coverKit, 0.55, cf.n.uniformScale(cf.hn))
 
     const lensC = f.uniformScale(hz - 4 * K)
     const lensKit = new MeshKit()
@@ -381,7 +420,7 @@ export class CameraExplanation extends Explanation {
     )
     this.model(shell, "Lens", lensKit, 0.8)
     const lensRim = new MeshKit()
-    lensRim.addRing(lensC, f, 5.3 * K, 0.3, CYAN, 64)
+    lensRim.addRing(lensC, f, 5.3 * K, edge, CYAN, 64)
     this.glow(shell, "LensRim", lensRim)
 
     const sensorC = f.uniformScale(-hz + 3 * K)
@@ -394,28 +433,50 @@ export class CameraExplanation extends Explanation {
     const lensW = m.add(lensC)
     const sensorW = m.add(sensorC)
 
+    // Label anchors: beside the shell on the free side, at the lens / sensor screen height
+    // (spread apart when the two overlap on screen, e.g. when looking down the lens axis).
+    const eR = extent(side)
+    let lensY = lensC.dot(vU)
+    let sensY = sensorC.dot(vU)
+    if (Math.abs(lensY - sensY) < 7) {
+      const mid = (lensY + sensY) / 2
+      const sign = lensY >= sensY ? 1 : -1
+      lensY = mid + 3.5 * sign
+      sensY = mid - 3.5 * sign
+    }
+    const beside = (y: number, halfW: number) =>
+      m.add(vU.uniformScale(y)).add(side.uniformScale(eR + 2 + halfW * ls)).add(toCam.uniformScale(3))
+    const lensLabelW = beside(lensY, 2.5)
+    // Stop pill: beside the shell on the other side from the labels, at mid height.
+    this.stopHint = m.add(side.uniformScale(-(eR + 3 + 3.5 * ls))).add(toCam.uniformScale(3))
+    const sensorLabelW = beside(sensY, 5.5)
+    // Question caption: just behind the camera body, i.e. on the opposite side from the rays.
+    this.captionHint = m.add(f.uniformScale(-(hz + 5))).add(up.uniformScale(hy)).add(toCam.uniformScale(4))
+
     this.cue(0.2, () => {
       ctx.log("shell")
       shellPop.show(true)
     })
     this.cue(1.2, () => {
       ctx.log("cutaway")
-      // Labels sit below / behind the shell so they never stack under the question caption above it.
-      this.label("lens", "Lens", lensW.sub(up.uniformScale(hy + 6)))
+      this.label("lens", "Lens", lensLabelW)
       this.label("sensor", "Sensor", sensorLabelW)
     })
     this.tick((t) => {
       const c = easeInOut(phase(t, 1.2, 1.8))
-      cover.so.getTransform().setLocalPosition(s.uniformScale(hx * sideSign + 30 * c * sideSign))
+      cover.so.getTransform().setLocalPosition(cf.n.uniformScale(cf.hn + 10 * c))
       setFade(cover.mat, 0.55 * (1 - c), true)
       if (c >= 1) cover.so.enabled = false
     })
 
     // ---- rays from the room, through the lens, onto the sensor (inverted) ----
-    const srcTop = m.add(f.uniformScale(75)).add(up.uniformScale(14))
-    const srcBot = m.add(f.uniformScale(75)).add(up.uniformScale(-14))
-    const imgTop = sensorW.add(up.uniformScale(-2.4 * K))
-    const imgBot = sensorW.add(up.uniformScale(2.4 * K))
+    const D = 22
+    const H = 7
+    const srcMid = m.add(f.uniformScale(D))
+    const srcTop = srcMid.add(w.uniformScale(H))
+    const srcBot = srcMid.add(w.uniformScale(-H))
+    const imgTop = sensorW.add(w.uniformScale(-2.4 * K))
+    const imgBot = sensorW.add(w.uniformScale(2.4 * K))
     const rayDefs = [
       {src: srcTop, hit: 3.5, img: imgTop, col: WARM},
       {src: srcTop, hit: 0, img: imgTop, col: WARM},
@@ -426,20 +487,22 @@ export class CameraExplanation extends Explanation {
     const RAYS = 3.2
     const rays: {p: GlowPath; h: SceneObject; start: number}[] = []
     const srcKit = new MeshKit()
-    srcKit.addSphere(this.L(srcTop), 1.4, WARM, 6, 10)
-    srcKit.addSphere(this.L(srcBot), 1.4, CYAN, 6, 10)
+    srcKit.addSphere(this.L(srcTop), 0.9, WARM, 6, 10)
+    srcKit.addSphere(this.L(srcBot), 0.9, CYAN, 6, 10)
     const srcs = this.glow(ctx.root, "RaySources", srcKit)
     srcs.so.enabled = false
+    // Just beyond the two sources (away from the lens), so no ray crosses the text.
+    const lightLabelW = srcMid.add(f.uniformScale(4)).add(toCam.uniformScale(2))
     this.cue(RAYS - 0.2, () => {
       srcs.so.enabled = true
-      this.label("light", "Light from the room", m.add(f.uniformScale(75)).add(up.uniformScale(26)))
+      this.label("light", "Light from the room", lightLabelW)
     })
     this.cue(RAYS, () => {
       ctx.log("rays")
       rayDefs.forEach((d, i) => {
-        const hitW = lensW.add(up.uniformScale(d.hit * K))
-        const p = this.path("Ray" + i, [d.src, hitW, d.img], 0.35, d.col, 1.1)
-        rays.push({p, h: this.headSphere("RayHead" + i, 1.0, d.col), start: RAYS + i * 0.35})
+        const hitW = lensW.add(w.uniformScale(d.hit * K))
+        const p = this.path("Ray" + i, [d.src, hitW, d.img], 0.2, d.col, 0.6)
+        rays.push({p, h: this.headSphere("RayHead" + i, 0.6, d.col), start: RAYS + i * 0.35})
       })
     })
     this.tick((t) => {
@@ -455,16 +518,17 @@ export class CameraExplanation extends Explanation {
     const SENSOR = 8.4
     const arrowKit = new MeshKit()
     const ac = sensorC.add(f.uniformScale(0.3))
-    arrowKit.addTube([ac.add(up.uniformScale(2.2 * K)), ac.add(up.uniformScale(-2.2 * K))], 0.25, WARM, 5, 1)
-    arrowKit.addTube([ac.add(up.uniformScale(-2.2 * K)), ac.add(up.uniformScale(-1.2 * K)).add(s.uniformScale(1.0 * K))], 0.25, WARM, 5, 1)
-    arrowKit.addTube([ac.add(up.uniformScale(-2.2 * K)), ac.add(up.uniformScale(-1.2 * K)).add(s.uniformScale(-1.0 * K))], 0.25, WARM, 5, 1)
+    // The picture of the (warm) top of the scene lands at the far side: an arrow pointing the "wrong" way.
+    arrowKit.addTube([ac.add(w.uniformScale(2.2 * K)), ac.add(w.uniformScale(-2.2 * K))], 0.15, WARM, 5, 1)
+    arrowKit.addTube([ac.add(w.uniformScale(-2.2 * K)), ac.add(w.uniformScale(-1.2 * K)).add(p.uniformScale(1.0 * K))], 0.15, WARM, 5, 1)
+    arrowKit.addTube([ac.add(w.uniformScale(-2.2 * K)), ac.add(w.uniformScale(-1.2 * K)).add(p.uniformScale(-1.0 * K))], 0.15, WARM, 5, 1)
     const arrow = this.glow(shell, "SensorImage", arrowKit)
     arrow.so.enabled = false
     this.cue(SENSOR, () => {
       ctx.log("sensor")
       arrow.so.enabled = true
       this.unlabel("light")
-      this.label("sensor", "Light lands upside-down\non the sensor: a photo", sensorLabelW)
+      this.label("sensor", "Light lands " + flipWord + "\non the sensor: a photo", sensorLabelW)
     })
     this.tick((t) => {
       if (t < SENSOR) return
