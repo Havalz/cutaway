@@ -29,13 +29,13 @@ export class C2RecordPlayerScenario extends Scenario {
     expect(v.questions[0]).toBe(true)
     expect(v.stop).toBe(true)
 
-    // 1. Magnify bubble opens at the needle.
-    await waitForPhase(main, "bubble", 2000)
+    // 1. Magnify bubble opens at the needle (beat 2; beat 1 is the ghost shell, ~3.4 s).
+    await waitForPhase(main, "bubble", 5000)
     await sleep(500)
     expect(isEnabled("MagnifyBubble")).toBe(true)
 
-    // 2. Line of light along the shelf.
-    await waitForPhase(main, "line", 7000)
+    // 2. Line of light along the shelf (beat 4, ~6.8 s after the bubble).
+    await waitForPhase(main, "line", 9000)
     expect(findSceneObjectByName("LineOfLight") !== undefined).toBe(true)
 
     // 3. Light reaches the speaker → chime from the speaker + cone moves.

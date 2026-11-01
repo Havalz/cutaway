@@ -93,7 +93,7 @@
     - '// @input AssignableType_5 labelsUI {"hint":"Floating labels used by the explanations"}'
     - '// @ui {"widget":"group_end"}'
     - '// @ui {"widget":"group_start", "label":"Markers (move these over the real objects)"}'
-    - '// @input SceneObject recordPlayerMarker {"hint":"Record player marker (used for looking at it)"}'
+    - '// @input SceneObject recordPlayerMarker {"hint":"Record player marker (used for looking at it; also the platter centre)"}'
     - '// @input SceneObject needleMarker {"hint":"Needle / stylus marker: the magnify bubble opens here and the line of light starts here"}'
     - '// @input SceneObject speakerMarker {"hint":"Nearest speaker marker: cone, sound rings and the chime come from here"}'
     - '// @input SceneObject cameraMarker {"hint":"Camera marker"}'

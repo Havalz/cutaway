@@ -61,7 +61,7 @@ export class CutawayMain extends BaseScriptComponent {
 
   @ui.group_start("Markers (move these over the real objects)")
   @input
-  @hint("Record player marker (used for looking at it)")
+  @hint("Record player marker (used for looking at it; also the platter centre)")
   recordPlayerMarker: SceneObject
 
   @input
@@ -153,6 +153,7 @@ export class CutawayMain extends BaseScriptComponent {
         print("Cutaway: could not set chime playback mode: " + e)
       }
     }
+    if (this.labelsUI && this.glowMaterial) this.labelsUI.setLineMaterial(this.glowMaterial)
     this.createEvent("OnStartEvent").bind(() => this.onStart())
     this.createEvent("UpdateEvent").bind(() => this.onUpdate())
   }
@@ -221,6 +222,7 @@ export class CutawayMain extends BaseScriptComponent {
     s.mode = mode
     switch (mode) {
       case "rest":
+        ui.setScan(false)
         ui.setChip(false)
         ui.setQuestions(false)
         ui.setStop(false)
@@ -228,18 +230,23 @@ export class CutawayMain extends BaseScriptComponent {
         ui.setExplainedDot(s.explained)
         break
       case "chip":
+        ui.setScan(false)
         ui.setIdleDot(false)
         ui.setExplainedDot(false)
         ui.setChip(true)
         ui.setQuestions(false)
         break
       case "questions":
+        // Pinching the chip (or the explained dot) scans the object, then the questions fan out.
+        ui.setScan(true)
         ui.setIdleDot(false)
         ui.setExplainedDot(false)
         ui.setChip(true)
         ui.setQuestions(true)
         break
       case "playing":
+        // The scan's brackets hand over to the explanation's ghost shell.
+        ui.setScan(false)
         ui.setIdleDot(false)
         ui.setExplainedDot(false)
         ui.keepOnlyQuestion(question)
@@ -267,11 +274,14 @@ export class CutawayMain extends BaseScriptComponent {
       camPos: () => this.camPos(),
       log: (p) => this.log(p),
       playChime: () => this.playChime(),
-      coneOverride: this.coneModel ?? null
+      coneOverride: this.coneModel ?? null,
+      caption: (text) => this.labelsUI.setCaption(text, text ? s.ui.getCaptionAnchor() : undefined),
+      bounds: s.ui.getBounds(),
+      uiScale: s.ui.getUiScale()
     }
     let exp: Explanation
     if (s.key === "recordPlayer") {
-      exp = new RecordPlayerExplanation(ctx, this.pos(this.needleMarker), this.pos(this.speakerMarker), this.shelfY)
+      exp = new RecordPlayerExplanation(ctx, this.pos(this.needleMarker), this.pos(this.speakerMarker), this.shelfY, this.pos(this.recordPlayerMarker))
     } else if (s.key === "camera") {
       exp = new CameraExplanation(ctx, this.pos(this.cameraMarker), this.cameraFacing, this.cameraLabelSide)
     } else {
@@ -289,8 +299,10 @@ export class CutawayMain extends BaseScriptComponent {
     r.state = "collapsing"
     r.completed = completed
     r.collapseT = 0
-    r.collapseDur = completed ? 0.3 : 0.18
+    // Finish: everything folds back into the dot (400 ms, ease-in). Stop: a quick 220 ms exit.
+    r.collapseDur = completed ? 0.4 : 0.22
     r.exp.hideLabels()
+    this.labelsUI.setCaption(null)
     this.stations[r.index].ui.hideControls()
     this.log(completed ? "finish" : "stopped")
   }
@@ -302,7 +314,11 @@ export class CutawayMain extends BaseScriptComponent {
     this.running = null
     const s = this.stations[r.index]
     s.ui.setCaptionWorldPosition(null)
-    if (r.completed) s.explained = true
+    if (r.completed) {
+      s.explained = true
+      s.ui.setEnergies(r.exp.energies)
+      s.ui.playFlash()
+    }
     s.armed = false
     this.setMode(r.index, "rest")
     this.log(r.completed ? "explained" : "returnedToDot")
@@ -326,7 +342,7 @@ export class CutawayMain extends BaseScriptComponent {
     const r = this.running
     if (r) {
       if (r.state === "playing") {
-        r.exp.update(dt)
+        if (!this.holdExplanation) r.exp.update(dt)
         if (r.exp.finished) this.beginCollapse(true)
       } else {
         r.collapseT += dt
@@ -393,6 +409,9 @@ export class CutawayMain extends BaseScriptComponent {
   }
 
   // ---------------- Read-only state + test hooks (used by the LEAF scenarios) ----------------
+
+  /** Test hook: true freezes the playing explanation's timeline (for screenshots of one beat). */
+  holdExplanation = false
 
   /** Test hook: pretend the user is looking along `dir` (world). Pass null to use the real head pose. */
   setGazeOverride(dir: vec3 | null): void {

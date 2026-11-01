@@ -192,6 +192,101 @@ export class MeshKit {
     for (const x of s) for (const y of s) this.addTube([corner(x, y, -1), corner(x, y, 1)], radius, color, 5, 50)
   }
 
+  // ---------------- Flat primitives in the local XY plane (facing +Z) ----------------
+
+  /** Arc of a ring from angle a0 to a1 (radians, CCW from +X). */
+  addArcXY(cx: number, cy: number, r: number, width: number, a0: number, a1: number, color: vec4, seg: number = 24): void {
+    const n = new vec3(0, 0, 1)
+    const base = this.count
+    for (let s = 0; s <= seg; s++) {
+      const a = a0 + ((a1 - a0) * s) / seg
+      const c = Math.cos(a)
+      const d = Math.sin(a)
+      this.vert(new vec3(cx + c * (r - width / 2), cy + d * (r - width / 2), 0), n, color)
+      this.vert(new vec3(cx + c * (r + width / 2), cy + d * (r + width / 2), 0), n, color)
+    }
+    for (let s = 0; s < seg; s++) {
+      const i0 = base + s * 2
+      const i1 = i0 + 2
+      this.tri(i0, i0 + 1, i1 + 1)
+      this.tri(i0, i1 + 1, i1)
+    }
+  }
+
+  /** Filled sector (pie slice) with a radial gradient from centerColor to edgeColor. */
+  addFanXY(cx: number, cy: number, r: number, a0: number, a1: number, centerColor: vec4, edgeColor: vec4, seg: number = 24): void {
+    const n = new vec3(0, 0, 1)
+    const c0 = this.vert(new vec3(cx, cy, 0), n, centerColor)
+    const base = this.count
+    for (let s = 0; s <= seg; s++) {
+      const a = a0 + ((a1 - a0) * s) / seg
+      this.vert(new vec3(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 0), n, edgeColor)
+    }
+    for (let s = 0; s < seg; s++) this.tri(c0, base + s, base + s + 1)
+  }
+
+  /** Annulus with a radial gradient (inner color → outer color): soft glows and halos. */
+  addSoftRingXY(cx: number, cy: number, r0: number, r1: number, c0: vec4, c1: vec4, seg: number = 40): void {
+    const n = new vec3(0, 0, 1)
+    const base = this.count
+    for (let s = 0; s <= seg; s++) {
+      const a = (s / seg) * Math.PI * 2
+      const c = Math.cos(a)
+      const d = Math.sin(a)
+      this.vert(new vec3(cx + c * r0, cy + d * r0, 0), n, c0)
+      this.vert(new vec3(cx + c * r1, cy + d * r1, 0), n, c1)
+    }
+    for (let s = 0; s < seg; s++) {
+      const i0 = base + s * 2
+      const i1 = i0 + 2
+      this.tri(i0, i0 + 1, i1 + 1)
+      this.tri(i0, i1 + 1, i1)
+    }
+  }
+
+  /** Axis-aligned rectangle with a color per corner (bl, br, tr, tl). */
+  addRectXY(x0: number, y0: number, x1: number, y1: number, bl: vec4, br?: vec4, tr?: vec4, tl?: vec4): void {
+    const n = new vec3(0, 0, 1)
+    const a = this.vert(new vec3(x0, y0, 0), n, bl)
+    const b = this.vert(new vec3(x1, y0, 0), n, br ?? bl)
+    const c = this.vert(new vec3(x1, y1, 0), n, tr ?? bl)
+    const d = this.vert(new vec3(x0, y1, 0), n, tl ?? bl)
+    this.tri(a, b, c)
+    this.tri(a, c, d)
+  }
+
+  /** Straight line from a to b (XY) with an optional soft halo that fades to nothing. */
+  addLineXY(ax: number, ay: number, bx: number, by: number, width: number, color: vec4, halo: number = 0, haloColor?: vec4): void {
+    const dx = bx - ax
+    const dy = by - ay
+    const len = Math.sqrt(dx * dx + dy * dy)
+    if (len < 1e-6) return
+    const px = -dy / len
+    const py = dx / len
+    const n = new vec3(0, 0, 1)
+    const quad = (o0: number, o1: number, c0: vec4, c1: vec4) => {
+      const i = this.vert(new vec3(ax + px * o0, ay + py * o0, 0), n, c0)
+      const j = this.vert(new vec3(bx + px * o0, by + py * o0, 0), n, c0)
+      const k = this.vert(new vec3(bx + px * o1, by + py * o1, 0), n, c1)
+      const l = this.vert(new vec3(ax + px * o1, ay + py * o1, 0), n, c1)
+      this.tri(i, j, k)
+      this.tri(i, k, l)
+    }
+    const w = width / 2
+    quad(-w, w, color, color)
+    if (halo > 0) {
+      const hc = haloColor ?? scaleColor(color, 0.25)
+      const zero = new vec4(0, 0, 0, 0)
+      quad(w, w + halo, hc, zero)
+      quad(-w, -w - halo, hc, zero)
+    }
+  }
+
+  /** Polyline in XY as a flat strip of constant width. */
+  addPolylineXY(pts: vec2[], width: number, color: vec4): void {
+    for (let i = 1; i < pts.length; i++) this.addLineXY(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y, width, color)
+  }
+
   build(): RenderMesh {
     const mb = new MeshBuilder(LAYOUT)
     mb.topology = MeshTopology.Triangles
@@ -209,14 +304,17 @@ export interface Spawned {
   mat: Material
 }
 
-/** Creates a child SceneObject with a RenderMeshVisual and its own material clone. */
-export function spawnMesh(parent: SceneObject, name: string, mesh: RenderMesh, material: Material, localPos?: vec3): Spawned {
+/**
+ * Creates a child SceneObject with a RenderMeshVisual and its own material clone
+ * (or `shared`, an already-cloned material several meshes fade together with).
+ */
+export function spawnMesh(parent: SceneObject, name: string, mesh: RenderMesh, material: Material, localPos?: vec3, shared?: Material): Spawned {
   const so = global.scene.createSceneObject(name)
   so.setParent(parent)
   if (localPos) so.getTransform().setLocalPosition(localPos)
   const rmv = so.createComponent("Component.RenderMeshVisual") as RenderMeshVisual
   rmv.mesh = mesh
-  const mat = material.clone()
+  const mat = shared ?? material.clone()
   rmv.mainMaterial = mat
   return {so, rmv, mat}
 }
@@ -397,5 +495,99 @@ export class DynamicRibbon {
       this.mb.setVertexInterleaved(i * 2 + 1, [p1.x, p1.y, p1.z, 0, 0, 1, c.x, c.y, c.z, c.w])
     }
     this.mb.updateMesh()
+  }
+}
+
+/**
+ * A ribbon through 3D points that always turns its flat side to the viewer. Points are rewritten
+ * every frame (a waveform travelling along the line of light). Root-local coordinates.
+ */
+export class TrailRibbon {
+  readonly so: SceneObject
+  readonly mat: Material
+  private mb: MeshBuilder
+  private rmv: RenderMeshVisual
+
+  constructor(
+    parent: SceneObject,
+    name: string,
+    material: Material,
+    private count: number,
+    private width: number,
+    private color: vec4
+  ) {
+    this.mb = new MeshBuilder(LAYOUT)
+    this.mb.topology = MeshTopology.Triangles
+    this.mb.indexType = MeshIndexType.UInt16
+    const data: number[] = []
+    for (let i = 0; i < count * 2; i++) data.push(0, 0, 0, 0, 0, 1, color.x, color.y, color.z, color.w)
+    this.mb.appendVerticesInterleaved(data)
+    const idx: number[] = []
+    for (let i = 0; i < count - 1; i++) {
+      const a = i * 2
+      idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3)
+    }
+    this.mb.appendIndices(idx)
+    this.mb.updateMesh()
+    this.so = global.scene.createSceneObject(name)
+    this.so.setParent(parent)
+    this.rmv = this.so.createComponent("Component.RenderMeshVisual") as RenderMeshVisual
+    this.rmv.mesh = this.mb.getMesh()
+    this.mat = material.clone()
+    this.rmv.mainMaterial = this.mat
+  }
+
+  /** `pts` in parent-local space; `toViewer` is the direction to the camera; `alphas` taper the ends. */
+  update(pts: vec3[], toViewer: vec3, alphas?: number[]): void {
+    const c = this.color
+    const n = pts.length
+    for (let i = 0; i < this.count; i++) {
+      const p = pts[Math.min(i, n - 1)]
+      const a = pts[Math.max(0, Math.min(i, n - 1) - 1)]
+      const b = pts[Math.min(n - 1, i + 1)]
+      let side = b.sub(a).cross(toViewer)
+      side = side.length > 1e-6 ? side.normalize().uniformScale(this.width / 2) : new vec3(0, this.width / 2, 0)
+      const k = alphas ? alphas[Math.min(i, alphas.length - 1)] : 1
+      const p0 = p.add(side)
+      const p1 = p.sub(side)
+      this.mb.setVertexInterleaved(i * 2, [p0.x, p0.y, p0.z, 0, 0, 1, c.x * k, c.y * k, c.z * k, c.w * k])
+      this.mb.setVertexInterleaved(i * 2 + 1, [p1.x, p1.y, p1.z, 0, 0, 1, c.x * k, c.y * k, c.z * k, c.w * k])
+    }
+    this.mb.updateMesh()
+  }
+
+  setVisible(v: boolean): void {
+    this.rmv.enabled = v
+  }
+}
+
+/**
+ * A straight line placed with transforms only: a unit-length strip along local +X. Move its ends
+ * with `set(a, b)` every frame (cantilevers, leader lines) without rebuilding geometry.
+ */
+export class UnitLine {
+  readonly so: SceneObject
+  readonly mat: Material
+
+  /** `shape`, if given, replaces the plain line: anything drawn along +X from 0 to 1. */
+  constructor(parent: SceneObject, name: string, material: Material, width: number, color: vec4, halo: number = 0, shared?: Material, shape?: MeshKit) {
+    let kit = shape
+    if (!kit) {
+      kit = new MeshKit()
+      kit.addLineXY(0, 0, 1, 0, width, color, halo)
+    }
+    const s = spawnMesh(parent, name, kit.build(), material, undefined, shared)
+    this.so = s.so
+    this.mat = s.mat
+  }
+
+  /** Ends in the parent's local XY plane. */
+  set(a: vec3, b: vec3): void {
+    const d = b.sub(a)
+    const len = Math.max(1e-4, Math.sqrt(d.x * d.x + d.y * d.y))
+    const tr = this.so.getTransform()
+    tr.setLocalPosition(a)
+    tr.setLocalRotation(quat.angleAxis(Math.atan2(d.y, d.x), vec3.forward()))
+    tr.setLocalScale(new vec3(len, 1, 1))
   }
 }

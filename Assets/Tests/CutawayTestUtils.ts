@@ -98,6 +98,7 @@ export function expectOrder(main: CutawayMain, phases: string[]): void {
 /** Start from a clean slate: nothing explained, nothing running, looking at the ceiling. */
 export async function cleanStart(main: CutawayMain): Promise<void> {
   interactor = new DefaultLeafInteractor()
+  main.holdExplanation = false
   main.resetAll()
   main.lookAway()
   await sleep(SETTLE_MS)

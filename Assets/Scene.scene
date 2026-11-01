@@ -6,7 +6,7 @@
     - !<own> f5d74682-203a-4970-81ea-9fa7b88c96bb
     - !<own> f154efdb-5438-4eb4-81ea-00548435cb43
     - !<own> 050089c0-1eaf-4713-9d4c-c50ffb26a14d
-    - !<own> 8b915ea8-e6d4-4440-87a5-96806a74eb61
+    - !<own> 42bbe914-5739-4622-a72b-5c985cdaf57b
   layers: !<Layers/267ee9a7-aff2-4f9d-9a49-f71214747d03>
     userLayers:
       - id: 1
@@ -794,22 +794,6 @@
     - !<own> e42bbb9f-e951-4432-be2e-3cc712b1fc33
   Components:
     []
-- !<ScriptComponent/34da09fd-7a89-4282-85dd-b3677775c36a>
-  PrefabRemaps:
-    []
-  Name: MessagingBridge
-  Enabled: true
-  ScriptAsset: !<reference> 9aa407db-2872-4afc-a162-cf7faf2a0f29
-  ScriptInputsDefault:
-    {}
-  ScriptTypesDefault:
-    {}
-  ScriptInputs:
-    "":
-      {}
-  ScriptTypes:
-    "":
-      {}
 - !<RenderMeshVisual/35501b69-b651-41e6-9b64-72a252df8105>
   PrefabRemaps:
     []
@@ -951,6 +935,21 @@
     []
   Components:
     - !<own> 1f969daa-5809-4500-b314-98d91ccba131
+- !<SceneObject/42bbe914-5739-4622-a72b-5c985cdaf57b>
+  PrefabRemaps:
+    []
+  Name: LEAF Plugin Bridge
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 841653aa-c79c-4a0c-88d7-127663e5ceb0
 - !<SceneObject/44097eaf-01da-45fb-8973-3bd8172618de>
   PrefabRemaps:
     []
@@ -1099,18 +1098,18 @@
   Enabled: true
   ScriptAsset: !<reference> ee2a6fef-1263-43dd-8532-55c31bbe7b93
   ScriptInputsDefault:
-    textColor: true
     designDistance: true
     minScale: true
     maxWidth: true
+    captionWidth: true
   ScriptTypesDefault:
     {}
   ScriptInputs:
     "":
-      textColor: !<Vec4> {x: 0.880000, y: 0.960000, z: 1.000000, w: 1.000000}
       designDistance: !<float> 110.000000
       minScale: 0.300000
       maxWidth: !<float> 24.000000
+      captionWidth: !<float> 21.000000
   ScriptTypes:
     "":
       {}
@@ -1147,10 +1146,6 @@
     rowHeight: true
     rowGap: true
     idleDotRadius: true
-    chipStyle: true
-    questionStyle: true
-    stopStyle: true
-    idleDotColor: true
     stopLabel: true
   ScriptTypesDefault:
     {}
@@ -1161,6 +1156,8 @@
       questions: !<string[]>
         - "How does it make sound?"
       dotMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
+      boundsCenter: !<Vec3> {x: -2.400000, y: -7.250000, z: 6.300000}
+      boundsSize: !<Vec3> {x: 43.500000, y: 11.000000, z: 33.000000}
       stopOffset: !<Vec3> {x: -1.400000, y: -24.500000, z: 39.000000}
       designDistance: !<float> 110.000000
       minScale: 0.300000
@@ -1170,10 +1167,6 @@
       rowHeight: 3.200000
       rowGap: 0.600000
       idleDotRadius: 0.450000
-      chipStyle: Primary
-      questionStyle: PrimaryNeutral
-      stopStyle: Secondary
-      idleDotColor: !<Vec4> {x: 0.550000, y: 0.850000, z: 1.000000, w: 0.600000}
       stopLabel: Stop
   ScriptTypes:
     "":
@@ -1738,6 +1731,22 @@
     - !<own> 08e3cc22-f2e1-49fb-9ddc-145fe6547ce3
   Components:
     []
+- !<ScriptComponent/841653aa-c79c-4a0c-88d7-127663e5ceb0>
+  PrefabRemaps:
+    []
+  Name: MessagingBridge
+  Enabled: true
+  ScriptAsset: !<reference> 9aa407db-2872-4afc-a162-cf7faf2a0f29
+  ScriptInputsDefault:
+    {}
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      {}
+  ScriptTypes:
+    "":
+      {}
 - !<SceneObject/859e1ef3-3021-4825-8626-f1dc323b9252>
   PrefabRemaps:
     []
@@ -1801,21 +1810,6 @@
     []
   Components:
     - !<own> e96fa241-3fac-465c-ad2e-b71442b16bde
-- !<SceneObject/8b915ea8-e6d4-4440-87a5-96806a74eb61>
-  PrefabRemaps:
-    []
-  Name: LEAF Plugin Bridge
-  Enabled: true
-  Layers: 1
-  LocalTransform: !<TransformEntity>
-    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
-    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
-    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
-    HasSegmentScaleCompensation: false
-  Children:
-    []
-  Components:
-    - !<own> 34da09fd-7a89-4282-85dd-b3677775c36a
 - !<RenderMeshVisual/8c3be019-7b67-4fb9-8158-1262f117b8e1>
   PrefabRemaps:
     []
@@ -1869,10 +1863,6 @@
     rowHeight: true
     rowGap: true
     idleDotRadius: true
-    chipStyle: true
-    questionStyle: true
-    stopStyle: true
-    idleDotColor: true
     stopLabel: true
   ScriptTypesDefault:
     {}
@@ -1883,6 +1873,8 @@
       questions: !<string[]>
         - "How does it make light?"
       dotMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
+      boundsCenter: !<Vec3> {x: 0.000000, y: -42.000000, z: 0.000000}
+      boundsSize: !<Vec3> {x: 30.000000, y: 119.000000, z: 30.000000}
       stopOffset: !<Vec3> {x: 0.000000, y: -92.000000, z: 40.000000}
       designDistance: !<float> 110.000000
       minScale: 0.300000
@@ -1892,10 +1884,6 @@
       rowHeight: 3.200000
       rowGap: 0.600000
       idleDotRadius: 0.450000
-      chipStyle: Primary
-      questionStyle: PrimaryNeutral
-      stopStyle: Secondary
-      idleDotColor: !<Vec4> {x: 0.550000, y: 0.850000, z: 1.000000, w: 0.600000}
       stopLabel: Stop
   ScriptTypes:
     "":
@@ -2513,10 +2501,6 @@
     rowHeight: true
     rowGap: true
     idleDotRadius: true
-    chipStyle: true
-    questionStyle: true
-    stopStyle: true
-    idleDotColor: true
     stopLabel: true
   ScriptTypesDefault:
     {}
@@ -2527,6 +2511,8 @@
       questions: !<string[]>
         - "How does it take a picture?"
       dotMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
+      boundsCenter: !<Vec3> {x: -0.500000, y: -8.000000, z: -1.500000}
+      boundsSize: !<Vec3> {x: 18.200001, y: 10.400000, z: 14.300000}
       stopOffset: !<Vec3> {x: -10.800000, y: -12.700000, z: -9.800000}
       designDistance: !<float> 110.000000
       minScale: 0.300000
@@ -2536,10 +2522,6 @@
       rowHeight: 3.200000
       rowGap: 0.600000
       idleDotRadius: 0.450000
-      chipStyle: Primary
-      questionStyle: PrimaryNeutral
-      stopStyle: Secondary
-      idleDotColor: !<Vec4> {x: 0.550000, y: 0.850000, z: 1.000000, w: 0.600000}
       stopLabel: Stop
   ScriptTypes:
     "":
