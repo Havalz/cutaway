@@ -1,0 +1,54 @@
+- !<AssetImportMetadata/6b0489ae-32bf-42e8-8765-21d4c853164c>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> ee2a6fef-1263-43dd-8532-55c31bbe7b93
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> ee2a6fef-1263-43dd-8532-55c31bbe7b93
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> acc6d8ba-c21e-4295-a73c-16eadebdab6e
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/acc6d8ba-c21e-4295-a73c-16eadebdab6e>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: ccf4be1a-1dba-4131-82a8-9321f1ccf366
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    designDistance: false
+    maxWidth: false
+    textColor: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - textColor: !<Vec4> {x: 0.880000, y: 0.960000, z: 1.000000, w: 1.000000}
+      designDistance: !<float> 110.000000
+      maxWidth: !<float> 24.000000
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"Cutaway labels — short captions placed on real objects during an explanation"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @input vec4 textColor = {0.88,0.96,1,1} {"hint":"Label text color (light colors only: dark is transparent on Specs)", "widget":"color"}'
+    - '// @input float designDistance = 110 {"hint":"Distance (cm) at which labels are shown 1:1", "widget":"slider", "min":60, "max":200, "step":5}'
+    - '// @input float maxWidth = 24 {"hint":"Maximum label width at design scale (cm)", "widget":"slider", "min":8, "max":40, "step":1}'

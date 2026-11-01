@@ -4,6 +4,9 @@
     - !<own> 00000000-0000-0065-0000-000000000064
     - !<own> 0005641c-028d-459a-0000-000000014b4d
     - !<own> f5d74682-203a-4970-81ea-9fa7b88c96bb
+    - !<own> f154efdb-5438-4eb4-81ea-00548435cb43
+    - !<own> 050089c0-1eaf-4713-9d4c-c50ffb26a14d
+    - !<own> 663dadb2-0e83-4fe1-998d-73501a3df569
   layers: !<Layers/267ee9a7-aff2-4f9d-9a49-f71214747d03>
     userLayers:
       - id: 1
@@ -33,6 +36,7 @@
   Components:
     - !<own> 00000000-0000-0065-0000-000000000065
     - !<own> e5553c8a-0b7e-4ef4-92d9-3e1318fb82c1
+    - !<own> da91d60c-5145-4b08-b6f5-9b1b3a1d67cf
 - !<Camera/00000000-0000-0065-0000-000000000065>
   PrefabRemaps:
     []
@@ -206,6 +210,21 @@
     []
   Components:
     - !<own> 35501b69-b651-41e6-9b64-72a252df8105
+- !<SceneObject/050089c0-1eaf-4713-9d4c-c50ffb26a14d>
+  PrefabRemaps:
+    []
+  Name: LeafIndex
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 643062a4-0eec-428d-b653-f3bfb60c4b32
 - !<SceneObject/05147ea1-cb6b-4629-9484-199a4aa4d92a>
   PrefabRemaps:
     []
@@ -513,6 +532,36 @@
     []
   Components:
     []
+- !<SceneObject/187ba5dd-2714-443c-9c28-50c6d210f8bb>
+  PrefabRemaps:
+    []
+  Name: LampStation
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: -227.100006, y: -62.000000, z: -455.399994}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 8e698ce2-51b0-4f65-949a-31216cb47c7c
+- !<SceneObject/1b8af0ed-448a-442a-a267-befcffc0b389>
+  PrefabRemaps:
+    []
+  Name: CameraStation
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 196.000000, y: 14.000000, z: -320.700012}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> d365778f-0a2f-4f6a-b373-a9899719c3bf
 - !<RenderMeshVisual/1f969daa-5809-4500-b314-98d91ccba131>
   PrefabRemaps:
     []
@@ -796,6 +845,21 @@
     - !<own> 4051028a-c608-4a97-b3d5-1a3912a7c007
   Components:
     []
+- !<SceneObject/3a3a3976-7a21-4b1b-87e5-31c1643c55db>
+  PrefabRemaps:
+    []
+  Name: LampMarker
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: -227.100006, y: -84.400002, z: -455.399994}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    []
 - !<SceneObject/3a794764-c758-4d72-9d89-bf3ed978113f>
   PrefabRemaps:
     []
@@ -916,6 +980,21 @@
     - !<own> 8fe2a532-9bf3-4cde-b598-04ce5470718d
   Components:
     []
+- !<SceneObject/47e729df-ba6a-412f-aa9f-dd0290440345>
+  PrefabRemaps:
+    []
+  Name: LampBaseMarker
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: -227.500000, y: -178.199997, z: -456.700012}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    []
 - !<SceneObject/4c195c04-c397-454e-bd08-3485f37d84fe>
   PrefabRemaps:
     []
@@ -946,6 +1025,27 @@
     []
   Components:
     - !<own> 5f153ad7-2baa-4fd9-a298-0dcfad86da3b
+- !<SceneObject/4d861454-c3de-4c8e-9a87-0f32f8b9025d>
+  PrefabRemaps:
+    []
+  Name: "Markers (stand-ins: place over real objects)"
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    - !<own> 67f4dd69-5cd2-4e53-80db-d6eb8e61f056
+    - !<own> a6e14add-a594-41e4-9611-67d61fcd867a
+    - !<own> 878450e3-0ae5-4800-8ca8-3b6e00a1abf9
+    - !<own> 73619fdc-facf-40d9-92f6-89b917d6f3b0
+    - !<own> 3a3a3976-7a21-4b1b-87e5-31c1643c55db
+    - !<own> 47e729df-ba6a-412f-aa9f-dd0290440345
+    - !<own> fa5e171b-ca81-4ed6-b641-bb02da63ab52
+  Components:
+    []
 - !<SceneObject/52ecefe4-5642-445a-ad16-52ce818076bc>
   PrefabRemaps:
     []
@@ -976,6 +1076,26 @@
     - !<own> 46b79537-a269-46f1-9483-500d7a4170d6
   Components:
     []
+- !<ScriptComponent/58d36f5e-d149-4e4f-ba83-1ecaafcb2aee>
+  PrefabRemaps:
+    []
+  Name: CutawayLabelsUI
+  Enabled: true
+  ScriptAsset: !<reference> ee2a6fef-1263-43dd-8532-55c31bbe7b93
+  ScriptInputsDefault:
+    textColor: true
+    designDistance: true
+    maxWidth: true
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      textColor: !<Vec4> {x: 0.880000, y: 0.960000, z: 1.000000, w: 1.000000}
+      designDistance: !<float> 110.000000
+      maxWidth: !<float> 24.000000
+  ScriptTypes:
+    "":
+      {}
 - !<SceneObject/58ef319f-850e-40dd-8295-e6dc36ab4854>
   PrefabRemaps:
     []
@@ -991,6 +1111,66 @@
     - !<own> bf2095b6-c6f8-48c8-b840-e0a6cec0dc99
   Components:
     []
+- !<ScriptComponent/5bfed731-4078-4013-869b-c8d8145a50f1>
+  PrefabRemaps:
+    []
+  Name: CutawayStationUI
+  Enabled: true
+  ScriptAsset: !<reference> 487889e6-e06f-4804-b814-fc5772b9741b
+  ScriptInputsDefault:
+    objectName: true
+    namePrefix: true
+    questions: true
+    designDistance: true
+    chipWidth: true
+    questionWidth: true
+    rowHeight: true
+    rowGap: true
+    idleDotRadius: true
+    chipStyle: true
+    questionStyle: true
+    stopStyle: true
+    idleDotColor: true
+    stopLabel: true
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      objectName: Record player
+      namePrefix: RecordPlayer
+      questions: !<string[]>
+        - "How does it make sound?"
+      dotMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
+      stopOffset: !<Vec3> {x: 0.000000, y: -40.000000, z: 18.000000}
+      designDistance: !<float> 110.000000
+      chipWidth: !<float> 11.000000
+      questionWidth: !<float> 21.000000
+      rowHeight: 3.200000
+      rowGap: 0.600000
+      idleDotRadius: 0.450000
+      chipStyle: Primary
+      questionStyle: PrimaryNeutral
+      stopStyle: Secondary
+      idleDotColor: !<Vec4> {x: 0.550000, y: 0.850000, z: 1.000000, w: 0.600000}
+      stopLabel: Stop
+  ScriptTypes:
+    "":
+      {}
+- !<SceneObject/5ed21ed2-32f2-4fc9-8cf3-0e1f7de3243d>
+  PrefabRemaps:
+    []
+  Name: ResetUI
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: -18.000000, y: -42.000000, z: -55.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 7365e106-07d5-4eca-a7e5-74442a1f1d18
 - !<ScriptComponent/5f153ad7-2baa-4fd9-a298-0dcfad86da3b>
   PrefabRemaps:
     []
@@ -1036,6 +1216,22 @@
       initializePositionAndRotationFilter: true
       _touchpadScrollSpeed: !<float> 250.000000
       touchpadDragThreshold: 0.050000
+  ScriptTypes:
+    "":
+      {}
+- !<ScriptComponent/643062a4-0eec-428d-b653-f3bfb60c4b32>
+  PrefabRemaps:
+    []
+  Name: LeafIndex
+  Enabled: true
+  ScriptAsset: !<reference> 1815fd20-12e1-4752-8cee-75489ca639b8
+  ScriptInputsDefault:
+    {}
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      {}
   ScriptTypes:
     "":
       {}
@@ -1141,6 +1337,36 @@
     - !<own> 80574bd1-697b-4bb5-b9ce-13b340146d82
   Components:
     - !<own> ccf4d3bc-d3c2-4580-b9c5-62f164ef7eef
+- !<SceneObject/663dadb2-0e83-4fe1-998d-73501a3df569>
+  PrefabRemaps:
+    []
+  Name: LEAF Plugin Bridge
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> b0abb2c4-d21a-4f1d-9cc4-e41e47b13285
+- !<SceneObject/67f4dd69-5cd2-4e53-80db-d6eb8e61f056>
+  PrefabRemaps:
+    []
+  Name: RecordPlayerMarker
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: -102.300003, y: -135.899994, z: -456.200012}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    []
 - !<SceneObject/6a7a67db-5675-49bb-8f31-ba0588e3cffc>
   PrefabRemaps:
     []
@@ -1246,6 +1472,49 @@
     - !<own> 879ce45b-bd5e-40ff-a3fe-d821523427e4
   Components:
     - !<own> 64f27597-c99d-4c59-8a08-05459cc2258d
+- !<SceneObject/73619fdc-facf-40d9-92f6-89b917d6f3b0>
+  PrefabRemaps:
+    []
+  Name: CameraMarker
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 202.600006, y: -0.500000, z: -320.700012}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    []
+- !<ScriptComponent/7365e106-07d5-4eca-a7e5-74442a1f1d18>
+  PrefabRemaps:
+    []
+  Name: CutawayResetUI
+  Enabled: true
+  ScriptAsset: !<reference> d1bf3933-1650-45fd-a8e0-b0c45f97a4e4
+  ScriptInputsDefault:
+    forwardCm: true
+    downCm: true
+    leftCm: true
+    followSpeed: true
+    deadzoneDeg: true
+    label: true
+    style: true
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      forwardCm: !<float> 55.000000
+      downCm: !<float> 42.000000
+      leftCm: !<float> 18.000000
+      followSpeed: !<float> 5.000000
+      deadzoneDeg: !<float> 40.000000
+      label: Reset
+      style: PrimaryNeutral
+  ScriptTypes:
+    "":
+      {}
 - !<SceneObject/74d13517-1dbf-42e6-b536-27afc4909c65>
   PrefabRemaps:
     []
@@ -1355,6 +1624,23 @@
     - !<own> 58ef319f-850e-40dd-8295-e6dc36ab4854
   Components:
     []
+- !<SceneObject/7edeb930-6fa5-47e8-8d16-f80ae8855717>
+  PrefabRemaps:
+    []
+  Name: Stations
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    - !<own> edfd24c8-58d5-493f-8f5d-f4957c7af680
+    - !<own> 1b8af0ed-448a-442a-a267-befcffc0b389
+    - !<own> 187ba5dd-2714-443c-9c28-50c6d210f8bb
+  Components:
+    []
 - !<SceneObject/7fb3591f-54a2-4aee-b07d-fd10d56538c8>
   PrefabRemaps:
     []
@@ -1460,6 +1746,21 @@
     - !<own> 6c1f70d7-86d0-4972-b203-29780f8798e6
   Components:
     []
+- !<SceneObject/878450e3-0ae5-4800-8ca8-3b6e00a1abf9>
+  PrefabRemaps:
+    []
+  Name: SpeakerMarker
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: -166.399994, y: -130.399994, z: -475.600006}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    - !<own> f583ff99-5e82-4012-8bf7-ee4ae3851406
+  Components:
+    []
 - !<SceneObject/879ce45b-bd5e-40ff-a3fe-d821523427e4>
   PrefabRemaps:
     []
@@ -1531,6 +1832,48 @@
     - !<own> b859e31c-4c76-46bd-bd6a-042228e52728
   Components:
     []
+- !<ScriptComponent/8e698ce2-51b0-4f65-949a-31216cb47c7c>
+  PrefabRemaps:
+    []
+  Name: CutawayStationUI
+  Enabled: true
+  ScriptAsset: !<reference> 487889e6-e06f-4804-b814-fc5772b9741b
+  ScriptInputsDefault:
+    designDistance: true
+    chipWidth: true
+    questionWidth: true
+    rowHeight: true
+    rowGap: true
+    idleDotRadius: true
+    chipStyle: true
+    questionStyle: true
+    stopStyle: true
+    idleDotColor: true
+    stopLabel: true
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      objectName: Lamp
+      namePrefix: Lamp
+      questions: !<string[]>
+        - "How does it make light?"
+      dotMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
+      stopOffset: !<Vec3> {x: 0.000000, y: -110.000000, z: 40.000000}
+      designDistance: !<float> 110.000000
+      chipWidth: !<float> 11.000000
+      questionWidth: !<float> 21.000000
+      rowHeight: 3.200000
+      rowGap: 0.600000
+      idleDotRadius: 0.450000
+      chipStyle: Primary
+      questionStyle: PrimaryNeutral
+      stopStyle: Secondary
+      idleDotColor: !<Vec4> {x: 0.550000, y: 0.850000, z: 1.000000, w: 0.600000}
+      stopLabel: Stop
+  ScriptTypes:
+    "":
+      {}
 - !<SceneObject/8fe2a532-9bf3-4cde-b598-04ce5470718d>
   PrefabRemaps:
     []
@@ -1702,6 +2045,21 @@
     - !<own> d5f63266-b1ce-419f-847b-3c9f347b3ee2
   Components:
     []
+- !<SceneObject/a6e14add-a594-41e4-9611-67d61fcd867a>
+  PrefabRemaps:
+    []
+  Name: NeedleMarker
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: -95.000000, y: -133.000000, z: -458.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    []
 - !<SceneObject/a7526b33-fca3-4f28-8e32-b0e9aa13c4b4>
   PrefabRemaps:
     []
@@ -1777,6 +2135,22 @@
     - !<own> f6687ab7-52ac-408d-a892-8a9559125450
   Components:
     []
+- !<ScriptComponent/b0abb2c4-d21a-4f1d-9cc4-e41e47b13285>
+  PrefabRemaps:
+    []
+  Name: MessagingBridge
+  Enabled: true
+  ScriptAsset: !<reference> 9aa407db-2872-4afc-a162-cf7faf2a0f29
+  ScriptInputsDefault:
+    {}
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      {}
+  ScriptTypes:
+    "":
+      {}
 - !<SceneObject/b22d97e6-4c06-4135-af29-d26adb2b9d86>
   PrefabRemaps:
     []
@@ -1985,6 +2359,21 @@
   ScriptTypes:
     "":
       {}
+- !<SceneObject/ca3d9101-41c6-40f0-86ac-e54bd954f2d5>
+  PrefabRemaps:
+    []
+  Name: Labels
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 58d36f5e-d149-4e4f-ba83-1ecaafcb2aee
 - !<SceneObject/ca40734c-262f-48d3-affa-9f99cd2940f7>
   PrefabRemaps:
     []
@@ -2100,6 +2489,48 @@
     - !<own> bb9036be-541f-49e7-9554-c297d354da21
   Components:
     []
+- !<ScriptComponent/d365778f-0a2f-4f6a-b373-a9899719c3bf>
+  PrefabRemaps:
+    []
+  Name: CutawayStationUI
+  Enabled: true
+  ScriptAsset: !<reference> 487889e6-e06f-4804-b814-fc5772b9741b
+  ScriptInputsDefault:
+    designDistance: true
+    chipWidth: true
+    questionWidth: true
+    rowHeight: true
+    rowGap: true
+    idleDotRadius: true
+    chipStyle: true
+    questionStyle: true
+    stopStyle: true
+    idleDotColor: true
+    stopLabel: true
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      objectName: Camera
+      namePrefix: Camera
+      questions: !<string[]>
+        - "How does it take a picture?"
+      dotMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
+      stopOffset: !<Vec3> {x: 0.000000, y: -36.000000, z: 0.000000}
+      designDistance: !<float> 110.000000
+      chipWidth: !<float> 11.000000
+      questionWidth: !<float> 21.000000
+      rowHeight: 3.200000
+      rowGap: 0.600000
+      idleDotRadius: 0.450000
+      chipStyle: Primary
+      questionStyle: PrimaryNeutral
+      stopStyle: Secondary
+      idleDotColor: !<Vec4> {x: 0.550000, y: 0.850000, z: 1.000000, w: 0.600000}
+      stopLabel: Stop
+  ScriptTypes:
+    "":
+      {}
 - !<ScriptComponent/d3e2fbc5-8795-4913-9af6-c8626f8e6d9c>
   PrefabRemaps:
     []
@@ -2210,6 +2641,11 @@
     - !<own> f74a6bbb-4fba-4d8b-9b4e-64dd1c3e9ac3
   Components:
     []
+- !<AudioListenerComponent/da91d60c-5145-4b08-b6f5-9b1b3a1d67cf>
+  PrefabRemaps:
+    []
+  Name: Audio Listener
+  Enabled: true
 - !<SceneObject/dcc36a33-e23d-48f3-8e96-f9c9fd3cd030>
   PrefabRemaps:
     []
@@ -2240,6 +2676,21 @@
     - !<own> d4a9c5e3-fe96-4824-9b20-59f5ad39eabd
   Components:
     []
+- !<SceneObject/dd9eb017-3a69-4647-b9a7-43aebf6ce018>
+  PrefabRemaps:
+    []
+  Name: CutawayMain
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> edf60c19-0833-48ff-b2b1-3932a012cbd2
 - !<RenderMeshVisual/e1031f7e-3474-489f-a529-282f7192f812>
   PrefabRemaps:
     []
@@ -2353,6 +2804,60 @@
     Fingers_length: 0.000000
     Thumb_inflate: 0.000000
     Thumb_length: 0.000000
+- !<ScriptComponent/edf60c19-0833-48ff-b2b1-3932a012cbd2>
+  PrefabRemaps:
+    []
+  Name: CutawayMain
+  Enabled: true
+  ScriptAsset: !<reference> c9ba68ab-1a2b-4a8e-9b18-eccc75b01f62
+  ScriptInputsDefault:
+    coneModel: true
+    shelfY: true
+    cameraFacing: true
+    gazeEnterDeg: true
+    gazeExitDeg: true
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      recordPlayerUI: !<MappingBased.AssignableType_1> 5bfed731-4078-4013-869b-c8d8145a50f1
+      cameraUI: !<MappingBased.AssignableType_2> d365778f-0a2f-4f6a-b373-a9899719c3bf
+      lampUI: !<MappingBased.AssignableType_3> 8e698ce2-51b0-4f65-949a-31216cb47c7c
+      resetUI: !<MappingBased.AssignableType_4> 7365e106-07d5-4eca-a7e5-74442a1f1d18
+      labelsUI: !<MappingBased.AssignableType_5> 58d36f5e-d149-4e4f-ba83-1ecaafcb2aee
+      recordPlayerMarker: !<reference.SceneObject> 67f4dd69-5cd2-4e53-80db-d6eb8e61f056
+      needleMarker: !<reference.SceneObject> a6e14add-a594-41e4-9611-67d61fcd867a
+      speakerMarker: !<reference.SceneObject> 878450e3-0ae5-4800-8ca8-3b6e00a1abf9
+      cameraMarker: !<reference.SceneObject> 73619fdc-facf-40d9-92f6-89b917d6f3b0
+      lampMarker: !<reference.SceneObject> 3a3a3976-7a21-4b1b-87e5-31c1643c55db
+      lampBaseMarker: !<reference.SceneObject> 47e729df-ba6a-412f-aa9f-dd0290440345
+      cordStartMarker: !<reference.SceneObject> fa5e171b-ca81-4ed6-b641-bb02da63ab52
+      glowMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
+      modelMaterial: !<reference.Material> ebad19e1-17e5-4c48-b8cb-c3f6ef661659
+      chimeAudio: !<reference.AudioComponent> f36c4c48-d97d-4cc0-a43f-e50994519674
+      coneModel: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      shelfY: !<float> -144.000000
+      cameraFacing: !<Vec3> {x: -1.000000, y: 0.000000, z: 0.000000}
+      gazeEnterDeg: !<float> 12.000000
+      gazeExitDeg: !<float> 24.000000
+  ScriptTypes:
+    "":
+      {}
+- !<SceneObject/edfd24c8-58d5-493f-8f5d-f4957c7af680>
+  PrefabRemaps:
+    []
+  Name: RecordPlayerStation
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: -102.300003, y: -116.000000, z: -456.200012}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 5bfed731-4078-4013-869b-c8d8145a50f1
 - !<SceneObject/f0394c5d-4c44-4c65-a77c-e1c7e05ca905>
   PrefabRemaps:
     []
@@ -2366,6 +2871,25 @@
     HasSegmentScaleCompensation: false
   Children:
     []
+  Components:
+    []
+- !<SceneObject/f154efdb-5438-4eb4-81ea-00548435cb43>
+  PrefabRemaps:
+    []
+  Name: Cutaway
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    - !<own> 4d861454-c3de-4c8e-9a87-0f32f8b9025d
+    - !<own> 7edeb930-6fa5-47e8-8d16-f80ae8855717
+    - !<own> ca3d9101-41c6-40f0-86ac-e54bd954f2d5
+    - !<own> 5ed21ed2-32f2-4fc9-8cf3-0e1f7de3243d
+    - !<own> dd9eb017-3a69-4647-b9a7-43aebf6ce018
   Components:
     []
 - !<SceneObject/f36287fd-ed56-442d-ba20-78f9ef6f3502>
@@ -2384,6 +2908,38 @@
   Components:
     - !<own> d3e2fbc5-8795-4913-9af6-c8626f8e6d9c
     - !<own> 275aeb4d-77ac-4b1b-811e-907652542110
+- !<AudioComponent/f36c4c48-d97d-4cc0-a43f-e50994519674>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> b01c7244-8dfc-4c60-983c-e5d5c5776b81
+  EnableAutoplayLoop: false
+  Volume: 0.900000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
+- !<SceneObject/f583ff99-5e82-4012-8bf7-ee4ae3851406>
+  PrefabRemaps:
+    []
+  Name: ChimeSpeaker
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> f36c4c48-d97d-4cc0-a43f-e50994519674
 - !<SceneObject/f5d74682-203a-4970-81ea-9fa7b88c96bb>
   PrefabRemaps:
     - 012a3973-9507-4230-a6ff-2b8dfd2154fe: e3ec5982-f5aa-45f3-4551-4d3a92a1f432
@@ -2573,6 +3129,21 @@
     HasSegmentScaleCompensation: false
   Children:
     - !<own> a7526b33-fca3-4f28-8e32-b0e9aa13c4b4
+  Components:
+    []
+- !<SceneObject/fa5e171b-ca81-4ed6-b641-bb02da63ab52>
+  PrefabRemaps:
+    []
+  Name: CordStartMarker
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: -250.000000, y: -165.000000, z: -488.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
   Components:
     []
 - !<SceneObject/fcc185fc-4e88-4e9e-9c71-40bd83b1b0ed>

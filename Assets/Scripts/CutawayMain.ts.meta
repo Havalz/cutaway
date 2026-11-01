@@ -1,0 +1,113 @@
+- !<AssetImportMetadata/b4909373-3e06-4d38-9a58-41ef40cb1140>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> c9ba68ab-1a2b-4a8e-9b18-eccc75b01f62
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> c9ba68ab-1a2b-4a8e-9b18-eccc75b01f62
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> d8f21f70-f35c-4654-8d87-eb51bfee79f1
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/d8f21f70-f35c-4654-8d87-eb51bfee79f1>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: 6dc610d3-50db-4671-ace5-001b33d67539
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    cameraFacing: false
+    cameraMarker: false
+    cameraUI: false
+    chimeAudio: false
+    coneModel: false
+    cordStartMarker: false
+    gazeEnterDeg: false
+    gazeExitDeg: false
+    glowMaterial: false
+    labelsUI: false
+    lampBaseMarker: false
+    lampMarker: false
+    lampUI: false
+    modelMaterial: false
+    needleMarker: false
+    recordPlayerMarker: false
+    recordPlayerUI: false
+    resetUI: false
+    shelfY: false
+    speakerMarker: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - recordPlayerUI: !<MappingBased.AssignableType_1> 00000000-0000-0000-0000-000000000000
+      cameraUI: !<MappingBased.AssignableType_2> 00000000-0000-0000-0000-000000000000
+      lampUI: !<MappingBased.AssignableType_3> 00000000-0000-0000-0000-000000000000
+      resetUI: !<MappingBased.AssignableType_4> 00000000-0000-0000-0000-000000000000
+      labelsUI: !<MappingBased.AssignableType_5> 00000000-0000-0000-0000-000000000000
+      recordPlayerMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      needleMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      speakerMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      cameraMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      lampMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      lampBaseMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      cordStartMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      glowMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
+      modelMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
+      chimeAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
+      coneModel: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      shelfY: !<float> -144.000000
+      cameraFacing: !<Vec3> {x: -1.000000, y: 0.000000, z: 0.000000}
+      gazeEnterDeg: !<float> 12.000000
+      gazeExitDeg: !<float> 24.000000
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"Cutaway — controller. Markers are hand-placed stand-ins for object recognition"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"Station UIs"}'
+    - '// @input AssignableType_1 recordPlayerUI {"hint":"UI for the record player"}'
+    - '// @input AssignableType_2 cameraUI {"hint":"UI for the camera"}'
+    - '// @input AssignableType_3 lampUI {"hint":"UI for the lamp"}'
+    - '// @input AssignableType_4 resetUI {"hint":"Reset pill (clears all explained dots)"}'
+    - '// @input AssignableType_5 labelsUI {"hint":"Floating labels used by the explanations"}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"group_start", "label":"Markers (move these over the real objects)"}'
+    - '// @input SceneObject recordPlayerMarker {"hint":"Record player marker (used for looking at it)"}'
+    - '// @input SceneObject needleMarker {"hint":"Needle / stylus marker: the magnify bubble opens here and the line of light starts here"}'
+    - '// @input SceneObject speakerMarker {"hint":"Nearest speaker marker: cone, sound rings and the chime come from here"}'
+    - '// @input SceneObject cameraMarker {"hint":"Camera marker"}'
+    - '// @input SceneObject lampMarker {"hint":"Lamp marker (the shade / bulb)"}'
+    - '// @input SceneObject lampBaseMarker {"hint":"Lamp base marker (bottom of the pole)"}'
+    - '// @input SceneObject cordStartMarker {"hint":"Where the lamp cord starts (wall outlet)"}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"group_start", "label":"Effects"}'
+    - '// @input Asset.Material glowMaterial {"hint":"Additive glow material (lines of light, rays, rings)"}'
+    - '// @input Asset.Material modelMaterial {"hint":"Solid model material (cone, lens, stylus, shell panels)"}'
+    - '// @input Component.AudioComponent chimeAudio {"hint":"Spatial AudioComponent placed at the speaker, holding the chime"}'
+    - '// @input SceneObject coneModel {"hint":"Optional: your own speaker-cone model (pinned at the speaker marker). Leave empty to use the built-in cone"}'
+    - '// @input float shelfY = -144 {"hint":"Height (world Y, cm) of the shelf the line of light runs along"}'
+    - '// @input vec3 cameraFacing = {-1,0,0} {"hint":"Direction the wall camera faces (into the room)"}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"group_start", "label":"Looking"}'
+    - "// @input float gazeEnterDeg = 12 {\"hint\":\"An object counts as 'looked at' when it is within this angle of the view center (degrees)\", \"widget\":\"slider\", \"min\":4, \"max\":30, \"step\":1}"
+    - '// @input float gazeExitDeg = 24 {"hint":"The chip shrinks back once the object is farther than this from the view center (degrees)", "widget":"slider", "min":8, "max":45, "step":1}'
+    - '// @ui {"widget":"group_end"}'

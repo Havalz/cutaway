@@ -1,0 +1,98 @@
+- !<AssetImportMetadata/da2d0123-f053-4ec3-8a54-9b7ed1a7cff0>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> 487889e6-e06f-4804-b814-fc5772b9741b
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> 487889e6-e06f-4804-b814-fc5772b9741b
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> 5026af7e-6951-48d3-a8f4-267a228500ae
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/5026af7e-6951-48d3-a8f4-267a228500ae>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: e0448dd6-cda9-4ddc-95a8-c44c34374102
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    chipStyle: false
+    chipWidth: false
+    designDistance: false
+    dotMaterial: false
+    idleDotColor: false
+    idleDotRadius: false
+    namePrefix: false
+    objectName: false
+    questionStyle: false
+    questionWidth: false
+    questions: false
+    rowGap: false
+    rowHeight: false
+    stopLabel: false
+    stopOffset: false
+    stopStyle: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - objectName: Record player
+      namePrefix: RecordPlayer
+      questions: !<string[]>
+        - "How does it make sound?"
+      dotMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
+      stopOffset: !<Vec3> {x: 0.000000, y: -40.000000, z: 15.000000}
+      designDistance: !<float> 110.000000
+      chipWidth: !<float> 11.000000
+      questionWidth: !<float> 21.000000
+      rowHeight: 3.200000
+      rowGap: 0.600000
+      idleDotRadius: 0.450000
+      chipStyle: Primary
+      questionStyle: PrimaryNeutral
+      stopStyle: Secondary
+      idleDotColor: !<Vec4> {x: 0.550000, y: 0.850000, z: 1.000000, w: 0.600000}
+      stopLabel: Stop
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"Cutaway station — chip, questions, Stop pill and dots for one object"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @input string objectName = "Record player" {"hint":"Object name shown on the chip"}'
+    - '// @input string namePrefix = "RecordPlayer" {"hint":"Prefix for button SceneObject names, e.g. RecordPlayer → RecordPlayerChip (used by LEAF tests)"}'
+    - '// @input string[] questions = {"How does it make sound?"} {"hint":"Questions for this object. The first one is the guaranteed question; up to 3"}'
+    - '// @input Asset.Material dotMaterial {"hint":"Additive glow material used for the quiet idle dot"}'
+    - '// @ui {"widget":"group_start", "label":"Layout"}'
+    - '// @input vec3 stopOffset = {0,-40,15} {"hint":"Where the Stop pill sits relative to this object, in world cm (put it just under the real object)"}'
+    - '// @input float designDistance = 110 {"hint":"Distance (cm) at which the UI is shown 1:1. Farther stations are scaled up so text stays readable", "widget":"slider", "min":60, "max":200, "step":5}'
+    - '// @input float chipWidth = 11 {"hint":"Chip width at design scale (cm)", "widget":"slider", "min":6, "max":20, "step":0.5}'
+    - '// @input float questionWidth = 21 {"hint":"Question button width at design scale (cm)", "widget":"slider", "min":12, "max":32, "step":0.5}'
+    - '// @input float rowHeight = 3.2 {"hint":"Button height at design scale (cm)", "widget":"slider", "min":2.4, "max":5, "step":0.1}'
+    - '// @input float rowGap = 0.6 {"hint":"Gap between stacked buttons at design scale (cm)", "widget":"slider", "min":0.2, "max":2, "step":0.1}'
+    - '// @input float idleDotRadius = 0.45 {"hint":"Idle dot radius at design scale (cm) — small and quiet", "widget":"slider", "min":0.2, "max":1.5, "step":0.05}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"group_start", "label":"Style"}'
+    - '// @input string chipStyle = "Primary" {"hint":"UIKit style for the name chip", "widget":"combobox", "values":[{"label":"Primary", "value":"Primary"}, {"label":"PrimaryNeutral", "value":"PrimaryNeutral"}, {"label":"Secondary", "value":"Secondary"}, {"label":"Special", "value":"Special"}]}'
+    - '// @input string questionStyle = "PrimaryNeutral" {"hint":"UIKit style for question buttons", "widget":"combobox", "values":[{"label":"Primary", "value":"Primary"}, {"label":"PrimaryNeutral", "value":"PrimaryNeutral"}, {"label":"Secondary", "value":"Secondary"}, {"label":"Special", "value":"Special"}]}'
+    - '// @input string stopStyle = "Secondary" {"hint":"UIKit style for the Stop pill", "widget":"combobox", "values":[{"label":"Primary", "value":"Primary"}, {"label":"PrimaryNeutral", "value":"PrimaryNeutral"}, {"label":"Secondary", "value":"Secondary"}, {"label":"Special", "value":"Special"}]}'
+    - '// @input vec4 idleDotColor = {0.55,0.85,1,0.6} {"hint":"Idle dot color (additive — keep it light; dark reads as transparent on Specs)", "widget":"color"}'
+    - '// @input string stopLabel = "Stop" {"hint":"Label on the Stop pill"}'
+    - '// @ui {"widget":"group_end"}'

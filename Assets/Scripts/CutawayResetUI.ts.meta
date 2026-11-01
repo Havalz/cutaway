@@ -1,0 +1,70 @@
+- !<AssetImportMetadata/62d0a838-5864-4bb5-bca8-0d62fe4fd57a>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> d1bf3933-1650-45fd-a8e0-b0c45f97a4e4
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> d1bf3933-1650-45fd-a8e0-b0c45f97a4e4
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> fe0c53f1-9b2a-4e84-af8b-14b4058d5003
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/fe0c53f1-9b2a-4e84-af8b-14b4058d5003>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: a6063173-f8a5-4299-ad1e-9445be7366d1
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    deadzoneDeg: false
+    downCm: false
+    followSpeed: false
+    forwardCm: false
+    label: false
+    leftCm: false
+    style: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - forwardCm: !<float> 55.000000
+      downCm: !<float> 42.000000
+      leftCm: !<float> 18.000000
+      followSpeed: !<float> 5.000000
+      deadzoneDeg: !<float> 40.000000
+      label: Reset
+      style: PrimaryNeutral
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"Cutaway Reset pill — floats low and slightly left of the user"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"Placement"}'
+    - '// @input float forwardCm = 55 {"hint":"Distance in front of the user (cm, horizontal)", "widget":"slider", "min":30, "max":120, "step":1}'
+    - '// @input float downCm = 42 {"hint":"How far below eye level (cm)", "widget":"slider", "min":10, "max":80, "step":1}'
+    - "// @input float leftCm = 18 {\"hint\":\"How far to the left of the user's center line (cm)\", \"widget\":\"slider\", \"min\":0, \"max\":60, \"step\":1}"
+    - '// @input float followSpeed = 5 {"hint":"How quickly the pill catches up when the user turns (1/s)", "widget":"slider", "min":1, "max":15, "step":0.5}'
+    - '// @input float deadzoneDeg = 40 {"hint":"The pill stays put until the head turns this far (deg) away from it, so glancing toward it never pushes it away", "widget":"slider", "min":10, "max":90, "step":1}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"group_start", "label":"Style"}'
+    - '// @input string label = "Reset" {"hint":"Pill label"}'
+    - '// @input string style = "PrimaryNeutral" {"hint":"UIKit style for the pill", "widget":"combobox", "values":[{"label":"PrimaryNeutral", "value":"PrimaryNeutral"}, {"label":"Primary", "value":"Primary"}, {"label":"Secondary", "value":"Secondary"}, {"label":"Special", "value":"Special"}]}'
+    - '// @ui {"widget":"group_end"}'
