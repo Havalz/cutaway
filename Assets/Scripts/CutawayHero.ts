@@ -16,6 +16,7 @@ import {CutawayHeroUI} from "./CutawayHeroUI"
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
 import {MeshKit, setFade, spawnMesh, TrailRibbon} from "./CutawayGeometry"
 import {TableSurface} from "./CutawayHeroSurface"
+import {addPoly, bevelBox, bevelFrame, Blade, chamferRect, clipPoly, extrudeStrip, extrudeX, irisBlades, irisOpening, latheLoop, latheSmooth, lensProfile, lensRim, ringPts} from "./CutawayHeroParts"
 import {BODY_BOX_CENTER, BODY_BOX_SIZE, BODY_MIN_Y, FOOT_CENTER, FOOT_SIZE, FOOTPRINT, footReach, HeroPhysics, hullLowestY, LENS_LENGTH, LENS_RADIUS, LENS_Z0, maxFootDistance} from "./CutawayHeroPhysics"
 import {ENERGY, ink, keyWord, UI_WHITE} from "./CutawayStyle"
 import {clamp01, easeIn, easeInOutCubic, easeOutCubic, faceToward} from "./CutawayTween"
@@ -32,6 +33,8 @@ export interface HeroContext {
   parent: SceneObject
   glowMat: Material
   shellMat: Material
+  /** Solid code-built parts: PBR without textures, rim highlight (fresnel), additive. Null = glow look. */
+  solidMat: Material | null
   bodyMesh: RenderMesh
   lensMesh: RenderMesh
   labels: CutawayLabelsUI
@@ -133,6 +136,52 @@ const MIRROR_Z = -2.0
 const MIRROR_HALF = 2.0
 const SENSOR_W = 3.6
 const SENSOR_H = 2.4
+/** Mirror: half width, the direction down the plate from the hinge, the silvered face's normal. */
+const MIRROR_W = 1.9
+const MIRROR_DOWN = new vec3(0, -Math.SQRT1_2, Math.SQRT1_2)
+const MIRROR_FACE = new vec3(0, Math.SQRT1_2, Math.SQRT1_2)
+/** The sheen takes SHEEN_SWEEP s to cross the mirror, once every SHEEN_PERIOD s. */
+const SHEEN_PERIOD = 3.4
+const SHEEN_SWEEP = 2.2
+/**
+ * Lens elements, rear to front, around the thin-lens plane: radius, centre thickness, front and
+ * rear surface radii (positive = convex), position. Biconvex rear, positive meniscus, biconvex front.
+ */
+const ELEMENTS = [
+  {name: "Rear", r: 2.3, t: 0.98, R1: 8, R2: 5.5, z: -0.9},
+  {name: "Meniscus", r: 2.6, t: 0.55, R1: 4.2, R2: -6.5, z: 0.9},
+  {name: "Front", r: 2.4, t: 0.9, R1: 6.5, R2: 10, z: 2.0}
+]
+/**
+ * Roof pentaprism side outline (z, y), centred: entry face at the bottom and exit face at the back
+ * meet at 90°, the other corners are 112.5°. Its front-top face (index 2 → 3) is the roof.
+ */
+const PRISM_OUTLINE = [new vec2(-1.3, -1.0), new vec2(1.1, -1.0), new vec2(1.291, -0.538), new vec2(-0.265, 1.018), new vec2(-1.3, 0.589)]
+const PRISM_HX = 1.2
+const PRISM_BOTTOM = -1.0
+const PRISM_CENTER = new vec3(0, 3.0, -2.0)
+/** Shutter gate half extents and its slats (five per curtain). */
+const SHUTTER_HW = 1.85
+const SHUTTER_HH = 1.25
+const SLATS = 5
+const SLAT_HH = 0.31
+/** Body shell offset when taken apart, and in the light path: up and back, clear of every part. */
+const BODY_APART = new vec3(0, 5.5, -3.0)
+const BODY_FAR = new vec3(0, 11.2, -4.5)
+/** Shell fill in the light path. */
+const BODY_LIGHT_FILL = 0.06
+
+/** Solid looks: the HeroSolid PBR (texture-free, rim highlight) with these settings. */
+type SolidKind = "glass" | "mirror" | "metal" | "chrome" | "blade" | "dark" | "sensor"
+const SOLID: Record<SolidKind, {base: vec3; metallic: number; roughness: number; rimColor: vec3; rimExp: number; rim: number}> = {
+  glass: {base: new vec3(0.085, 0.09, 0.1), metallic: 0, roughness: 0.12, rimColor: new vec3(0.9, 0.95, 1), rimExp: 3, rim: 1.0},
+  mirror: {base: new vec3(0.15, 0.15, 0.16), metallic: 0.25, roughness: 0.08, rimColor: new vec3(0.95, 0.97, 1), rimExp: 3, rim: 0.9},
+  metal: {base: new vec3(0.3, 0.3, 0.32), metallic: 0.35, roughness: 0.4, rimColor: new vec3(1, 0.95, 0.86), rimExp: 2.5, rim: 0.5},
+  chrome: {base: new vec3(0.46, 0.46, 0.48), metallic: 0.5, roughness: 0.25, rimColor: new vec3(1, 0.97, 0.92), rimExp: 2.5, rim: 0.6},
+  blade: {base: new vec3(0.09, 0.09, 0.1), metallic: 0.3, roughness: 0.35, rimColor: new vec3(1, 0.95, 0.86), rimExp: 2.5, rim: 0.45},
+  dark: {base: new vec3(0.13, 0.13, 0.14), metallic: 0.2, roughness: 0.55, rimColor: new vec3(0.9, 0.93, 1), rimExp: 2.5, rim: 0.45},
+  sensor: {base: new vec3(0.05, 0.09, 0.1), metallic: 0.3, roughness: 0.2, rimColor: new vec3(0.55, 0.95, 1), rimExp: 2.5, rim: 0.6}
+}
 
 // ---------------- Timeline (s) ----------------
 const T_RISE = 0.7
@@ -168,15 +217,29 @@ interface Part {
   w: number
   e: number
   freed: boolean
-  mat: Material | null
+  /** Materials the part fades with (none for the imported lens and body). */
+  looks: Look[]
   /** Label anchor on the part (part-local) and where the words go (replica-local offset from the anchor). */
   anchor: vec3
   labelOff: vec3
 }
 
+/** A part material: a solid (fill and rim fade together) or a glow accent. */
+interface Look {
+  mat: Material
+  solid: boolean
+  base: vec3
+  rim: number
+}
+
 interface Beam {
   so: SceneObject
   rmv: RenderMeshVisual
+}
+
+function setLayerDeep(so: SceneObject, layer: LayerSet): void {
+  so.layer = layer
+  for (let i = 0; i < so.getChildrenCount(); i++) setLayerDeep(so.getChild(i), layer)
 }
 
 function flatDir(v: vec3): vec3 {
@@ -316,9 +379,10 @@ export class CameraHero {
   private barrelMat: Material
   private elementsSo: SceneObject
   private elementSos: SceneObject[] = []
-  private elementsMat: Material
   private apertureSo: SceneObject
-  private apertureMat: Material
+  private blades: Blade[] = []
+  private bladeSos: SceneObject[] = []
+  private irisOpen = 0
   private parts: Part[] = []
   private lensPart: Part
   private elementsPart: Part
@@ -331,6 +395,14 @@ export class CameraHero {
   private sensorPart: Part
   private mirrorPlate: SceneObject
   private curtains: SceneObject[] = []
+  private slats: SceneObject[][] = []
+  private sheen: SceneObject | null = null
+  private sheenMat: Material | null = null
+  private partTris: {[key: string]: {solid: number; accent: number}} = {}
+  private shellTris = 0
+  /** 0..1: how far the shell has moved toward its light-path place (eased). */
+  private farK = 0
+  private sensorGlow: BlurImage
   private sensorImage: BlurImage
   private sensorFlash: BlurImage
 
@@ -580,6 +652,13 @@ export class CameraHero {
     this.parts = []
     this.elementSos = []
     this.curtains = []
+    this.slats = []
+    this.blades = []
+    this.bladeSos = []
+    this.sheen = null
+    this.sheenMat = null
+    this.partTris = {}
+    this.farK = 0
     this.shotT = -1
     this.flashT = -1
     this.printBlur = -1
@@ -752,6 +831,33 @@ export class CameraHero {
     return this.s
   }
 
+  /**
+   * P5: for each interior part, the triangles of its solid meshes and of its line accents, how many
+   * of its visible meshes render with the solid PBR material, and how much of its fill shows.
+   */
+  getSolidReport(): {parts: {key: string; solidTris: number; accentTris: number; solidMeshes: number; fill: number}[]; partTris: number; shellTris: number} {
+    const keys = ["elements", "aperture", "mount", "mirror", "prism", "viewfinder", "shutter", "sensor"]
+    const parts = keys.map((key) => {
+      const p = this.parts.find((q) => q.key === key)
+      const t = this.partTris[key] ?? {solid: 0, accent: 0}
+      const solids = p ? p.looks.filter((l) => l.solid) : []
+      let solidMeshes = 0
+      const walk = (so: SceneObject) => {
+        if (!so.enabled) return
+        const rmv = so.getComponent("Component.RenderMeshVisual") as RenderMeshVisual
+        if (rmv && rmv.enabled && solids.some((l) => l.mat === rmv.mainMaterial)) solidMeshes++
+        for (let i = 0; i < so.getChildrenCount(); i++) walk(so.getChild(i))
+      }
+      if (p) walk(p.so)
+      const l = solids[0]
+      const fill = l ? l.mat.mainPass.baseColor.x / Math.max(1e-6, l.base.x) : 0
+      return {key, solidTris: t.solid, accentTris: t.accent, solidMeshes, fill}
+    })
+    let partTris = 0
+    for (const k of Object.keys(this.partTris)) partTris += this.partTris[k].solid + this.partTris[k].accent
+    return {parts, partTris, shellTris: this.shellTris}
+  }
+
   /** When the last launch started and when the replica came to rest (getTime(), -1 if not yet). */
   getTimes(): {launchedAt: number; landedAt: number} {
     return {launchedAt: this.launchedAt, landedAt: this.landedAt}
@@ -841,216 +947,363 @@ export class CameraHero {
     return m
   }
 
-  private part(key: string, label: string, so: SceneObject, rest: vec3, apart: vec3, a: number, w: number, mat: Material | null, anchor: vec3, labelOff: vec3): Part {
-    const p: Part = {key, label, so, rest, apart, a, w, e: 0, freed: false, mat, anchor, labelOff}
+  private part(key: string, label: string, so: SceneObject, rest: vec3, apart: vec3, a: number, w: number, looks: Look[], anchor: vec3, labelOff: vec3): Part {
+    const p: Part = {key, label, so, rest, apart, a, w, e: 0, freed: false, looks, anchor, labelOff}
     so.getTransform().setLocalPosition(rest)
     this.parts.push(p)
     return p
   }
 
-  /** Code-made parts: clean forms drawn as light (bright rims and edges, faint faces). */
+  /** A material for one kind of solid (glass, metal, ...): the HeroSolid PBR with its fresnel rim. */
+  private solidLook(kind: SolidKind): Look {
+    const spec = SOLID[kind]
+    if (!this.ctx.solidMat) {
+      const m = this.glowMat()
+      return {mat: m, solid: false, base: vec3.one(), rim: 0}
+    }
+    const m = this.ctx.solidMat.clone()
+    const pass = m.mainPass
+    pass.metallic = spec.metallic
+    pass.roughness = spec.roughness
+    pass.rimColor = spec.rimColor
+    pass.rimExponent = spec.rimExp
+    return {mat: m, solid: true, base: spec.base, rim: spec.rim}
+  }
+
+  /** Bright edge accents (the glow material: unlit, additive). */
+  private accentLook(): Look {
+    return {mat: this.glowMat(), solid: false, base: vec3.one(), rim: 0}
+  }
+
+  /** Spawn a part mesh and count its triangles under the part's key. */
+  private spawnPartMesh(parent: SceneObject, name: string, k: MeshKit, look: Look, key: string): SceneObject {
+    const t = this.partTris[key] ?? {solid: 0, accent: 0}
+    if (look.solid) t.solid += k.triangleCount
+    else t.accent += k.triangleCount
+    this.partTris[key] = t
+    return spawnMesh(parent, name, k.build(), look.mat, undefined, look.mat).so
+  }
+
+  /** Fade a part's looks: solids scale their fill and rim, accents their glow. */
+  private fadeLooks(p: Part, k: number): void {
+    const f = Math.max(0, k)
+    for (const l of p.looks) {
+      if (l.solid) {
+        l.mat.mainPass.baseColor = new vec4(l.base.x * f, l.base.y * f, l.base.z * f, 1)
+        l.mat.mainPass.rimIntensity = l.rim * f
+      } else {
+        setFade(l.mat, f)
+      }
+    }
+  }
+
+  /**
+   * Code-made interior parts with real volume (§5): solid meshes (lathe, extrude, bevel) in the
+   * HeroSolid PBR material, whose rim highlight is a real fresnel edge. Glass is faint (≈9% fill)
+   * with a bright rim; metal is lit by the replica's key and fill lights. Thin glow lines stay only
+   * as accents: glass edges, prism edges, the sensor's pixel grid, the mirror's sheen.
+   */
   private buildParts(): void {
     const R = this.replica
-    const tube = 0.035
+    const glassCol = ink(LIGHT, 0.1)
+    const metalCol = ink(UI_WHITE, 0.3)
     // ---- Lens (the model's barrel): unlock twist, then forward. ----
-    this.lensPart = this.part("lens", "Lens", this.barrelSo, vec3.zero(), new vec3(0, 0, BARREL_APART), 0.0, 0.3, null, vec3.zero(), vec3.zero())
+    this.lensPart = this.part("lens", "Lens", this.barrelSo, vec3.zero(), new vec3(0, 0, BARREL_APART), 0.0, 0.3, [], vec3.zero(), vec3.zero())
 
-    // ---- Lens elements: three glass elements spread inside the barrel. ----
+    // ---- Lens elements: biconvex front, meniscus, biconvex rear; real curvature and thickness. ----
     this.elementsSo = this.node(R, "HeroLensElements", new vec3(0, 0, PLANE_IN_BARREL))
-    this.elementsMat = this.glowMat()
-    const els = [
-      {r: 2.5, t: 0.5, z: -0.8},
-      {r: 2.85, t: 0.65, z: 0.05},
-      {r: 2.6, t: 0.45, z: 0.85}
-    ]
-    for (const e of els) {
-      const so = this.node(this.elementsSo, "Element", new vec3(0, 0, e.z))
-      const k = new MeshKit()
-      const prof = [
-        [0.001, -e.t / 2],
-        [e.r * 0.55, -e.t * 0.4],
-        [e.r * 0.88, -e.t * 0.22],
-        [e.r, -0.05],
-        [e.r, 0.05],
-        [e.r * 0.88, e.t * 0.22],
-        [e.r * 0.55, e.t * 0.4],
-        [0.001, e.t / 2]
-      ]
-      // Fresnel-like: the faces stay faint, the rim of the glass is bright.
-      const cols = [0.05, 0.06, 0.12, 0.4, 0.4, 0.12, 0.06, 0.05].map((a) => ink(LIGHT, a))
-      k.addLathe(vec3.zero(), vec3.forward(), prof, cols, 48)
-      k.addTube(circle(vec3.zero(), vec3.right(), vec3.up(), e.r, 48), tube, ink(LIGHT, 0.85), 4, 50)
-      spawnMesh(so, "ElementMesh", k.build(), this.ctx.glowMat, undefined, this.elementsMat)
-      so.enabled = false
-      this.elementSos.push(so)
-    }
-    this.elementsPart = this.part("elements", "Lens elements", this.elementsSo, new vec3(0, 0, PLANE_IN_BARREL), new vec3(0, 0, PLANE_IN_BARREL), 0.18, 0.24, this.elementsMat, new vec3(0, 2.85, 0.05), new vec3(0, 3.6, 0.6))
-
-    // ---- Aperture: an iris at the lens plane (opening A = f / N). ----
-    this.apertureSo = this.node(R, "HeroAperture", new vec3(0, 0, PLANE_IN_BARREL))
-    this.apertureMat = this.glowMat()
     {
-      const k = new MeshKit()
-      const rIn = HERO_A / 2 / SCALE
-      const rOut = 2.75
-      k.addTube(circle(vec3.zero(), vec3.right(), vec3.up(), rOut, 48), tube, ink(LIGHT, 0.7), 4, 50)
-      const blades = 7
-      for (let i = 0; i < blades; i++) {
-        const a0 = (i / blades) * Math.PI * 2
-        const a1 = a0 + 0.9
-        const p0 = new vec3(Math.cos(a0) * rIn, Math.sin(a0) * rIn, 0)
-        const p1 = new vec3(Math.cos(a1) * rOut, Math.sin(a1) * rOut, 0)
-        k.addTube([p0, p1], tube * 0.8, ink(LIGHT, 0.55), 4, 50)
+      const glass = this.solidLook("glass")
+      const edge = this.accentLook()
+      for (const e of ELEMENTS) {
+        const so = this.node(this.elementsSo, "Element" + e.name, new vec3(0, 0, e.z))
+        const k = new MeshKit()
+        latheSmooth(k, lensProfile(e.r, e.t, e.R1, e.R2, 12), 48, glassCol)
+        this.spawnPartMesh(so, "Glass", k, glass, "elements")
+        const a = new MeshKit()
+        const rim = lensRim(e.r, e.t, e.R1, e.R2)
+        a.addTube(ringPts(e.r + 0.006, rim.front, 64), 0.011, ink(LIGHT, 0.85), 4, 50)
+        a.addTube(ringPts(e.r + 0.006, rim.rear, 64), 0.011, ink(LIGHT, 0.5), 4, 50)
+        this.spawnPartMesh(so, "Edge", a, edge, "elements")
+        so.enabled = false
+        this.elementSos.push(so)
       }
-      k.addTube(circle(vec3.zero(), vec3.right(), vec3.up(), rIn, 36), tube, ink(LIGHT, 0.9), 4, 50)
-      k.addRing(vec3.zero(), vec3.forward(), (rIn + rOut) / 2, rOut - rIn, ink(LIGHT, 0.06), 48)
-      spawnMesh(this.apertureSo, "Iris", k.build(), this.ctx.glowMat, undefined, this.apertureMat)
+      const top = ELEMENTS[1]
+      this.elementsPart = this.part("elements", "Lens elements", this.elementsSo, new vec3(0, 0, PLANE_IN_BARREL), new vec3(0, 0, PLANE_IN_BARREL), 0.18, 0.24, [glass, edge], new vec3(0, top.r, top.z), new vec3(0, 3.4, 0.6))
     }
-    this.aperturePart = this.part("aperture", "Aperture", this.apertureSo, new vec3(0, 0, PLANE_IN_BARREL), new vec3(0, 0, PLANE_IN_BARREL), 0.28, 0.22, this.apertureMat, new vec3(0, -2.75, 0), new vec3(0, -3.4, 0.2))
 
-    // ---- Body shell: lifts up and back, fades to an outline. ----
-    this.bodyPart = this.part("body", "Body", this.bodySo, vec3.zero(), new vec3(0, 5.5, -3.0), 0.38, 0.24, null, vec3.zero(), vec3.zero())
+    // ---- Aperture: seven curved, overlapping blades in a housing ring, open at f/2.8. ----
+    this.apertureSo = this.node(R, "HeroAperture", new vec3(0, 0, PLANE_IN_BARREL))
+    {
+      const ring = this.solidLook("metal")
+      const bladeLook = this.solidLook("blade")
+      const edge = this.accentLook()
+      const k = new MeshKit()
+      latheLoop(k, chamferRect(2.45, 2.85, -0.13, 0.13, 0.04), 64, metalCol)
+      this.spawnPartMesh(this.apertureSo, "IrisRing", k, ring, "aperture")
+      this.blades = irisBlades(7, HERO_A / 2 / SCALE, 2.62, 1.55, 22)
+      this.bladeSos = this.blades.map((b, i) => {
+        const so = this.node(this.apertureSo, "Blade" + i, new vec3(b.pivot.x, b.pivot.y, 0))
+        const bk = new MeshKit()
+        const z = (i - 3) * 0.009
+        extrudeStrip(bk, b.inner, b.outer, z - 0.011, z + 0.011, metalCol)
+        this.spawnPartMesh(so, "BladeMesh", bk, bladeLook, "aperture")
+        // The opening's edge: a faint warm line along the blade's inner arc.
+        const ak = new MeshKit()
+        ak.addTube(b.inner.slice(3, b.inner.length - 3).map((p) => new vec3(p.x, p.y, z + 0.014)), 0.008, ink(LIGHT, 0.5), 4, 50)
+        this.spawnPartMesh(so, "BladeEdge", ak, edge, "aperture")
+        return so
+      })
+      this.setIris(HERO_A / 2 / SCALE)
+      this.aperturePart = this.part("aperture", "Aperture", this.apertureSo, new vec3(0, 0, PLANE_IN_BARREL), new vec3(0, 0, PLANE_IN_BARREL), 0.28, 0.22, [ring, bladeLook, edge], new vec3(0, -2.85, 0), new vec3(0, -3.4, 0.2))
+    }
 
-    // ---- Lens mount ring. ----
+    // ---- Body shell: lifts up and back, fades; in the light path it clears every part. ----
+    this.bodyPart = this.part("body", "Body", this.bodySo, vec3.zero(), BODY_APART, 0.38, 0.24, [], vec3.zero(), vec3.zero())
+
+    // ---- Lens mount: a solid chromed ring, three bayonet tabs, four screws. ----
     {
       const so = this.node(R, "HeroMount", vec3.zero())
-      const mat = this.glowMat()
+      const chrome = this.solidLook("chrome")
+      const edge = this.accentLook()
       const k = new MeshKit()
-      k.addTube(circle(vec3.zero(), vec3.right(), vec3.up(), 2.75, 56), tube * 1.4, ink(UI_WHITE, 0.6), 4, 50)
-      k.addTube(circle(new vec3(0, 0, -0.25), vec3.right(), vec3.up(), 2.75, 56), tube, ink(UI_WHITE, 0.35), 4, 50)
+      latheLoop(k, chamferRect(2.72, 3.3, -0.5, 0, 0.06), 72, metalCol)
       for (let i = 0; i < 3; i++) {
-        const a = (i / 3) * Math.PI * 2 + 0.3
-        const arc: vec3[] = []
-        for (let j = 0; j <= 8; j++) {
-          const b = a + (j / 8) * 0.7
-          arc.push(new vec3(Math.cos(b) * 3.0, Math.sin(b) * 3.0, 0))
-        }
-        k.addTube(arc, tube * 1.2, ink(UI_WHITE, 0.55), 4, 50)
+        const a0 = (25 + i * 120) * DEG
+        latheLoop(k, chamferRect(2.36, 2.75, -0.48, -0.33, 0.025), 14, metalCol, a0, a0 + 55 * DEG)
       }
-      spawnMesh(so, "MountMesh", k.build(), this.ctx.glowMat, undefined, mat)
-      this.part("mount", "Lens mount", so, vec3.zero(), new vec3(0, 0, 0.5), 0.5, 0.2, mat, new vec3(0, 3.0, 0), new vec3(0, 3.0, -0.4))
+      for (let i = 0; i < 4; i++) {
+        const a = (45 + i * 90) * DEG
+        latheLoop(k, [new vec2(0, 0), new vec2(0.12, 0), new vec2(0.12, 0.03), new vec2(0.08, 0.06), new vec2(0, 0.06)], 16, metalCol, 0, Math.PI * 2, new vec3(Math.cos(a) * 3.02, Math.sin(a) * 3.02, 0))
+      }
+      this.spawnPartMesh(so, "MountMesh", k, chrome, "mount")
+      const a = new MeshKit()
+      a.addTube(ringPts(2.72, 0.004, 72), 0.012, ink(UI_WHITE, 0.55), 4, 50)
+      this.spawnPartMesh(so, "MountEdge", a, edge, "mount")
+      this.part("mount", "Lens mount", so, vec3.zero(), new vec3(0, 0, 0.5), 0.5, 0.2, [chrome, edge], new vec3(0, -3.3, -0.25), new vec3(0, -2.4, 0.9))
     }
 
-    // ---- Reflex mirror: hinged at its top-back edge, 45° down to the front. ----
+    // ---- Reflex mirror: a thin bevelled plate on a visible hinge, a slow sheen sweeping across. ----
     {
       const hinge = new vec3(0, MIRROR_HALF * ROOT2, MIRROR_Z - MIRROR_HALF * ROOT2)
       const so = this.node(R, "HeroMirror", hinge)
       this.mirrorPlate = this.node(so, "MirrorPlate", vec3.zero())
-      const mat = this.glowMat()
-      const d = new vec3(0, -ROOT2, ROOT2)
-      const len = MIRROR_HALF * 2
-      const hw = 1.9
-      const c = d.uniformScale(len / 2)
+      const mirror = this.solidLook("mirror")
+      const metal = this.solidLook("metal")
+      const edge = this.accentLook()
+      const X = new vec3(1, 0, 0)
+      const d = MIRROR_DOWN
+      const face = MIRROR_FACE
       const k = new MeshKit()
-      k.addQuad(c, new vec3(hw, 0, 0), d.uniformScale(len / 2), ink(LIGHT, 0.1))
-      const corners = [new vec3(-hw, 0, 0), new vec3(hw, 0, 0), d.uniformScale(len).add(new vec3(hw, 0, 0)), d.uniformScale(len).add(new vec3(-hw, 0, 0))]
-      k.addTube([corners[0], corners[1], corners[2], corners[3], corners[0]], tube, ink(LIGHT, 0.85), 4, 50)
-      k.addTube([corners[0].add(d.uniformScale(0.6)), corners[1].add(d.uniformScale(1.6))], tube * 0.7, ink(LIGHT, 0.35), 4, 50)
-      spawnMesh(this.mirrorPlate, "MirrorMesh", k.build(), this.ctx.glowMat, undefined, mat)
-      this.mirrorPart = this.part("mirror", "Reflex mirror", so, hinge, hinge.add(new vec3(0, 0, 0.3)), 0.55, 0.2, mat, d.uniformScale(len), new vec3(0, -2.6, 0.8))
+      bevelBox(k, d.uniformScale(MIRROR_HALF + 0.08), X, d, face, new vec3(MIRROR_W, MIRROR_HALF, 0.05), 0.025, glassCol)
+      this.spawnPartMesh(this.mirrorPlate, "MirrorMesh", k, mirror, "mirror")
+      // Hinge: a pin across the top edge with two knuckles (built along Z, turned onto X).
+      const hk = new MeshKit()
+      latheLoop(hk, chamferRect(0, 0.08, -2.1, 2.1, 0.02), 20, metalCol)
+      for (const x of [-1.55, 1.55]) latheLoop(hk, chamferRect(0, 0.16, x - 0.28, x + 0.28, 0.03), 24, metalCol)
+      const hingeSo = this.node(so, "MirrorHinge", vec3.zero())
+      hingeSo.getTransform().setLocalRotation(quat.angleAxis(90 * DEG, vec3.up()))
+      this.spawnPartMesh(hingeSo, "HingeMesh", hk, metal, "mirror")
+      // Edge accents on the silvered face.
+      const ek = new MeshKit()
+      const o = face.uniformScale(0.052)
+      const c0 = d.uniformScale(0.08)
+      const c1 = d.uniformScale(2 * MIRROR_HALF + 0.08)
+      const xs = X.uniformScale(MIRROR_W)
+      ek.addTube([c0.sub(xs).add(o), c0.add(xs).add(o), c1.add(xs).add(o), c1.sub(xs).add(o), c0.sub(xs).add(o)], 0.01, ink(LIGHT, 0.55), 4, 50)
+      this.spawnPartMesh(this.mirrorPlate, "MirrorEdge", ek, edge, "mirror")
+      // Sheen: a soft bright line across the plate; it slides down the plate (see updateSheen).
+      this.sheen = this.node(this.mirrorPlate, "MirrorSheen", vec3.zero())
+      const sk = new MeshKit()
+      const rows = [-0.32, -0.07, 0, 0.07, 0.32]
+      const ks = [0, 0.3, 1, 0.3, 0]
+      const base = sk.vertexCount
+      for (let r = 0; r < rows.length; r++) {
+        for (const sx of [-1, 1]) sk.vert(X.uniformScale(sx * (MIRROR_W - 0.06)).add(d.uniformScale(rows[r])).add(face.uniformScale(0.06)), face, ink(UI_WHITE, ks[r]))
+      }
+      for (let r = 0; r < rows.length - 1; r++) {
+        const i0 = base + r * 2
+        sk.tri(i0, i0 + 1, i0 + 3)
+        sk.tri(i0, i0 + 3, i0 + 2)
+      }
+      this.sheenMat = this.glowMat()
+      this.spawnPartMesh(this.sheen, "SheenMesh", sk, {mat: this.sheenMat, solid: false, base: vec3.one(), rim: 0}, "mirror")
+      this.mirrorPart = this.part("mirror", "Reflex mirror", so, hinge, hinge.add(new vec3(0, 0, 0.3)), 0.55, 0.2, [mirror, metal, edge], d.uniformScale(2 * MIRROR_HALF), new vec3(0, -2.6, 0.8))
     }
 
-    // ---- Pentaprism and focusing screen (above the mirror). ----
+    // ---- Pentaprism: a solid glass roof prism over a thin focusing screen. ----
     {
-      const center = new vec3(0, 3.0, MIRROR_Z)
+      const center = PRISM_CENTER
       const so = this.node(R, "HeroPentaprism", center)
-      const mat = this.glowMat()
-      const k = new MeshKit()
-      const hx = 1.6
-      // Cross-section in (y, z), prism-local.
-      const poly = [new vec2(-1.25, 1.3), new vec2(-1.25, -1.3), new vec2(0.1, -1.75), new vec2(1.4, -0.45), new vec2(1.0, 1.0)]
-      const P = (q: vec2, x: number) => new vec3(x, q.x, q.y)
-      for (const x of [-hx, hx]) k.addTube(poly.concat([poly[0]]).map((q) => P(q, x)), tube, ink(LIGHT, 0.75), 4, 50)
-      for (const q of poly) k.addTube([P(q, -hx), P(q, hx)], tube * 0.8, ink(LIGHT, 0.5), 4, 50)
-      // Faint glass faces.
-      for (let i = 0; i < poly.length; i++) {
-        const a = poly[i]
-        const b = poly[(i + 1) % poly.length]
-        const mid = P(new vec2((a.x + b.x) / 2, (a.y + b.y) / 2), 0)
-        const along = P(b, 0).sub(P(a, 0)).uniformScale(0.5)
-        k.addQuad(mid, new vec3(hx, 0, 0), along, ink(LIGHT, 0.04))
+      const glass = this.solidLook("glass")
+      const edge = this.accentLook()
+      // Side outline (z, y): entry face at the bottom, exit face at the back (90° apart), the
+      // other three corners 112.5°; the front-top face is the roof, cut into two faces at 90°.
+      let faces = extrudeX(PRISM_OUTLINE, PRISM_HX)
+      const ridge = new vec3(0, PRISM_OUTLINE[2].y, PRISM_OUTLINE[2].x)
+      for (const s of [-1, 1]) {
+        const n = new vec3(s * ROOT2, 0.5, 0.5)
+        faces = clipPoly(faces, n, n.dot(ridge))
       }
-      // Focusing screen: a thin plate under the prism.
-      k.addTube([new vec3(-hx, -1.45, -1.3), new vec3(hx, -1.45, -1.3), new vec3(hx, -1.45, 1.3), new vec3(-hx, -1.45, 1.3), new vec3(-hx, -1.45, -1.3)], tube * 0.8, ink(LIGHT, 0.45), 4, 50)
-      spawnMesh(so, "PrismMesh", k.build(), this.ctx.glowMat, undefined, mat)
-      this.prismPart = this.part("prism", "Pentaprism", so, center, center.add(new vec3(0, 2.2, 0)), 0.6, 0.2, mat, new vec3(0, 1.4, -0.45), new vec3(0, 2.2, 0.6))
+      const k = new MeshKit()
+      const edges = addPoly(k, faces, glassCol)
+      bevelBox(k, new vec3(0, PRISM_BOTTOM - 0.16, 0.05), new vec3(1, 0, 0), vec3.up(), new vec3(0, 0, 1), new vec3(1.45, 0.035, 1.2), 0.015, glassCol)
+      this.spawnPartMesh(so, "PrismMesh", k, glass, "prism")
+      const ek = new MeshKit()
+      for (const [a, b] of edges) ek.addTube([a, b], 0.011, ink(LIGHT, 0.6), 4, 50)
+      this.spawnPartMesh(so, "PrismEdges", ek, edge, "prism")
+      this.prismPart = this.part("prism", "Pentaprism", so, center, center.add(new vec3(0, 2.2, 0)), 0.6, 0.2, [glass, edge], ridge, new vec3(0, 1.8, 0.9))
     }
 
-    // ---- Viewfinder eyepiece (behind the prism). ----
+    // ---- Viewfinder: a small eyepiece tube with a rubber cup and a lens. ----
     {
-      const pos = new vec3(0, 3.4, -6.6)
+      const pos = new vec3(0, 2.8, -6.3)
       const so = this.node(R, "HeroViewfinder", pos)
-      const mat = this.glowMat()
+      const dark = this.solidLook("dark")
+      const glass = this.solidLook("glass")
+      const edge = this.accentLook()
       const k = new MeshKit()
-      k.addTube(circle(vec3.zero(), vec3.right(), vec3.up(), 0.9, 36), tube, ink(LIGHT, 0.8), 4, 50)
-      k.addTube(circle(new vec3(0, 0, -0.6), vec3.right(), vec3.up(), 0.9, 36), tube, ink(LIGHT, 0.5), 4, 50)
-      for (let i = 0; i < 4; i++) {
-        const a = (i / 4) * Math.PI * 2 + Math.PI / 4
-        k.addTube([new vec3(Math.cos(a) * 0.9, Math.sin(a) * 0.9, 0), new vec3(Math.cos(a) * 0.9, Math.sin(a) * 0.9, -0.6)], tube * 0.7, ink(LIGHT, 0.4), 4, 50)
-      }
-      k.addLathe(new vec3(0, 0, -0.3), vec3.forward(), [[0.001, -0.15], [0.75, -0.04], [0.75, 0.04], [0.001, 0.15]], [ink(LIGHT, 0.05), ink(LIGHT, 0.35), ink(LIGHT, 0.35), ink(LIGHT, 0.05)], 32)
-      spawnMesh(so, "EyepieceMesh", k.build(), this.ctx.glowMat, undefined, mat)
-      this.viewfinderPart = this.part("viewfinder", "Viewfinder", so, pos, pos.add(new vec3(0, 2.2, -1.6)), 0.64, 0.2, mat, new vec3(0, 0.9, -0.3), new vec3(0, 2.0, -0.8))
+      latheLoop(k, [new vec2(0.78, -0.95), new vec2(1.18, -0.95), new vec2(1.18, -0.72), new vec2(0.98, -0.45), new vec2(0.98, 0.7), new vec2(0.78, 0.7)], 40, metalCol)
+      this.spawnPartMesh(so, "EyepieceTube", k, dark, "viewfinder")
+      const g = new MeshKit()
+      latheSmooth(g, lensProfile(0.76, 0.34, 2.0, 2.0, 8), 36, glassCol, 0, Math.PI * 2, new vec3(0, 0, 0.1))
+      this.spawnPartMesh(so, "EyepieceLens", g, glass, "viewfinder")
+      const a = new MeshKit()
+      a.addTube(ringPts(1.18, -0.95, 48), 0.012, ink(LIGHT, 0.5), 4, 50)
+      a.addTube(ringPts(0.77, 0.1, 40), 0.009, ink(LIGHT, 0.7), 4, 50)
+      this.spawnPartMesh(so, "EyepieceEdge", a, edge, "viewfinder")
+      this.viewfinderPart = this.part("viewfinder", "Viewfinder", so, pos, pos.add(new vec3(0, 2.2, -1.6)), 0.64, 0.2, [dark, glass, edge], new vec3(0, 0.98, -0.1), new vec3(0, 2.0, -0.8))
     }
 
-    // ---- Focal-plane shutter: frame and two curtains. ----
+    // ---- Focal-plane shutter: a frame and two curtains of five slats that really move. ----
     {
       const pos = new vec3(0, 0, -3.95)
       const so = this.node(R, "HeroShutter", pos)
-      const mat = this.glowMat()
+      const metal = this.solidLook("metal")
+      const slatLook = this.solidLook("blade")
       const k = new MeshKit()
-      const hw = 2.0
-      const hh = 1.4
-      k.addTube([new vec3(-hw, -hh, 0), new vec3(hw, -hh, 0), new vec3(hw, hh, 0), new vec3(-hw, hh, 0), new vec3(-hw, -hh, 0)], tube, ink(UI_WHITE, 0.55), 4, 50)
-      spawnMesh(so, "ShutterFrame", k.build(), this.ctx.glowMat, undefined, mat)
-      for (let i = 0; i < 2; i++) {
-        const cso = this.node(so, i === 0 ? "FirstCurtain" : "SecondCurtain", vec3.zero())
-        const ck = new MeshKit()
-        ck.addQuad(new vec3(0, 0, 0.02 * (i + 1)), new vec3(hw - 0.05, 0, 0), new vec3(0, hh - 0.05, 0), ink(LIGHT, 0.14))
-        for (let j = 0; j < 5; j++) {
-          const y = -hh + 0.1 + (j / 4) * (2 * hh - 0.2)
-          ck.addTube([new vec3(-hw + 0.05, y, 0.02 * (i + 1)), new vec3(hw - 0.05, y, 0.02 * (i + 1))], tube * 0.7, ink(LIGHT, 0.45), 4, 50)
+      bevelFrame(k, vec3.zero(), new vec2(SHUTTER_HW, SHUTTER_HH), new vec2(SHUTTER_HW + 0.35, SHUTTER_HH + 1.0), 0.08, 0.02, metalCol)
+      this.spawnPartMesh(so, "ShutterFrame", k, metal, "shutter")
+      this.slats = []
+      for (let c = 0; c < 2; c++) {
+        const cso = this.node(so, c === 0 ? "FirstCurtain" : "SecondCurtain", vec3.zero())
+        const row: SceneObject[] = []
+        for (let j = 0; j < SLATS; j++) {
+          const sso = this.node(cso, "Slat" + j, vec3.zero())
+          const sk = new MeshKit()
+          bevelBox(sk, vec3.zero(), new vec3(1, 0, 0), vec3.up(), new vec3(0, 0, 1), new vec3(SHUTTER_HW + 0.1, SLAT_HH, 0.012), 0.008, metalCol)
+          this.spawnPartMesh(sso, "SlatMesh", sk, slatLook, "shutter")
+          row.push(sso)
         }
-        spawnMesh(cso, "CurtainMesh", ck.build(), this.ctx.glowMat, undefined, mat)
+        this.slats.push(row)
         this.curtains.push(cso)
       }
-      this.shutterPart = this.part("shutter", "Shutter", so, pos, new vec3(0, 0, -4.7), 0.7, 0.2, mat, new vec3(0, -1.4, 0), new vec3(0, -2.2, 1.3))
+      this.shutterPart = this.part("shutter", "Shutter", so, pos, new vec3(0, 0, -4.7), 0.7, 0.2, [metal, slatLook], new vec3(0, -SHUTTER_HH - 1.0, 0), new vec3(0, -1.2, 1.3))
       this.setCurtains(1, 0)
     }
 
-    // ---- Image sensor (cyan: it turns light into signal). ----
+    // ---- Image sensor: a thin plate in its package, a faint cyan pixel grid that glows brighter where the image lands. ----
     {
       const pos = new vec3(0, 0, SENSOR_Z)
       const so = this.node(R, "HeroSensor", pos)
-      const mat = this.glowMat()
-      const k = new MeshKit()
+      const plate = this.solidLook("sensor")
+      const dark = this.solidLook("dark")
+      const grid = this.accentLook()
       const hw = SENSOR_W / 2
       const hh = SENSOR_H / 2
-      k.addQuad(vec3.zero(), new vec3(hw, 0, 0), new vec3(0, hh, 0), ink(SIGNAL, 0.1))
-      k.addTube([new vec3(-hw, -hh, 0), new vec3(hw, -hh, 0), new vec3(hw, hh, 0), new vec3(-hw, hh, 0), new vec3(-hw, -hh, 0)], tube, ink(SIGNAL, 0.9), 4, 50)
-      for (let i = 1; i < 12; i++) {
-        const x = -hw + (i / 12) * SENSOR_W
-        k.addTube([new vec3(x, -hh, 0.01), new vec3(x, hh, 0.01)], tube * 0.35, ink(SIGNAL, 0.2), 3, 50)
+      const X = new vec3(1, 0, 0)
+      const Y = vec3.up()
+      const Z = new vec3(0, 0, 1)
+      const pk = new MeshKit()
+      bevelBox(pk, vec3.zero(), X, Y, Z, new vec3(hw, hh, 0.03), 0.012, ink(SIGNAL, 0.1))
+      this.spawnPartMesh(so, "SensorPlate", pk, plate, "sensor")
+      const fk = new MeshKit()
+      bevelFrame(fk, new vec3(0, 0, -0.05), new vec2(hw + 0.02, hh + 0.02), new vec2(hw + 0.45, hh + 0.4), 0.14, 0.025, metalCol)
+      bevelBox(fk, new vec3(0, 0, -0.17), X, Y, Z, new vec3(hw + 0.7, hh + 0.6, 0.05), 0.02, metalCol)
+      this.spawnPartMesh(so, "SensorPackage", fk, dark, "sensor")
+      const gk = new MeshKit()
+      const z = 0.034
+      const cols = 36
+      const rowsN = 24
+      for (let i = 1; i < cols; i++) {
+        const x = -hw + (i / cols) * SENSOR_W
+        gk.addRectXY(x - 0.005, -hh, x + 0.005, hh, ink(SIGNAL, 0.16))
       }
-      for (let j = 1; j < 8; j++) {
-        const y = -hh + (j / 8) * SENSOR_H
-        k.addTube([new vec3(-hw, y, 0.01), new vec3(hw, y, 0.01)], tube * 0.35, ink(SIGNAL, 0.2), 3, 50)
+      for (let j = 1; j < rowsN; j++) {
+        const y = -hh + (j / rowsN) * SENSOR_H
+        gk.addRectXY(-hw, y - 0.005, hw, y + 0.005, ink(SIGNAL, 0.16))
       }
-      spawnMesh(so, "SensorMesh", k.build(), this.ctx.glowMat, undefined, mat)
+      gk.addPolylineXY([new vec2(-hw, -hh), new vec2(hw, -hh), new vec2(hw, hh), new vec2(-hw, hh), new vec2(-hw, -hh)], 0.02, ink(SIGNAL, 0.7))
+      const gso = this.spawnPartMesh(so, "PixelGrid", gk, grid, "sensor")
+      gso.getTransform().setLocalPosition(new vec3(0, 0, z))
       const img = this.node(so, "SensorImage", new vec3(0, 0, 0.05))
+      this.sensorGlow = new BlurImage(img, "SensorGlow", this.ctx.glowMat, SIGNAL, 1)
       this.sensorImage = new BlurImage(img, "SensorImageBlur", this.ctx.glowMat, LIGHT, 1)
       this.sensorFlash = new BlurImage(img, "SensorFlash", this.ctx.glowMat, SIGNAL, 1)
+      this.sensorGlow.update(0.5, 0, 0)
       this.sensorImage.update(0.5, 0, 0)
       this.sensorFlash.update(0.5, 0, 0)
-      this.sensorPart = this.part("sensor", "Image sensor", so, pos, new vec3(0, 0, SENSOR_APART_Z), 0.78, 0.22, mat, new vec3(0, -SENSOR_H / 2, 0), new vec3(0, -3.0, -1.8))
+      this.sensorPart = this.part("sensor", "Image sensor", so, pos, new vec3(0, 0, SENSOR_APART_Z), 0.78, 0.22, [plate, dark, grid], new vec3(0, -hh - 0.4, 0), new vec3(0, -2.6, -1.8))
     }
 
     for (const p of this.parts) {
-      if (p.mat) {
-        setFade(p.mat, 0)
+      if (p.looks.length) {
+        this.fadeLooks(p, 0)
         p.so.enabled = false
       }
     }
+    // The solids are lit by the replica's own key and fill lights, which only light its layer.
+    setLayerDeep(R, this.layer)
+    this.countShellTris()
+    let total = 0
+    const per: string[] = []
+    for (const key of Object.keys(this.partTris)) {
+      const t = this.partTris[key]
+      total += t.solid + t.accent
+      per.push(key + " " + t.solid + "+" + t.accent)
+    }
+    print("Cutaway: hero parts: " + total + " triangles (" + per.join(", ") + "); replica " + (total + this.shellTris) + " with the shell; iris open r " + this.irisOpen.toFixed(3) + " (f/2.8 wants " + (HERO_A / 2 / SCALE).toFixed(3) + ")")
+  }
+
+  /** Triangles of the imported shell (body and lens meshes). */
+  private countShellTris(): void {
+    this.shellTris = 0
+    for (const m of [this.ctx.bodyMesh, this.ctx.lensMesh]) {
+      try {
+        this.shellTris += Math.round(m.getIndexBuffer().length / 3)
+      } catch (e) {
+        // Not readable at runtime: leave it out of the count.
+      }
+    }
+  }
+
+  /** Close the iris to an opening of radius `r` (aperture-local cm): every blade turns about its pivot by the same angle. */
+  private setIris(r: number): void {
+    if (!this.blades.length) return
+    const open0 = irisOpening(this.blades, 0)
+    const dir = irisOpening(this.blades, 0.05) < open0 ? 1 : -1
+    let lo = 0
+    let hi = 1.2
+    if (r >= open0) hi = 0
+    for (let i = 0; i < 30; i++) {
+      const mid = (lo + hi) / 2
+      if (irisOpening(this.blades, dir * mid) > r) lo = mid
+      else hi = mid
+    }
+    const ang = dir * ((lo + hi) / 2)
+    this.irisOpen = irisOpening(this.blades, ang)
+    for (const so of this.bladeSos) so.getTransform().setLocalRotation(quat.angleAxis(ang, new vec3(0, 0, 1)))
+  }
+
+  /** The mirror's sheen: a bright line sliding slowly down the plate, then a pause. */
+  private updateSheen(): void {
+    if (!this.sheen || !this.sheenMat) return
+    const vis = this.mirrorPart.so.enabled ? clamp01(this.mirrorPart.e) * this.globalFade : 0
+    const cyc = (getTime() % SHEEN_PERIOD) / SHEEN_SWEEP
+    const u = clamp01(cyc)
+    const s = 0.25 + u * (2 * MIRROR_HALF - 0.5)
+    this.sheen.getTransform().setLocalPosition(MIRROR_DOWN.uniformScale(0.08 + s))
+    setFade(this.sheenMat, cyc <= 1 ? vis * Math.pow(Math.sin(Math.PI * u), 0.7) : 0)
   }
 
   /**
@@ -1758,11 +2011,15 @@ export class CameraHero {
 
   /** Separate the parts for slider value `s`; `lightK` blends the barrel toward its focus position. */
   private applyApart(s: number, lightK: number): void {
+    // In the light path the shell moves on, up and back, clear of every part (eased, ~0.3 s).
+    this.farK += (lightK - this.farK) * (1 - Math.exp(-getDeltaTime() / 0.09))
+    if (Math.abs(lightK - this.farK) < 1e-3) this.farK = lightK
     for (const p of this.parts) {
       const raw = clamp01((s - p.a) / p.w)
       const e = easeInOutCubic(raw)
       p.e = e
-      if (p !== this.lensPart && p !== this.elementsPart && p !== this.aperturePart) p.so.getTransform().setLocalPosition(vec3.lerp(p.rest, p.apart, e))
+      if (p === this.bodyPart) p.so.getTransform().setLocalPosition(vec3.lerp(p.rest, vec3.lerp(p.apart, BODY_FAR, this.farK), e))
+      else if (p !== this.lensPart && p !== this.elementsPart && p !== this.aperturePart) p.so.getTransform().setLocalPosition(vec3.lerp(p.rest, p.apart, e))
       if (raw > 0.02 && !p.freed) {
         p.freed = true
         this.ctx.sound("part", this.partWorld(p))
@@ -1770,10 +2027,10 @@ export class CameraHero {
       } else if (raw <= 0.0 && p.freed) {
         p.freed = false
       }
-      if (p.mat) {
+      if (p.looks.length) {
         const vis = p === this.aperturePart ? e : clamp01(raw / 0.35)
         p.so.enabled = vis > 0.001 || (this.state === "light" && p !== this.aperturePart)
-        setFade(p.mat, p.so.enabled ? Math.max(vis, this.state === "light" ? 1 : 0) * this.globalFade : 0)
+        this.fadeLooks(p, p.so.enabled ? Math.max(vis, this.state === "light" ? 1 : 0) * this.globalFade : 0)
       }
     }
     // Lens: unlock (reverse twist), then forward.
@@ -1792,7 +2049,7 @@ export class CameraHero {
     // Elements spread inside the barrel; the aperture opens between them.
     const ee = this.elementsPart.e
     const spread = 1 + 0.85 * ee
-    const zs = [-0.8, 0.05, 0.85]
+    const zs = ELEMENTS.map((el) => el.z)
     this.elementSos.forEach((so, i) => {
       so.getTransform().setLocalPosition(new vec3(0, 0, zs[i] * spread))
       so.enabled = ee > 0.001 || lightK > 0
@@ -1803,7 +2060,8 @@ export class CameraHero {
     this.apertureSo.getTransform().setLocalScale(vec3.one().uniformScale(Math.max(1e-4, this.aperturePart.e)))
     // The lens barrel turns see-through as its elements spread, so they show inside it.
     this.barrelFill = 1 - 0.6 * ee
-    this.bodyFill = 1 - 0.85 * this.bodyPart.e
+    this.bodyFill = 1 - (0.85 + (1 - 0.85 - BODY_LIGHT_FILL) * this.farK) * this.bodyPart.e
+    this.updateSheen()
     this.updatePartLabels()
   }
 
@@ -1816,7 +2074,7 @@ export class CameraHero {
     const rot = rtr.getWorldRotation()
     const sc = rtr.getWorldScale().x
     for (const p of this.parts) {
-      if (!p.mat) continue
+      if (!p.looks.length) continue
       const id = "hero_" + p.key
       // In live view only the parts the light path is about keep their labels.
       const keep = !this.live || p.key === "elements" || p.key === "sensor"
@@ -1830,7 +2088,7 @@ export class CameraHero {
   }
 
   private hideAllLabels(): void {
-    for (const p of this.parts) if (p.mat) this.ctx.labels.hide("hero_" + p.key)
+    for (const p of this.parts) if (p.looks.length) this.ctx.labels.hide("hero_" + p.key)
   }
 
   // =====================================================================================
@@ -2082,6 +2340,8 @@ export class CameraHero {
     // The image on the sensor: inverted, h_i tall, blurred by c (local units).
     const show = !mirrorDown
     this.sensorImage.update(-o.h_i / SCALE, o.c / SCALE, show ? a : 0)
+    // The pixels under the image light up: a soft cyan glow, a little wider than the image.
+    this.sensorGlow.update(-o.h_i / SCALE, o.c / SCALE + 0.15, (show ? a : 0) * 0.6)
   }
 
   private buildBubble(): void {
@@ -2172,14 +2432,17 @@ export class CameraHero {
   // =====================================================================================
 
   private setCurtains(first: number, second: number): void {
-    // Curtain cover 0..1: 1 = covers the gate. First opens downward, second closes from the top.
-    const hh = 1.4
-    const f = this.curtains[0].getTransform()
-    f.setLocalScale(new vec3(1, Math.max(0.04, first), 1))
-    f.setLocalPosition(new vec3(0, -hh + hh * Math.max(0.04, first), 0))
-    const s = this.curtains[1].getTransform()
-    s.setLocalScale(new vec3(1, Math.max(0.04, second), 1))
-    s.setLocalPosition(new vec3(0, hh - hh * Math.max(0.04, second), 0))
+    // Curtain cover 0..1 (1 = covers the gate). The first curtain opens downward: its slats slide
+    // down and stack below the gate. The second closes from the top: its slats unstack downward.
+    const step = (2 * SHUTTER_HH - 2 * SLAT_HH) / (SLATS - 1)
+    for (let c = 0; c < this.slats.length; c++) {
+      const cover = clamp01(c === 0 ? first : second)
+      this.slats[c].forEach((so, j) => {
+        const spread = -SHUTTER_HH + SLAT_HH + j * step
+        const stack = c === 0 ? -SHUTTER_HH - 0.42 + j * 0.05 : SHUTTER_HH + 0.42 - (SLATS - 1 - j) * 0.05
+        so.getTransform().setLocalPosition(new vec3(0, stack + (spread - stack) * cover, (c === 0 ? 0.07 : 0.11) + j * 0.004))
+      })
+    }
   }
 
   private updateShot(dt: number): void {
@@ -2376,6 +2639,7 @@ export class CameraHero {
       if (this.bubbleLeader) this.bubbleLeader.so.enabled = k > 0.05
     }
     this.sensorImage.update(0.5, 0, 0)
+    this.sensorGlow.update(0.5, 0, 0)
   }
 
   /** Remove the subject, rays and bubble (and the prints, unless `keepPrints`). */
@@ -2420,7 +2684,7 @@ export class CameraHero {
     }
     set(this.bodyMat, this.bodyFill)
     set(this.barrelMat, this.barrelFill)
-    if (g < 1) for (const p of this.parts) if (p.mat && p.so.enabled) setFade(p.mat, 0)
+    if (g < 1) for (const p of this.parts) if (p.looks.length && p.so.enabled) this.fadeLooks(p, 0)
   }
 
   private placeRail(): void {

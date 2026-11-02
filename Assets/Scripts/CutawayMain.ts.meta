@@ -49,6 +49,7 @@
     heroPartAudio: false
     heroPrintAudio: false
     heroShutterAudio: false
+    heroSolidMaterial: false
     heroTapAudio: false
     heroUI: false
     labelsUI: false
@@ -107,6 +108,7 @@
       heroLandAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       heroTapAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       heroMatter: !<reference.Matter> 00000000-0000-0000-0000-000000000000
+      heroSolidMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
       heroPartAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       heroMirrorAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       heroShutterAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
@@ -162,6 +164,7 @@
     - '// @input Component.AudioComponent heroLandAudio {"hint":"Spatial AudioComponent: soft landing tone from the table"}'
     - '// @input Component.AudioComponent heroTapAudio {"hint":"Spatial AudioComponent: soft contact tap where the replica touches the table"}'
     - '// @input Asset.Matter heroMatter {"hint":"Physics matter for the table and the replica: high friction, bounciness 0.05 (HeroMatter)"}'
+    - "// @input Asset.Material heroSolidMaterial {\"hint\":\"Texture-free PBR with rim highlight (additive): the replica's code-built solid parts (HeroSolid)\"}"
     - '// @input Component.AudioComponent heroPartAudio {"hint":"Spatial AudioComponent: one soft click per part as it frees itself"}'
     - '// @input Component.AudioComponent heroMirrorAudio {"hint":"Spatial AudioComponent: mirror lift (MirrorClick.wav)"}'
     - '// @input Component.AudioComponent heroShutterAudio {"hint":"Spatial AudioComponent: two-part shutter sound"}'

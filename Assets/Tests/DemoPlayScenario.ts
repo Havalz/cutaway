@@ -120,10 +120,13 @@ async function runHero(main: ReturnType<typeof getMain>, step: string, extraRaw:
     return
   }
   if (step === "apart") {
-    // Held so the light path does not start when the slider reaches the end.
+    // Pass 2: it rises to hover first, then the parts separate. Just short of the end, so the
+    // light path does not start; frozen once the parts are out.
+    hero.setApart(0.985)
+    await wait("hero:hover", 3000)
+    await sleep(900)
+    if (extra > 0) await sleep(extra)
     main.setHoldHero(true)
-    hero.setApart(1)
-    await sleep(extraRaw ? extra : 900)
     return
   }
   hero.setApart(1)

@@ -17,6 +17,7 @@ import {P1SurfaceScenario} from "./P1SurfaceScenario"
 import {P2LandingScenario} from "./P2LandingScenario"
 import {P3MoveScenario} from "./P3MoveScenario"
 import {P4HoverScenario} from "./P4HoverScenario"
+import {P5SolidPartsScenario} from "./P5SolidPartsScenario"
 
 @component
 export class LeafIndex extends BaseScriptComponent {
@@ -38,6 +39,7 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "p2-hero-landing", typename: P2LandingScenario.getTypeName()},
     {id: "p3-hero-move", typename: P3MoveScenario.getTypeName()},
     {id: "p4-hero-hover", typename: P4HoverScenario.getTypeName()},
+    {id: "p5-hero-solid-parts", typename: P5SolidPartsScenario.getTypeName()},
     {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer", step: "", untilPhase: "", extraMs: ""}}
   ]
 }

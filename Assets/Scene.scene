@@ -3377,6 +3377,7 @@
       heroLandAudio: !<reference.AudioComponent> bcb444a9-655f-4c95-8591-dbb667ac4552
       heroTapAudio: !<reference.AudioComponent> 3d5f6a3e-aff7-49d4-b726-3963b22fc9ff
       heroMatter: !<reference.Matter> 2793d170-f840-445b-8624-d479f61fac12
+      heroSolidMaterial: !<reference.Material> 2ada9a80-4623-430e-8ee8-f1d4b6fa2e5d
       heroPartAudio: !<reference.AudioComponent> e1bb932c-1b40-40f0-b687-855246e12f6d
       heroMirrorAudio: !<reference.AudioComponent> 98d59eba-7c61-422d-aa9a-bfb6720654f4
       heroShutterAudio: !<reference.AudioComponent> 9a08c981-5517-4fa1-8efa-5e1f184dd290

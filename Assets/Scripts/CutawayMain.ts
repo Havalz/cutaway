@@ -158,6 +158,11 @@ export class CutawayMain extends BaseScriptComponent {
 
   @input
   @allowUndefined
+  @hint("Texture-free PBR with rim highlight (additive): the replica's code-built solid parts (HeroSolid)")
+  heroSolidMaterial: Material
+
+  @input
+  @allowUndefined
   @hint("Spatial AudioComponent: one soft click per part as it frees itself")
   heroPartAudio: AudioComponent
 
@@ -331,6 +336,7 @@ export class CutawayMain extends BaseScriptComponent {
       parent: this.sceneObject,
       glowMat: this.glowMaterial,
       shellMat: this.replicaShellMaterial,
+      solidMat: this.heroSolidMaterial ?? null,
       bodyMesh: this.replicaBodyMesh,
       lensMesh: this.replicaLensMesh,
       labels: this.labelsUI,

@@ -256,6 +256,24 @@ export class MeshKit {
     this.indices.push(a, b, c)
   }
 
+  /** Triangle wound so its front face is the side its vertex normals point to (for culled solids). */
+  triOut(a: number, b: number, c: number): void {
+    const d = this.data
+    const P = (i: number) => new vec3(d[i * 10], d[i * 10 + 1], d[i * 10 + 2])
+    const N = (i: number) => new vec3(d[i * 10 + 3], d[i * 10 + 4], d[i * 10 + 5])
+    const f = P(b).sub(P(a)).cross(P(c).sub(P(a)))
+    if (f.dot(N(a).add(N(b)).add(N(c))) >= 0) this.tri(a, b, c)
+    else this.tri(a, c, b)
+  }
+
+  get vertexCount(): number {
+    return this.count
+  }
+
+  get triangleCount(): number {
+    return this.indices.length / 3
+  }
+
   addTube(points: vec3[], radius: number, color: vec4, sides: number = 6, step: number = 4): void {
     if (this.glow > 0 && this.eye) {
       this.addRibbon(points, radius, color, step)
