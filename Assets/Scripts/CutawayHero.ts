@@ -18,7 +18,7 @@ import {MeshKit, setFade, spawnMesh, TrailRibbon} from "./CutawayGeometry"
 import {TableSurface} from "./CutawayHeroSurface"
 import {addPoly, bevelBox, bevelFrame, Blade, chamferRect, clipPoly, extrudeStrip, extrudeX, irisBlades, irisOpening, latheLoop, latheSmooth, lensProfile, lensRim, ringPts} from "./CutawayHeroParts"
 import {BODY_BOX_CENTER, BODY_BOX_SIZE, BODY_MIN_Y, FOOT_CENTER, FOOT_SIZE, FOOTPRINT, footReach, HeroPhysics, hullLowestY, LENS_LENGTH, LENS_RADIUS, LENS_Z0, maxFootDistance} from "./CutawayHeroPhysics"
-import {ENERGY, ink, keyWord, UI_WHITE} from "./CutawayStyle"
+import {applyType, ENERGY, ink, keyWord, setTextAlpha, UI_WHITE} from "./CutawayStyle"
 import {clamp01, easeIn, easeInOutCubic, easeOutCubic, faceToward} from "./CutawayTween"
 
 export type HeroSound = "lift" | "bayonet" | "flight" | "land" | "tap" | "part" | "mirror" | "shutter" | "print"
@@ -83,11 +83,14 @@ export interface HeroPartInfo {
 export const HERO_F = 15
 export const HERO_N = 2.8
 export const HERO_A = HERO_F / HERO_N
-export const HERO_H_O = 5
+/** The subject's height (a candle: base to flame tip), world cm. */
+export const HERO_H_O = 6
 export const HERO_D_MIN = 25
 export const HERO_D_MAX = 90
 export const HERO_L_MIN = 16
 export const HERO_L_MAX = 40
+/** The photo print's SceneObject name (tests import it, so the two can never disagree). */
+export const HERO_PRINT_NAME = "HeroPhotoPrint"
 /** Blur circles at or under this read as sharp (cm on the 3x sensor, ≈ 0.1 mm on a real one). */
 const SHARP_C = 0.3
 
@@ -172,7 +175,7 @@ const BODY_FAR = new vec3(0, 11.2, -4.5)
 const BODY_LIGHT_FILL = 0.06
 
 /** Solid looks: the HeroSolid PBR (texture-free, rim highlight) with these settings. */
-type SolidKind = "glass" | "mirror" | "metal" | "chrome" | "blade" | "dark" | "sensor"
+type SolidKind = "glass" | "mirror" | "metal" | "chrome" | "blade" | "dark" | "sensor" | "wax"
 const SOLID: Record<SolidKind, {base: vec3; metallic: number; roughness: number; rimColor: vec3; rimExp: number; rim: number}> = {
   glass: {base: new vec3(0.085, 0.09, 0.1), metallic: 0, roughness: 0.12, rimColor: new vec3(0.9, 0.95, 1), rimExp: 3, rim: 1.0},
   mirror: {base: new vec3(0.15, 0.15, 0.16), metallic: 0.25, roughness: 0.08, rimColor: new vec3(0.95, 0.97, 1), rimExp: 3, rim: 0.9},
@@ -180,8 +183,42 @@ const SOLID: Record<SolidKind, {base: vec3; metallic: number; roughness: number;
   chrome: {base: new vec3(0.46, 0.46, 0.48), metallic: 0.5, roughness: 0.25, rimColor: new vec3(1, 0.97, 0.92), rimExp: 2.5, rim: 0.6},
   blade: {base: new vec3(0.09, 0.09, 0.1), metallic: 0.3, roughness: 0.35, rimColor: new vec3(1, 0.95, 0.86), rimExp: 2.5, rim: 0.45},
   dark: {base: new vec3(0.13, 0.13, 0.14), metallic: 0.2, roughness: 0.55, rimColor: new vec3(0.9, 0.93, 1), rimExp: 2.5, rim: 0.45},
-  sensor: {base: new vec3(0.05, 0.09, 0.1), metallic: 0.3, roughness: 0.2, rimColor: new vec3(0.55, 0.95, 1), rimExp: 2.5, rim: 0.6}
+  sensor: {base: new vec3(0.05, 0.09, 0.1), metallic: 0.3, roughness: 0.2, rimColor: new vec3(0.55, 0.95, 1), rimExp: 2.5, rim: 0.6},
+  wax: {base: new vec3(0.62, 0.6, 0.55), metallic: 0, roughness: 0.6, rimColor: new vec3(1, 0.84, 0.62), rimExp: 2.2, rim: 0.35}
 }
+
+// ---------------- Candle (subject-local cm at 1x: base at -1, flame tip at +1 on the axis) ----------------
+const CANDLE_R = 0.333
+const CANDLE_TOP = 0.3
+const WICK_TOP = 0.43
+const FLAME_BASE = 0.33
+const FLAME_W = 0.15
+const FLAME_WHITE = new vec4(1, 0.94, 0.82, 1)
+const FLAME_AMBER = new vec4(1, 0.56, 0.16, 1)
+const WAX_GLOW = new vec4(1, 0.72, 0.4, 1)
+
+// ---------------- Light pulses ----------------
+/** Pulse speed along the rays (local cm/s) and the time between pulses on one ray (s). */
+const PULSE_SPEED = 22
+const PULSE_PERIOD = 0.6
+const PULSE_POOL = 48
+/** The steady rays' light relative to the pulses (setFade factor). */
+const RAY_STEADY = 0.72
+
+// ---------------- Photo print (world cm) ----------------
+const PRINT_W = 20
+const PRINT_H = 13
+const PRINT_BORDER = 1
+/** Where it floats: 55 cm from the eyes, 14 cm below the eye line (53 cm out, flat). */
+const PRINT_OUT = 53
+const PRINT_DROP = 14
+const PRINT_SLIDE = 0.3
+const PRINT_RISE = 0.25
+const PRINT_FLY = 0.35
+const PRINT_DEVELOP = 1.2
+const PRINT_ARRIVE = PRINT_SLIDE + PRINT_RISE + PRINT_FLY
+/** The tag's text scale (note style): letters about 1.2 cm tall, readable at 55 cm. */
+const PRINT_TAG_SCALE = 1.5
 
 // ---------------- Timeline (s) ----------------
 const T_RISE = 0.7
@@ -299,8 +336,95 @@ function circle(center: vec3, u: vec3, v: vec3, r: number, n: number): vec3[] {
 }
 
 /**
- * The subject's silhouette (an upright arrow, base at the origin, tip at +1) drawn as N additive
+ * A flame outline (XY, counter-clockwise): round bottom at y0, pointed tip at y1, widest
+ * (half-width w) about a third of the way up.
+ */
+function flameOutline(y0: number, y1: number, w: number, n: number = 14): vec2[] {
+  const right: vec2[] = []
+  for (let i = 0; i <= n; i++) {
+    const s = Math.pow(i / n, 1.4)
+    right.push(new vec2((w * Math.sqrt(s) * Math.pow(1 - s, 1.2)) / 0.357, y0 + (y1 - y0) * s))
+  }
+  const pts = right.slice()
+  for (let i = n - 1; i >= 1; i--) pts.push(new vec2(-right[i].x, right[i].y))
+  return pts
+}
+
+/**
+ * A soft glow filling a closed outline: concentric copies scaled about `c` (scales ascending, the
+ * last usually 1 with a transparent colour), each with its colour; the centre point gets `cc`.
+ */
+function addGlowFan(k: MeshKit, pts: vec2[], c: vec2, rings: {s: number; col: vec4}[], cc: vec4, z: number = 0): void {
+  const nz = new vec3(0, 0, 1)
+  const n = pts.length
+  const ci = k.vert(new vec3(c.x, c.y, z), nz, cc)
+  const starts = rings.map((r) => {
+    const b = k.vertexCount
+    for (const p of pts) k.vert(new vec3(c.x + (p.x - c.x) * r.s, c.y + (p.y - c.y) * r.s, z), nz, r.col)
+    return b
+  })
+  for (let i = 0; i < n; i++) k.tri(ci, starts[0] + i, starts[0] + ((i + 1) % n))
+  for (let r = 0; r < rings.length - 1; r++)
+    for (let i = 0; i < n; i++) {
+      const a = starts[r] + i
+      const b = starts[r] + ((i + 1) % n)
+      const c2 = starts[r + 1] + ((i + 1) % n)
+      const d = starts[r + 1] + i
+      k.tri(a, b, c2)
+      k.tri(a, c2, d)
+    }
+}
+
+/** The outer flame: warm white, brightest a little inside its edge, dimmer in the middle (the core shows there). */
+function addOuterFlame(k: MeshKit, y0: number, y1: number, w: number, m: number, mono: vec4 | null, z: number = 0): void {
+  const col = mono ?? FLAME_WHITE
+  const H = y1 - y0
+  addGlowFan(k, flameOutline(y0, y1, w), new vec2(0, y0 + 0.3 * H), [{s: 0.45, col: ink(col, 0.5 * m)}, {s: 0.8, col: ink(col, 0.95 * m)}, {s: 1, col: ink(col, 0)}], ink(col, 0.28 * m), z)
+}
+
+/** The flame's amber core, low in the flame. */
+function addFlameCore(k: MeshKit, y0: number, y1: number, w: number, m: number, mono: vec4 | null, z: number = 0): void {
+  const col = mono ?? FLAME_AMBER
+  const H = y1 - y0
+  addGlowFan(k, flameOutline(y0 + 0.03 * H, y0 + 0.56 * H, 0.62 * w), new vec2(0, y0 + 0.22 * H), [{s: 0.55, col: ink(col, 0.95 * m)}, {s: 1, col: ink(col, 0)}], ink(col, m), z)
+}
+
+/**
+ * The candle as an image (XY, facing +Z), base at y = -0.5 and flame tip at +0.5 (height 1): what
+ * the lens projects. `m` scales its light; `mono` draws it in one colour (the sensor's signal glow).
+ */
+function addCandleImage(k: MeshKit, m: number, mono: vec4 | null): void {
+  const h = HERO_H_O / SCALE
+  const u = (y: number) => y / h
+  const r = CANDLE_R / h
+  const top = u(CANDLE_TOP)
+  const wax = mono ?? new vec4(0.95, 0.92, 0.85, 1)
+  const glow = mono ?? WAX_GLOW
+  k.addRectXY(-r, -0.5, r, top - 0.02, ink(wax, 0.6 * m))
+  // Rounded shoulders, and the top of the wax lit warm by the flame.
+  k.addRectXY(-r * 0.9, top - 0.02, r * 0.9, top, ink(wax, 0.6 * m))
+  k.addRectXY(-r, top - 0.2, r, top - 0.02, ink(glow, 0), ink(glow, 0), ink(glow, 0.3 * m), ink(glow, 0.3 * m))
+  k.addRectXY(-0.008, top, 0.008, u(WICK_TOP), ink(mono ?? new vec4(0.55, 0.38, 0.22, 1), 0.6 * m))
+  // The flame's own soft glow around it, then the flame.
+  const fy = u(FLAME_BASE) + 0.3 * (0.5 - u(FLAME_BASE))
+  k.addFanXY(0, fy, 0.2, 0, Math.PI * 2, ink(mono ?? WAX_GLOW, 0.3 * m), ink(mono ?? WAX_GLOW, 0), 24)
+  addOuterFlame(k, u(FLAME_BASE), 0.5, FLAME_W / h, m, mono)
+  addFlameCore(k, u(FLAME_BASE), 0.5, FLAME_W / h, m, mono)
+}
+
+/** The candle image's outline (same frame as addCandleImage): the wax body and the flame. */
+function candleOutline(): vec2[][] {
+  const h = HERO_H_O / SCALE
+  const r = CANDLE_R / h
+  const top = CANDLE_TOP / h
+  const flame = flameOutline(FLAME_BASE / h, 0.5, FLAME_W / h)
+  return [[new vec2(-r, -0.5), new vec2(r, -0.5), new vec2(r, top), new vec2(-r, top), new vec2(-r, -0.5)], flame.concat([flame[0]])]
+}
+
+/**
+ * The subject's image (the candle and its flame, base at -0.5, tip at +0.5) drawn as N additive
  * copies spread over a disc. Moving the copies apart is the blur; only transforms change.
+ * `mono` = one colour (the signal glow and flash); null = the candle's own colours.
  */
 class BlurImage {
   readonly so: SceneObject
@@ -308,7 +432,7 @@ class BlurImage {
   private copies: SceneObject[] = []
   private offsets: vec2[] = []
 
-  constructor(parent: SceneObject, name: string, material: Material, color: vec4, rings: number) {
+  constructor(parent: SceneObject, name: string, material: Material, mono: vec4 | null, rings: number) {
     this.so = global.scene.createSceneObject(name)
     this.so.setParent(parent)
     // Copies spread evenly over the blur disk on a sunflower spiral (even density, no lattice).
@@ -321,17 +445,7 @@ class BlurImage {
     const k = new MeshKit()
     // The glow material blends Add with source alpha, and ink() premultiplies, so a copy's light
     // goes with k²: k = 1/√N gives each copy 1/N of the light and N stacked copies exactly 1.
-    const c = ink(color, 1 / Math.sqrt(this.offsets.length))
-    // Centred on the axis: base at -0.5, tip at +0.5.
-    k.addRectXY(-0.07, -0.5, 0.07, 0.16, c)
-    const base = 0.1
-    const top = 0.5
-    const hw = 0.24
-    const n = new vec3(0, 0, 1)
-    const i0 = k.vert(new vec3(-hw, base, 0), n, c)
-    const i1 = k.vert(new vec3(hw, base, 0), n, c)
-    const i2 = k.vert(new vec3(0, top, 0), n, c)
-    k.tri(i0, i1, i2)
+    addCandleImage(k, 1 / Math.sqrt(this.offsets.length), mono)
     const mesh = k.build()
     this.mat = material.clone()
     this.mat.mainPass.twoSided = true
@@ -362,6 +476,13 @@ class BlurImage {
     const gain = 1 + 3 * Math.min(1, c / Math.max(1e-3, s))
     setFade(this.mat, alpha * Math.sqrt(gain))
   }
+}
+
+/** A spring that settles in about the given duration (critically damped), 0..1 → 0..1. */
+function springOut(u: number): number {
+  const x = clamp01(u)
+  const w = 7
+  return (1 - (1 + w * x) * Math.exp(-w * x)) / (1 - (1 + w) * Math.exp(-w))
 }
 
 /** The camera hero stage. Owned by CutawayMain; one instance, created on launch, cleared on finish/Reset. */
@@ -469,6 +590,23 @@ export class CameraHero {
   private mirrorUp = 0
   private subject: SceneObject | null = null
   private subjectMat: Material | null = null
+  // Candle (the subject): wax look, the flame billboard and its flicker nodes, optics markers.
+  private waxLook: Look | null = null
+  private flameSo: SceneObject | null = null
+  private flickerSo: SceneObject | null = null
+  private coreSo: SceneObject | null = null
+  private haloSo: SceneObject | null = null
+  private flameMat: Material | null = null
+  private haloMat: Material | null = null
+  private candleTip: SceneObject | null = null
+  private candleBase: SceneObject | null = null
+  private flameA = 0
+  private flameScaleY = 1
+  // Light pulses along the rays, and where the rays start (replica-local).
+  private rayPulses: SceneObject[] = []
+  private rayPulseMat: Material | null = null
+  private rayPulseCount = 0
+  private rayStarts: vec3[] = []
   private raysSo: SceneObject | null = null
   private beams: Beam[] = []
   private beamMesh: RenderMesh | null = null
@@ -491,9 +629,20 @@ export class CameraHero {
   private printT = 0
   private printBlur = -1
   private printH = 0
-  private oldPrints: {so: SceneObject; t: number; mats: Material[]}[] = []
+  /** The print's image on the card: candle height and blur circle (cm), and its tag. */
+  private printImgH = 0
+  private printImgC = 0
+  private printTagText = ""
+  private printTag: Text | null = null
+  private printBlankMat: Material | null = null
+  private printTarget: vec3 | null = null
+  private printFrom: {pos: vec3; rot: quat} | null = null
+  private printLogged = {shown: false, developed: false}
+  private oldPrints: {so: SceneObject; t: number; mats: Material[]; tag: Text | null}[] = []
   private printMats: Material[] = []
   private printImage: BlurImage | null = null
+  /** Prints taken off the stage, destroyed a couple of frames later (see buryPrints). */
+  private grave: {so: SceneObject; frames: number}[] = []
   private flashT = -1
   // Subject drag
   private subjectDrag: {p: vec3; d: number; axis: vec3} | null = null
@@ -627,6 +776,7 @@ export class CameraHero {
 
   /** Reset: remove everything instantly, from any state. */
   clear(): void {
+    this.buryPrints()
     if (this.root) this.root.destroy()
     this.root = null
     this.state = "none"
@@ -648,7 +798,11 @@ export class CameraHero {
     this.bubbleLeader = null
     this.print = null
     this.printImage = null
+    this.printTag = null
+    this.printBlankMat = null
+    this.printMats = []
     this.oldPrints = []
+    this.resetCandle()
     this.parts = []
     this.elementSos = []
     this.curtains = []
@@ -670,6 +824,7 @@ export class CameraHero {
   }
 
   update(dt: number): void {
+    this.updateGrave()
     if (this.state === "none") return
     if (this.hold) dt = 0
     this.t += dt
@@ -739,8 +894,48 @@ export class CameraHero {
     return {d_o: this.d_o, d_i: di, L: this.L, h_i: (HERO_H_O * this.L) / this.d_o, c, sharp: c <= SHARP_C}
   }
 
-  getPrint(): {shown: boolean; blur: number; height: number} {
-    return {shown: !!this.print && this.print.enabled, blur: this.printBlur, height: this.printH}
+  /**
+   * The live print: the sensor's blur and image height when it was taken, the image's blur and
+   * height on the card, the tag, how far it has developed (0..1) and how long it has been out.
+   */
+  getPrint(): {shown: boolean; blur: number; height: number; imageBlur: number; imageHeight: number; tag: string; developed: number; age: number} {
+    const shown = !!this.print && this.print.enabled
+    return {
+      shown,
+      blur: this.printBlur,
+      height: this.printH,
+      imageBlur: shown ? this.printImgC : -1,
+      imageHeight: shown ? this.printImgH : 0,
+      tag: shown ? this.printTagText : "",
+      developed: shown ? clamp01((this.printT - PRINT_ARRIVE) / PRINT_DEVELOP) : 0,
+      age: shown ? this.printT : -1
+    }
+  }
+
+  /** The live print's SceneObject (the one named HERO_PRINT_NAME), or null. */
+  getPrintObject(): SceneObject | null {
+    return this.print
+  }
+
+  /** The candle: flame tip and base (world), the rays' start points (world), the flame's stretch. */
+  getCandleReport(): {tip: vec3; base: vec3; up: vec3; rayStarts: vec3[]; flameScaleY: number; flameShown: boolean} | null {
+    if (!this.subject || !this.candleTip || !this.candleBase) return null
+    const m = this.replica.getTransform().getWorldTransform()
+    return {
+      tip: this.candleTip.getTransform().getWorldPosition(),
+      base: this.candleBase.getTransform().getWorldPosition(),
+      up: this.replica.getTransform().up,
+      rayStarts: this.rayStarts.map((p) => m.multiplyPoint(p)),
+      flameScaleY: this.flameScaleY,
+      flameShown: !!this.flameSo && this.flameSo.isEnabledInHierarchy && this.flameA > 0.5
+    }
+  }
+
+  /** Visible light pulses (world positions). */
+  getPulses(): vec3[] {
+    const out: vec3[] = []
+    for (let i = 0; i < this.rayPulseCount && i < this.rayPulses.length; i++) if (this.rayPulses[i].enabled) out.push(this.rayPulses[i].getTransform().getWorldPosition())
+    return out
   }
 
   getShotPhase(): number {
@@ -986,14 +1181,16 @@ export class CameraHero {
 
   /** Fade a part's looks: solids scale their fill and rim, accents their glow. */
   private fadeLooks(p: Part, k: number): void {
+    for (const l of p.looks) this.fadeLook(l, k)
+  }
+
+  private fadeLook(l: Look, k: number): void {
     const f = Math.max(0, k)
-    for (const l of p.looks) {
-      if (l.solid) {
-        l.mat.mainPass.baseColor = new vec4(l.base.x * f, l.base.y * f, l.base.z * f, 1)
-        l.mat.mainPass.rimIntensity = l.rim * f
-      } else {
-        setFade(l.mat, f)
-      }
+    if (l.solid) {
+      l.mat.mainPass.baseColor = new vec4(l.base.x * f, l.base.y * f, l.base.z * f, 1)
+      l.mat.mainPass.rimIntensity = l.rim * f
+    } else {
+      setFade(l.mat, f)
     }
   }
 
@@ -1238,7 +1435,7 @@ export class CameraHero {
       gso.getTransform().setLocalPosition(new vec3(0, 0, z))
       const img = this.node(so, "SensorImage", new vec3(0, 0, 0.05))
       this.sensorGlow = new BlurImage(img, "SensorGlow", this.ctx.glowMat, SIGNAL, 1)
-      this.sensorImage = new BlurImage(img, "SensorImageBlur", this.ctx.glowMat, LIGHT, 1)
+      this.sensorImage = new BlurImage(img, "SensorImageBlur", this.ctx.glowMat, null, 1)
       this.sensorFlash = new BlurImage(img, "SensorFlash", this.ctx.glowMat, SIGNAL, 1)
       this.sensorGlow.update(0.5, 0, 0)
       this.sensorImage.update(0.5, 0, 0)
@@ -1997,6 +2194,8 @@ export class CameraHero {
     this.exitT = 0
     this.exitMirror = this.mirrorUp
     this.live = false
+    // A shot already under way still gives its print.
+    if (this.shotT >= 0 && !this.shotFlags.print) this.makePrint()
     this.shotT = -1
     this.flashT = -1
     this.shotFlags = {flash: false, print: false}
@@ -2171,25 +2370,86 @@ export class CameraHero {
     this.ctx.caption(texts[key] ?? null, this.captionAnchor(key !== "vf"))
   }
 
+  /**
+   * The subject (§6): a small white candle, code-built, centred on the optical axis: base at
+   * -h_o/2, flame tip at +h_o/2 (h_o = 6 cm). The wax is a solid lit by the replica's key and fill
+   * lights, its top glowing warm from the flame; the flame is soft light (warm white with an amber
+   * core) on a billboard that turns to the user, and it flickers (transforms and opacity only).
+   */
   private buildSubject(): void {
     const so = this.node(this.replica, "HeroSubject", vec3.zero())
     this.subjectMat = this.glowMat()
-    const k = new MeshKit()
     const h = HERO_H_O / SCALE
-    // A glowing 3D arrow standing on the optical axis (centred on it), h_o tall.
-    k.addTube([new vec3(0, -h / 2, 0), new vec3(0, h * 0.18, 0)], 0.06, ink(LIGHT, 0.95), 6, 50)
-    k.addLathe(new vec3(0, h * 0.12, 0), vec3.up(), [[0.33, 0], [0.001, h * 0.38]], [ink(LIGHT, 0.5), ink(LIGHT, 1)], 24)
-    k.addSphere(new vec3(0, h / 2, 0), 0.09, ink(LIGHT, 1), 6, 8)
-    k.addSphere(new vec3(0, -h / 2, 0), 0.08, ink(LIGHT, 0.9), 6, 8)
-    // Grab handle: a ring around the shaft on the axis, clearly a thing to hold.
-    k.addTube(circle(new vec3(0, -h * 0.2, 0), vec3.right(), vec3.forward(), 0.55, 40), 0.045, ink(UI_WHITE, 0.85), 4, 50)
-    k.addTube(circle(new vec3(0, -h * 0.32, 0), vec3.right(), vec3.forward(), 0.55, 40), 0.03, ink(UI_WHITE, 0.4), 4, 50)
-    k.addSphere(new vec3(0, -h * 0.26, 0), 0.5, ink(UI_WHITE, 0.05), 6, 10)
-    spawnMesh(so, "SubjectMesh", k.build(), this.ctx.glowMat, undefined, this.subjectMat)
+    const B = -h / 2
+    const T = CANDLE_TOP
+    const R = CANDLE_R
+    const fallback = ink(UI_WHITE, 0.4)
+    this.waxLook = this.solidLook("wax")
+    // Wax: a lathe around the candle's axis (built around +Z, stood upright), its top dished where
+    // it has melted.
+    const waxSo = this.node(so, "CandleWax", vec3.zero())
+    waxSo.getTransform().setLocalRotation(quat.angleAxis(-Math.PI / 2, vec3.right()))
+    const wk = new MeshKit()
+    latheSmooth(wk, [{r: 0, z: B, nr: 0, nz: -1}, {r: R * 0.96, z: B, nr: 0, nz: -1}], 40, fallback)
+    latheSmooth(
+      wk,
+      [
+        {r: R * 0.96, z: B, nr: 0.4, nz: -1},
+        {r: R, z: B + 0.025, nr: 1, nz: -0.3},
+        {r: R, z: T - 0.06, nr: 1, nz: 0},
+        {r: R * 0.97, z: T - 0.012, nr: 0.75, nz: 0.7},
+        {r: R * 0.86, z: T, nr: 0.15, nz: 1},
+        {r: R * 0.5, z: T - 0.03, nr: 0.05, nz: 1},
+        {r: 0, z: T - 0.045, nr: 0, nz: 1}
+      ],
+      40,
+      fallback
+    )
+    spawnMesh(waxSo, "WaxMesh", wk.build(), this.waxLook.mat, undefined, this.waxLook.mat)
+    // Two wax drips down the side.
+    const dk = new MeshKit()
+    for (const [ang, len] of [[0.7, 0.3], [2.75, 0.17]]) {
+      const c = Math.cos(ang)
+      const sn = Math.sin(ang)
+      const at = (r: number, y: number) => new vec3(c * r, y, sn * r)
+      dk.addTube([at(R * 0.95, T - 0.01), at(R + 0.012, T - 0.05), at(R + 0.014, T - len)], 0.028, fallback, 8, 50)
+      dk.addSphere(at(R + 0.006, T - len), 0.036, fallback, 6, 8)
+    }
+    spawnMesh(so, "WaxDrips", dk.build(), this.waxLook.mat, undefined, this.waxLook.mat)
+    // Warm light on the wax near the flame, the wick and its ember, and two faint grab rings.
+    const gk = new MeshKit()
+    gk.addLathe(vec3.zero(), vec3.up(), [[R + 0.006, T - 0.45], [R + 0.006, T - 0.16], [R * 0.98 + 0.006, T - 0.008]], [ink(WAX_GLOW, 0), ink(WAX_GLOW, 0.1), ink(WAX_GLOW, 0.3)], 32)
+    gk.addLathe(vec3.zero(), vec3.up(), [[0.001, T - 0.035], [R * 0.84, T + 0.004]], [ink(WAX_GLOW, 0.5), ink(WAX_GLOW, 0.12)], 32)
+    gk.addTube([new vec3(0, T - 0.04, 0), new vec3(0.008, WICK_TOP - 0.05, 0), new vec3(0.024, WICK_TOP, 0)], 0.011, ink(new vec4(0.55, 0.38, 0.22, 1), 0.45), 5, 50)
+    gk.addSphere(new vec3(0.024, WICK_TOP, 0), 0.017, ink(FLAME_AMBER, 0.9), 5, 6)
+    gk.addTube(circle(new vec3(0, B + 0.42, 0), vec3.right(), vec3.forward(), 0.52, 40), 0.026, ink(UI_WHITE, 0.5), 4, 50)
+    gk.addTube(circle(new vec3(0, B + 0.27, 0), vec3.right(), vec3.forward(), 0.52, 40), 0.018, ink(UI_WHITE, 0.22), 4, 50)
+    spawnMesh(so, "CandleGlow", gk.build(), this.ctx.glowMat, undefined, this.subjectMat)
+    // The flame: a billboard at the wick (it turns about the candle's axis to face the user).
+    const H = h / 2 - FLAME_BASE
+    this.flameSo = this.node(so, "CandleFlame", new vec3(0, FLAME_BASE, 0))
+    this.haloSo = this.node(this.flameSo, "FlameHalo", new vec3(0, 0.3 * H, -0.01))
+    this.haloMat = this.glowMat()
+    const hk = new MeshKit()
+    hk.addFanXY(0, 0, 0.62, 0, Math.PI * 2, ink(new vec4(1, 0.78, 0.5, 1), 0.2), ink(new vec4(1, 0.78, 0.5, 1), 0), 40)
+    spawnMesh(this.haloSo, "Halo", hk.build(), this.ctx.glowMat, undefined, this.haloMat)
+    this.flickerSo = this.node(this.flameSo, "FlameFlicker", vec3.zero())
+    this.flameMat = this.glowMat()
+    const fk = new MeshKit()
+    addOuterFlame(fk, 0, H, FLAME_W, 1, null)
+    spawnMesh(this.flickerSo, "FlameOuter", fk.build(), this.ctx.glowMat, undefined, this.flameMat)
+    this.coreSo = this.node(this.flickerSo, "FlameCore", new vec3(0, 0, 0.004))
+    const ck = new MeshKit()
+    addFlameCore(ck, 0, H, FLAME_W, 1, null)
+    spawnMesh(this.coreSo, "Core", ck.build(), this.ctx.glowMat, undefined, this.flameMat)
+    // Markers for the optics: the flame tip and the candle's base, on the axis.
+    this.candleTip = this.node(so, "CandleTip", new vec3(0, h / 2, 0))
+    this.candleBase = this.node(so, "CandleBase", new vec3(0, -h / 2, 0))
+    setLayerDeep(so, this.layer)
     // Grab it to slide it along the axis (constrained, 25–90 cm from the lens).
     const col = so.createComponent("Physics.ColliderComponent") as ColliderComponent
     const sh = Shape.createBoxShape()
-    sh.size = new vec3(1.6, h + 1.2, 1.6)
+    sh.size = new vec3(1.3, h + 0.8, 1.3)
     col.shape = sh
     const inter = so.createComponent(Interactable.getTypeName()) as Interactable
     inter.enableInstantDrag = true
@@ -2209,6 +2469,7 @@ export class CameraHero {
     })
     inter.onDragEnd.add(() => (this.subjectDrag = null))
     this.subject = so
+    this.fadeSubject(0)
   }
 
   private lensPlaneZ(): number {
@@ -2222,8 +2483,45 @@ export class CameraHero {
     tr.setLocalPosition(new vec3(0, 0, z))
     const k = easeOutCubic(this.lightT / 0.3)
     tr.setLocalScale(vec3.one().uniformScale(Math.max(1e-4, 0.6 + 0.4 * k)))
-    setFade(this.subjectMat, k * this.lightFade())
+    this.fadeSubject(k * this.lightFade())
+    this.flicker()
     void dt
+  }
+
+  /** The candle's opacity: wax (solid fill and rim), its glow, and the flame. */
+  private fadeSubject(a: number): void {
+    this.flameA = a
+    if (this.subjectMat) setFade(this.subjectMat, a)
+    if (this.waxLook) this.fadeLook(this.waxLook, a)
+    if (this.flameMat) setFade(this.flameMat, a)
+    if (this.haloMat) setFade(this.haloMat, a)
+  }
+
+  /** The flame lives: it stretches and narrows, sways, and its light breathes (transforms and opacity). */
+  private flicker(): void {
+    if (!this.flameSo) return
+    const t = getTime()
+    const TAU = Math.PI * 2
+    const sy = 1 + 0.06 * Math.sin(TAU * 5.3 * t) + 0.035 * Math.sin(TAU * 8.9 * t + 1.3) + 0.02 * Math.sin(TAU * 13.7 * t + 0.4)
+    const sx = 1 - 0.45 * (sy - 1) + 0.02 * Math.sin(TAU * 6.1 * t + 2)
+    const sway = (3.5 * Math.sin(TAU * 1.3 * t) + 2 * Math.sin(TAU * 2.9 * t + 0.7) + Math.sin(TAU * 7.1 * t)) * DEG
+    // Billboard about the candle's axis: the flame faces the user and stays upright.
+    const ftr = this.flameSo.getTransform()
+    const up = this.replica.getTransform().up
+    const toHead = this.ctx.camPos().sub(ftr.getWorldPosition())
+    let d = toHead.sub(up.uniformScale(toHead.dot(up)))
+    if (d.length < 1e-3) d = this.replica.getTransform().right
+    ftr.setWorldRotation(quat.lookAt(d.normalize(), up))
+    const ktr = this.flickerSo.getTransform()
+    ktr.setLocalRotation(quat.angleAxis(sway, vec3.forward()))
+    ktr.setLocalScale(new vec3(sx, sy, 1))
+    const cs = 1 + 0.06 * Math.sin(TAU * 7.7 * t + 0.9)
+    this.coreSo.getTransform().setLocalScale(new vec3(1 / Math.sqrt(cs), cs, 1))
+    const b = 0.9 + 0.06 * Math.sin(TAU * 9.7 * t) + 0.04 * Math.sin(TAU * 15.3 * t + 2.1)
+    setFade(this.flameMat, this.flameA * b)
+    this.haloSo.getTransform().setLocalScale(vec3.one().uniformScale(1 + 0.06 * Math.sin(TAU * 4.1 * t + 0.3)))
+    setFade(this.haloMat, this.flameA * (0.85 + 0.15 * b))
+    this.flameScaleY = sy
   }
 
   /** 1 while the light path shows; fades out as the replica reassembles. */
@@ -2242,6 +2540,20 @@ export class CameraHero {
     this.rayMat = this.glowMat()
     this.rayFaintMat = this.glowMat()
     for (let i = 0; i < 34; i++) this.beams.push(this.makeBeam(this.raysSo, "Ray" + i))
+    // Pulses of light that run along the rays (§7): a bright spindle in a soft glow.
+    const pk = new MeshKit()
+    pk.addLathe(vec3.zero(), vec3.forward(), [[0.001, 0], [0.5, 0.3], [0.5, 0.7], [0.001, 1]], [ink(FLAME_WHITE, 0.4), ink(FLAME_WHITE, 1), ink(FLAME_WHITE, 1), ink(FLAME_WHITE, 0.4)], 8)
+    pk.addLathe(vec3.zero(), vec3.forward(), [[0.001, -0.3], [1.7, 0.35], [1.7, 0.65], [0.001, 1.3]], [ink(FLAME_WHITE, 0), ink(FLAME_WHITE, 0.24), ink(FLAME_WHITE, 0.24), ink(FLAME_WHITE, 0)], 10)
+    const mesh = pk.build()
+    this.rayPulseMat = this.glowMat()
+    for (let i = 0; i < PULSE_POOL; i++) {
+      const so = this.node(this.raysSo, "Pulse" + i, vec3.zero())
+      const rmv = so.createComponent("Component.RenderMeshVisual") as RenderMeshVisual
+      rmv.mesh = mesh
+      rmv.mainMaterial = this.rayPulseMat
+      so.enabled = false
+      this.rayPulses.push(so)
+    }
   }
 
   private makeBeam(parent: SceneObject, name: string): Beam {
@@ -2271,8 +2583,9 @@ export class CameraHero {
 
   /**
    * The light path, computed every frame from the thin-lens equation (never keyframed): rays from
-   * the subject's tip and base through the top, centre and bottom of the aperture, to their real
-   * crossing point. With the mirror down they reflect up into the prism and out of the viewfinder.
+   * the flame tip and the candle's base through the top, centre and bottom of the aperture, to their
+   * real crossing point. With the mirror down they reflect up into the prism and out of the
+   * viewfinder. Pulses of light run along each ray's whole path.
    */
   private updateRays(): void {
     if (!this.raysSo) return
@@ -2283,7 +2596,7 @@ export class CameraHero {
     const a2 = HERO_A / 2 / SCALE
     const zo = zl + o.d_o / SCALE
     const zi = zl - o.d_i / SCALE
-    // The subject stands centred on the axis: tip at +h_o/2, base at -h_o/2. Images are inverted.
+    // The candle stands centred on the axis: flame tip at +h_o/2, base at -h_o/2. Images are inverted.
     const yTipImg = -((HERO_H_O / 2) * o.d_i) / o.d_o / SCALE
     const P = (y: number, z: number) => new vec3(0, y, z)
     const rays: {from: vec3; lens: vec3; img: vec3}[] = []
@@ -2291,6 +2604,7 @@ export class CameraHero {
     const base = P(-ho / 2, zo)
     for (const y of [a2, 0, -a2]) rays.push({from: tip, lens: P(y, zl), img: P(yTipImg, zi)})
     for (const y of [a2, 0, -a2]) rays.push({from: base, lens: P(y, zl), img: P(-yTipImg, zi)})
+    this.rayStarts = rays.map((r) => r.from)
 
     let bi = 0
     const r = 0.035
@@ -2306,9 +2620,13 @@ export class CameraHero {
     const yScreen = prism.y - 1.45
     const roof = P(prism.y + 1.2, prism.z + 0.3)
     const back = P(prism.y + 0.2, prism.z - 1.6)
-    for (const ray of rays) {
+    const eyeOut = eye.add(new vec3(0, 0, -4))
+    const paths: {pts: vec3[]; phase: number}[] = []
+    rays.forEach((ray, i) => {
       put(ray.from, ray.lens)
       const dir = ray.img.sub(ray.lens).normalize()
+      // The flame's rays pulse in step; the base's half a period later.
+      const phase = i < 3 ? 0 : PULSE_PERIOD / 2
       if (mirrorDown) {
         // Line y + (z - z_m) = 0 through the mirror's centre; reflect off it (normal (0,1,1)/√2).
         const t = (mirrorC.z - ray.lens.y - ray.lens.z) / (dir.y + dir.z)
@@ -2320,28 +2638,77 @@ export class CameraHero {
         const scr = hit.add(refl.uniformScale(t2))
         put(hit, scr)
         put(scr, roof)
+        paths.push({pts: [ray.from, ray.lens, hit, scr, roof, back, eye, eyeOut], phase})
       } else {
         // Straight to the sensor; if the rays would meet behind it, the rest of the way is faint.
         const ts = (zs - ray.lens.z) / dir.z
         const onSensor = ray.lens.add(dir.uniformScale(ts))
         put(ray.lens, onSensor)
         if (zi < zs) put(onSensor, ray.img, true)
+        paths.push({pts: [ray.from, ray.lens, onSensor], phase})
       }
-    }
+    })
     if (mirrorDown) {
       put(roof, back)
       put(back, eye)
-      put(eye, eye.add(new vec3(0, 0, -4)))
+      put(eye, eyeOut)
     }
     for (; bi < this.beams.length; bi++) this.beams[bi].so.enabled = false
     const a = easeOutCubic((this.lightT - 0.25) / 0.35) * this.lightFade()
-    setFade(this.rayMat, a)
+    // The steady rays are a little dimmer than the pulses running along them.
+    setFade(this.rayMat, RAY_STEADY * a)
     setFade(this.rayFaintMat, 0.3 * a)
+    this.updatePulses(paths, a)
     // The image on the sensor: inverted, h_i tall, blurred by c (local units).
     const show = !mirrorDown
     this.sensorImage.update(-o.h_i / SCALE, o.c / SCALE, show ? a : 0)
     // The pixels under the image light up: a soft cyan glow, a little wider than the image.
     this.sensorGlow.update(-o.h_i / SCALE, o.c / SCALE + 0.15, (show ? a : 0) * 0.6)
+  }
+
+  /**
+   * Pulses run along every ray from the flame (and the base) to the sensor, or out of the
+   * viewfinder while the mirror is down: one per ray every PULSE_PERIOD, at PULSE_SPEED. Each
+   * tapers in and out at the path's ends (scale only).
+   */
+  private updatePulses(paths: {pts: vec3[]; phase: number}[], a: number): void {
+    let n = 0
+    const spacing = PULSE_SPEED * PULSE_PERIOD
+    const len = 1.3
+    const rad = 0.12
+    for (const p of paths) {
+      const segs: number[] = []
+      let L = 0
+      for (let i = 1; i < p.pts.length; i++) {
+        const l = p.pts[i].distance(p.pts[i - 1])
+        segs.push(l)
+        L += l
+      }
+      const t = this.lightT - p.phase
+      if (t < 0) continue
+      // The newest pulse, then the older ones a spacing apart (none before the light came on).
+      for (let s = (t % PULSE_PERIOD) * PULSE_SPEED; s <= L && s <= t * PULSE_SPEED && n < this.rayPulses.length; s += spacing) {
+        let rem = s
+        let i = 0
+        while (i < segs.length - 1 && rem > segs[i]) {
+          rem -= segs[i]
+          i++
+        }
+        const A = p.pts[i]
+        const dir = p.pts[i + 1].sub(A).uniformScale(1 / Math.max(1e-4, segs[i]))
+        const pos = A.add(dir.uniformScale(Math.min(rem, segs[i])))
+        const taper = clamp01(s / 0.8) * clamp01((L - s) / 0.8)
+        const so = this.rayPulses[n++]
+        so.enabled = taper > 0.01
+        const tr = so.getTransform()
+        tr.setLocalPosition(pos.sub(dir.uniformScale(len * 0.5 * taper)))
+        tr.setLocalRotation(quat.rotationFromTo(vec3.forward(), dir))
+        tr.setLocalScale(new vec3(rad * taper + 1e-4, rad * taper + 1e-4, len * taper + 1e-4))
+      }
+    }
+    this.rayPulseCount = n
+    for (; n < this.rayPulses.length; n++) this.rayPulses[n].enabled = false
+    if (this.rayPulseMat) setFade(this.rayPulseMat, a)
   }
 
   private buildBubble(): void {
@@ -2367,15 +2734,14 @@ export class CameraHero {
     spawnMesh(face, "BubbleFrame", k.build(), this.ctx.glowMat, undefined, this.bubbleMat)
     const img = this.node(face, "BubbleImage", new vec3(0, 0, 0.05))
     img.getTransform().setLocalScale(vec3.one().uniformScale(M))
-    this.bubbleImage = new BlurImage(img, "BubbleImageBlur", this.ctx.glowMat, LIGHT, 3)
+    this.bubbleImage = new BlurImage(img, "BubbleImageBlur", this.ctx.glowMat, null, 3)
     this.bubbleFlash = new BlurImage(img, "BubbleFlash", this.ctx.glowMat, SIGNAL, 3)
     // Thin cyan outline around the image when it is sharp.
     this.bubbleSharp = this.node(img, "SharpOutline", new vec3(0, 0, 0.03))
     this.bubbleSharpMat = this.glowMat()
     const ok = new MeshKit()
-    const ow = 0.035
-    const pts = [new vec2(-0.12, -0.54), new vec2(0.12, -0.54), new vec2(0.12, 0.1), new vec2(0.33, 0.06), new vec2(0, 0.57), new vec2(-0.33, 0.06), new vec2(-0.12, 0.1), new vec2(-0.12, -0.54)]
-    for (let i = 0; i < pts.length - 1; i++) ok.addLineXY(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, ow, ink(SIGNAL, 0.95))
+    const ow = 0.03
+    for (const pts of candleOutline()) for (let i = 0; i < pts.length - 1; i++) ok.addLineXY(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, ow, ink(SIGNAL, 0.95))
     spawnMesh(this.bubbleSharp, "Outline", ok.build(), this.ctx.glowMat, undefined, this.bubbleSharpMat)
     // Leader from the sensor to the bubble's rim.
     const lk = new MeshKit()
@@ -2464,14 +2830,15 @@ export class CameraHero {
     const first = t < 0.1 ? 1 - easeInOutCubic(t / 0.1) : 0
     const second = t < 0.105 ? 0 : t < 0.205 ? easeInOutCubic((t - 0.105) / 0.1) : t < 0.45 ? 1 : 1 - easeInOutCubic((t - 0.45) / 0.15)
     this.setCurtains(t < 0.02 ? 1 : first, second)
-    if (t >= 0.205 && this.flashT < 0 && !this.shotFlags.flash) {
+    // Exposure ends when the second curtain closes: the pixels flash and the print is made.
+    if (t >= 0.205 && !this.shotFlags.flash) {
       this.shotFlags.flash = true
       this.flashT = 0
       this.setCaption("pixel")
       this.captionHoldT = 2.5
       this.ctx.log("hero:pixels")
     }
-    if (t >= 0.3 && !this.shotFlags.print) {
+    if (t >= 0.205 && !this.shotFlags.print) {
       this.shotFlags.print = true
       this.makePrint()
     }
@@ -2483,66 +2850,243 @@ export class CameraHero {
 
   private shotFlags = {flash: false, print: false}
 
-  /** A 15 × 10 cm print slides out of the replica: the subject upright, with the sensor's blur. */
+  /**
+   * The photo (§8): a 20 × 13 cm print with a 1 cm white border and a soft gloss. It slides out of
+   * the top of the camera body, rises, turns to the user and floats 55 cm in front of them, a
+   * little below the eye line; then it develops like instant film (blank, the image fading in over
+   * 1.2 s). The image is the candle upright with exactly the sensor's blur (the sensor frame
+   * enlarged; relative blur c / h unchanged). A tag reads "Sharp" or "Out of focus". The next photo
+   * replaces it; pinching it dismisses it.
+   *
+   * The print is the one SceneObject named HERO_PRINT_NAME; a replaced or dismissed print is renamed
+   * before it fades, so a name lookup only ever finds the live one.
+   */
   private makePrint(): void {
-    if (this.print) this.oldPrints.push({so: this.print, t: 0, mats: this.printMats})
+    this.retirePrint()
     const o = this.getOptics()
-    const so = this.node(this.root, "HeroPhotoPrint", vec3.zero())
+    const so = this.node(this.root, HERO_PRINT_NAME, vec3.zero())
+    const face = this.node(so, "PrintFace", vec3.zero())
     const mats: Material[] = []
-    const mat = this.glowMat()
-    mats.push(mat)
-    const k = new MeshKit()
-    const W = 15
-    const H = 10
-    k.addRectXY(-W / 2, -H / 2, W / 2, H / 2, ink(LIGHT, 0.05))
-    k.addLineXY(-W / 2, -H / 2, W / 2, -H / 2, 0.1, ink(UI_WHITE, 0.6))
-    k.addLineXY(W / 2, -H / 2, W / 2, H / 2, 0.1, ink(UI_WHITE, 0.6))
-    k.addLineXY(W / 2, H / 2, -W / 2, H / 2, 0.1, ink(UI_WHITE, 0.6))
-    k.addLineXY(-W / 2, H / 2, -W / 2, -H / 2, 0.1, ink(UI_WHITE, 0.6))
-    spawnMesh(so, "PrintFrame", k.build(), this.ctx.glowMat, undefined, mat)
-    // The photo is the sensor frame enlarged to the print: same framing, same relative blur.
-    const enlarge = W / (SENSOR_W * SCALE)
-    const img = this.node(so, "PrintImage", new vec3(0, 0, 0.04))
-    const bi = new BlurImage(img, "PrintBlur", this.ctx.glowMat, LIGHT, 3)
-    bi.update(o.h_i * enlarge, o.c * enlarge, 1)
-    mats.push(bi.mat)
-    this.printImage = bi
+    const W = PRINT_W / 2
+    const H = PRINT_H / 2
+    const b = PRINT_BORDER
+    // The card: a white border around the image area.
+    const cardMat = this.glowMat()
+    mats.push(cardMat)
+    const ck = new MeshKit()
+    const paper = ink(new vec4(0.97, 0.96, 0.93, 1), 0.85)
+    ck.addRectXY(-W, -H, W, -H + b, paper)
+    ck.addRectXY(-W, H - b, W, H, paper)
+    ck.addRectXY(-W, -H + b, -W + b, H - b, paper)
+    ck.addRectXY(W - b, -H + b, W, H - b, paper)
+    spawnMesh(face, "PrintCard", ck.build(), this.ctx.glowMat, undefined, cardMat)
+    // The blank film: a pale layer over the image area that clears as the picture develops.
+    this.printBlankMat = this.glowMat()
+    const bk = new MeshKit()
+    bk.addRectXY(-W + b, -H + b, W - b, H - b, ink(new vec4(0.82, 0.86, 0.88, 1), 0.32))
+    spawnMesh(face, "PrintBlank", bk.build(), this.ctx.glowMat, new vec3(0, 0, 0.02), this.printBlankMat)
+    // The image: the sensor frame fitted into the image area, upright. A candle that would overflow
+    // the photo (subject closer than ~30 cm) is scaled down to fit; its relative blur stays the same.
+    const areaW = PRINT_W - 2 * b
+    const areaH = PRINT_H - 2 * b
+    let e = Math.min(areaW / (SENSOR_W * SCALE), areaH / (SENSOR_H * SCALE))
+    e = Math.min(e, (areaH - 1) / Math.max(1e-3, o.h_i))
+    const img = this.node(face, "PrintImage", new vec3(0, 0, 0.04))
+    this.printImage = new BlurImage(img, "PrintBlur", this.ctx.glowMat, null, 3)
+    this.printImgH = o.h_i * e
+    this.printImgC = o.c * e
+    this.printImage.update(this.printImgH, this.printImgC, 0)
+    // Gloss: a soft diagonal sheen, a thin second streak, a touch brighter toward the top.
+    const sheenMat = this.glowMat()
+    mats.push(sheenMat)
+    const sk = new MeshKit()
+    const nx = 16
+    const ny = 10
+    const gloss = (x: number, y: number) => {
+      const d = x * 0.6 + y * 0.8
+      return 0.3 * Math.exp(-Math.pow((d - 2.5) / 3.2, 2)) + 0.2 * Math.exp(-Math.pow((d + 4.5) / 0.9, 2)) + 0.12 * ((y + H) / (2 * H))
+    }
+    const nz = new vec3(0, 0, 1)
+    const g0 = sk.vertexCount
+    for (let j = 0; j <= ny; j++)
+      for (let i = 0; i <= nx; i++) {
+        const x = -W + (2 * W * i) / nx
+        const y = -H + (2 * H * j) / ny
+        sk.vert(new vec3(x, y, 0), nz, ink(UI_WHITE, gloss(x, y)))
+      }
+    const gi = (i: number, j: number) => g0 + j * (nx + 1) + i
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++) {
+        sk.tri(gi(i, j), gi(i + 1, j), gi(i + 1, j + 1))
+        sk.tri(gi(i, j), gi(i + 1, j + 1), gi(i, j + 1))
+      }
+    spawnMesh(face, "PrintSheen", sk.build(), this.ctx.glowMat, new vec3(0, 0, 0.08), sheenMat)
+    // The tag under the photo: "Sharp" (signal cyan) or "Out of focus" (warm light).
+    const sharp = o.sharp
+    this.printTagText = sharp ? "Sharp" : "Out of focus"
+    const tagCol = sharp ? SIGNAL : LIGHT
+    const tw = sharp ? 6.2 : 10.4
+    const th = 2.2
+    const tag = this.node(face, "PrintTag", new vec3(0, -H - 0.5 - th / 2, 0.05))
+    const tagMat = this.glowMat()
+    mats.push(tagMat)
+    const tk = new MeshKit()
+    const tr = th / 2
+    tk.addRectXY(-tw / 2 + tr, -tr, tw / 2 - tr, tr, ink(tagCol, 0.16))
+    tk.addFanXY(-tw / 2 + tr, 0, tr, Math.PI / 2, Math.PI * 1.5, ink(tagCol, 0.16), ink(tagCol, 0.16), 12)
+    tk.addFanXY(tw / 2 - tr, 0, tr, -Math.PI / 2, Math.PI / 2, ink(tagCol, 0.16), ink(tagCol, 0.16), 12)
+    tk.addLineXY(-tw / 2 + tr, tr, tw / 2 - tr, tr, 0.09, ink(tagCol, 0.85))
+    tk.addLineXY(-tw / 2 + tr, -tr, tw / 2 - tr, -tr, 0.09, ink(tagCol, 0.85))
+    tk.addArcXY(-tw / 2 + tr, 0, tr, 0.09, Math.PI / 2, Math.PI * 1.5, ink(tagCol, 0.85), 12)
+    tk.addArcXY(tw / 2 - tr, 0, tr, 0.09, -Math.PI / 2, Math.PI / 2, ink(tagCol, 0.85), 12)
+    spawnMesh(tag, "TagPill", tk.build(), this.ctx.glowMat, undefined, tagMat)
+    const textSo = this.node(tag, "TagText", new vec3(0, 0, 0.05))
+    textSo.getTransform().setLocalScale(vec3.one().uniformScale(PRINT_TAG_SCALE))
+    const t = textSo.createComponent("Component.Text") as Text
+    t.text = this.printTagText
+    t.depthTest = true
+    applyType(t, "note")
+    setTextAlpha(t, 0)
+    t.horizontalAlignment = HorizontalAlignment.Center
+    t.verticalAlignment = VerticalAlignment.Center
+    t.horizontalOverflow = HorizontalOverflow.Overflow
+    t.verticalOverflow = VerticalOverflow.Overflow
+    t.layoutRect = Rect.create(-30, 30, -3, 3)
+    this.printTag = t
+    // Pinch the print to dismiss it.
+    const col = so.createComponent("Physics.ColliderComponent") as ColliderComponent
+    const box = Shape.createBoxShape()
+    box.size = new vec3(PRINT_W, PRINT_H, 0.6)
+    col.shape = box
+    const inter = so.createComponent(Interactable.getTypeName()) as Interactable
+    inter.onTriggerEnd.add(() => this.dismissPrint(so))
+    mats.push(this.printImage.mat)
+    this.printMats = mats
     this.printBlur = o.c
     this.printH = o.h_i
-    this.printMats = mats
     this.print = so
     this.printT = 0
-    this.ctx.sound("print", this.partWorld(this.sensorPart))
+    this.printTarget = null
+    this.printFrom = null
+    this.printLogged = {shown: false, developed: false}
+    for (const m of mats) setFade(m, 0)
+    setFade(this.printBlankMat, 0)
+    this.placePrint()
+    this.ctx.sound("print", this.printSlot().pos)
     this.ctx.log("hero:print")
   }
 
-  private printSpot(): vec3 {
-    const c = this.replicaCenter()
+  /** The live print steps aside (renamed, no longer pinchable) and fades out. */
+  private retirePrint(): void {
+    if (!this.print) return
+    const so = this.print
+    so.name = HERO_PRINT_NAME + "Old"
+    const col = so.getComponent("Physics.ColliderComponent") as ColliderComponent
+    if (col) col.enabled = false
+    const mats = this.printMats.slice()
+    if (this.printBlankMat) mats.push(this.printBlankMat)
+    this.oldPrints.push({so, t: 0, mats, tag: this.printTag})
+    this.print = null
+    this.printTag = null
+    this.printImage = null
+    this.printBlankMat = null
+    this.printMats = []
+  }
+
+  /** Pinched: the print goes. */
+  private dismissPrint(so: SceneObject): void {
+    if (!this.print || !this.print.isSame(so)) return
+    this.retirePrint()
+    this.ctx.log("hero:printDismissed")
+  }
+
+  /** The slot on top of the camera body, and the print's pose there (facing the user's side). */
+  private printSlot(): {pos: vec3; rot: quat; up: vec3} {
+    const top = new vec3(BODY_BOX_CENTER.x, BODY_BOX_CENTER.y + BODY_BOX_SIZE.y / 2, BODY_BOX_CENTER.z)
+    const pos = this.bodyPart.so.getTransform().getWorldTransform().multiplyPoint(top)
+    const rtr = this.replica.getTransform()
+    const up = rtr.up
+    // The print's face is across the body (its width along the body's depth), toward the user.
+    let n = rtr.right
+    if (n.dot(this.ctx.camPos().sub(pos)) < 0) n = n.uniformScale(-1)
+    return {pos, rot: quat.lookAt(n, up), up}
+  }
+
+  /** Where the print floats: 55 cm from the eyes, straight ahead (level), 14 cm below the eye line. */
+  private printPlace(): vec3 {
+    return this.ctx.camPos().add(this.getViewDir().uniformScale(PRINT_OUT)).add(new vec3(0, -PRINT_DROP, 0))
+  }
+
+  /** The user's view direction, level (toward the replica if they look straight up or down). */
+  getViewDir(): vec3 {
+    const view = this.ctx.camera ? this.ctx.camera.getTransform().back : null
+    return flatDir(view && Math.abs(view.y) < 0.95 ? view : this.replicaCenter().sub(this.ctx.camPos()))
+  }
+
+  /** Pose the live print on its path: slide out of the slot, rise, turn and fly to the user, float. */
+  private placePrint(): void {
+    if (!this.print) return
+    const t = this.printT
     const head = this.ctx.camPos()
-    const toUser = flatDir(head.sub(c))
-    const right = toUser.uniformScale(-1).cross(vec3.up()).normalize()
-    // Upper left of the replica, above the lens labels and level with the sensor bubble.
-    return c.add(toUser.uniformScale(30)).add(right.uniformScale(-36)).add(new vec3(0, 42, 0))
+    const slot = this.printSlot()
+    const half = PRINT_H / 2
+    const tr = this.print.getTransform()
+    let pos: vec3
+    let rot: quat
+    let sy = 1
+    if (t < PRINT_SLIDE) {
+      // Out of the slot: what is out grows from the slot up (only its height scales).
+      const f = springOut(t / PRINT_SLIDE)
+      sy = Math.max(1e-3, f)
+      pos = slot.pos.add(slot.up.uniformScale(half * f))
+      rot = slot.rot
+    } else if (t < PRINT_SLIDE + PRINT_RISE) {
+      pos = slot.pos.add(slot.up.uniformScale(half + 8 * springOut((t - PRINT_SLIDE) / PRINT_RISE)))
+      rot = slot.rot
+    } else {
+      if (!this.printTarget || !this.printFrom) {
+        this.printTarget = this.printPlace()
+        this.printFrom = {pos: slot.pos.add(slot.up.uniformScale(half + 8)), rot: slot.rot}
+      }
+      const u = springOut((t - PRINT_SLIDE - PRINT_RISE) / PRINT_FLY)
+      // Floating: a slow, small bob once it is there.
+      const bob = t > PRINT_ARRIVE ? 0.35 * Math.sin(((t - PRINT_ARRIVE) / 3.2) * Math.PI * 2) : 0
+      const to = this.printTarget.add(new vec3(0, bob, 0))
+      pos = vec3.lerp(this.printFrom.pos, to, u).add(new vec3(0, 6 * Math.sin(Math.PI * u), 0))
+      rot = quat.slerp(this.printFrom.rot, faceToward(head.sub(pos)), u)
+    }
+    tr.setWorldPosition(pos)
+    tr.setWorldRotation(rot)
+    tr.setWorldScale(new vec3(1, sy, 1))
   }
 
   private updatePrints(dt: number): void {
-    const head = this.ctx.camPos()
     if (this.print) {
       this.printT += dt
-      const k = easeOutCubic(this.printT / 0.5)
-      const from = this.partWorld(this.sensorPart)
-      const to = this.printSpot()
-      const tr = this.print.getTransform()
-      tr.setWorldPosition(vec3.lerp(from, to, k))
-      tr.setWorldRotation(faceToward(head.sub(tr.getWorldPosition())))
-      tr.setWorldScale(vec3.one().uniformScale(0.3 + 0.7 * k))
-      const a = this.lightFade()
+      this.placePrint()
+      const t = this.printT
+      // Develops like instant film once it is in front of the user.
+      const dev = clamp01((t - PRINT_ARRIVE) / PRINT_DEVELOP)
+      const d = easeInOutCubic(dev)
+      const a = (this.state === "returning" ? this.lightFade() : 1) * clamp01(t / 0.08)
       for (const m of this.printMats) setFade(m, a)
+      if (this.printBlankMat) setFade(this.printBlankMat, a * (1 - 0.85 * d))
+      if (this.printImage) this.printImage.update(this.printImgH, this.printImgC, a * d)
+      if (this.printTag) setTextAlpha(this.printTag, a * clamp01((t - PRINT_ARRIVE) / 0.2))
+      if (t >= PRINT_ARRIVE && !this.printLogged.shown) {
+        this.printLogged.shown = true
+        this.ctx.log("hero:printShown")
+      }
+      if (dev >= 1 && !this.printLogged.developed) {
+        this.printLogged.developed = true
+        this.ctx.log("hero:printDeveloped")
+      }
     }
     this.oldPrints = this.oldPrints.filter((p) => {
       p.t += dt
-      const a = 1 - easeIn(p.t / 0.22)
-      for (const m of p.mats) setFade(m, Math.max(0, a))
+      const a = Math.max(0, 1 - easeIn(p.t / 0.22))
+      for (const m of p.mats) setFade(m, a)
+      if (p.tag) setTextAlpha(p.tag, a)
       const tr = p.so.getTransform()
       tr.setWorldPosition(tr.getWorldPosition().add(new vec3(0, -12 * dt, 0)))
       if (p.t >= 0.22) {
@@ -2630,8 +3174,9 @@ export class CameraHero {
 
   private fadeLightPath(dt: number): void {
     void dt
-    if (this.subject) setFade(this.subjectMat, this.lightFade())
-    if (this.rayMat) setFade(this.rayMat, this.lightFade())
+    if (this.subject) this.fadeSubject(this.lightFade())
+    if (this.rayMat) setFade(this.rayMat, RAY_STEADY * this.lightFade())
+    if (this.rayPulseMat) setFade(this.rayPulseMat, this.lightFade())
     if (this.rayFaintMat) setFade(this.rayFaintMat, 0.3 * this.lightFade())
     if (this.bubble) {
       const k = this.lightFade()
@@ -2651,17 +3196,69 @@ export class CameraHero {
     this.subject = null
     this.raysSo = null
     this.beams = []
+    this.resetCandle()
     this.bubble = null
     this.bubbleLeader = null
     this.bubbleImage = null
     this.bubbleFlash = null
     this.bubbleSharp = null
     if (keepPrints) return
-    if (this.print) this.print.destroy()
-    for (const p of this.oldPrints) p.so.destroy()
+    this.buryPrints()
     this.print = null
     this.oldPrints = []
     this.printMats = []
+    this.printTag = null
+    this.printImage = null
+    this.printBlankMat = null
+  }
+
+  /**
+   * Remove the prints at once without destroying them under the hand's cursor: the print floats
+   * right in front of the user, and SIK's cursor still reads the Interactable it targeted this
+   * frame. They leave the stage disabled (no longer targetable) and are destroyed two frames later.
+   */
+  private buryPrints(): void {
+    const all = this.oldPrints.map((p) => p.so)
+    if (this.print) all.push(this.print)
+    for (const so of all) {
+      so.name = "HeroPrintGone"
+      so.setParent(this.ctx.parent)
+      so.enabled = false
+      this.grave.push({so, frames: 2})
+    }
+    this.print = null
+    this.oldPrints = []
+    this.printMats = []
+    this.printTag = null
+    this.printImage = null
+    this.printBlankMat = null
+  }
+
+  private updateGrave(): void {
+    if (!this.grave.length) return
+    this.grave = this.grave.filter((g) => {
+      if (--g.frames > 0) return true
+      g.so.destroy()
+      return false
+    })
+  }
+
+  /** Forget the candle's and the pulses' objects (destroyed with the subject and the rays). */
+  private resetCandle(): void {
+    this.waxLook = null
+    this.flameSo = null
+    this.flickerSo = null
+    this.coreSo = null
+    this.haloSo = null
+    this.flameMat = null
+    this.haloMat = null
+    this.candleTip = null
+    this.candleBase = null
+    this.flameA = 0
+    this.rayPulses = []
+    this.rayPulseMat = null
+    this.rayPulseCount = 0
+    this.rayStarts = []
   }
 
   // =====================================================================================

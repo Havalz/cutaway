@@ -155,8 +155,9 @@ async function runHero(main: ReturnType<typeof getMain>, step: string, extraRaw:
   }
   if (step === "photo") {
     await press("HeroPhoto")
-    await wait("hero:print", 3000)
-    await sleep(extraRaw ? extra : 900)
+    // Pass 2: the print flies to the user and develops (1.2 s) before the frame is frozen.
+    await wait("hero:printDeveloped", 4000)
+    await sleep(extraRaw ? extra : 200)
     main.setHoldHero(true)
   }
 }

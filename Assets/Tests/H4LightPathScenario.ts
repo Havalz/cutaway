@@ -6,7 +6,7 @@ import {cleanStart, drag, getMain, waitForPhase} from "./CutawayTestUtils"
 import {check, landHero} from "./HeroTestUtils"
 
 /**
- * H4 (camera hero, light path): at full separation the subject appears; during the viewfinder
+ * H4 (camera hero, light path): at full separation the subject (a candle, h_o = 6 cm) appears; during the viewfinder
  * beat the mirror sends the rays up, then they reach the sensor. For subject distances 30, 50 and
  * 80 cm, focused at L = d_i the blur c is under 0.1 cm and h_i = h_o × d_i / d_o within 2%;
  * focused at L = d_i + 5 cm, c is above 0.8 cm. Grabbing the subject slides it along the axis,
@@ -24,6 +24,8 @@ export class H4LightPathScenario extends Scenario {
     await waitForPhase(main, "hero:light", 3000)
     await sleep(300)
     check(hero.isSubjectShown(), "expected hero.isSubjectShown()")
+    const candle = hero.getCandleReport()
+    check(candle !== null && Math.abs(candle.tip.sub(candle.base).dot(candle.up) - HERO_H_O) < 0.05, "the subject is not the h_o candle")
     expect(hero.getLightPhase()).toBe("viewfinder")
     check(!(hero.raysReachSensor()), "expected not hero.raysReachSensor()")
     check(!(main.getHeroRailVisual().focus), "expected not main.getHeroRailVisual().focus")

@@ -5,7 +5,7 @@
  * of dragging the UI Kit sliders.
  */
 import {findSceneObjectByName, sleep} from "Leaf.lspkg/Utils/common/Utils"
-import {CameraHero} from "../Scripts/CutawayHero"
+import {CameraHero, HERO_PRINT_NAME} from "../Scripts/CutawayHero"
 import {CutawayMain} from "../Scripts/CutawayMain"
 import {press, SETTLE_MS, waitForPhase, waitUntil} from "./CutawayTestUtils"
 
@@ -61,7 +61,7 @@ export function expectStageGone(main: CutawayMain): void {
   check(hero.state === "none", `stage state is ${hero.state}`)
   check(hero.getReplica() === null, "the replica is still there")
   check(!hero.getPrint().shown, "a print is still shown")
-  for (const n of ["HeroStage", "HeroReplica", "HeroThread", "HeroTableRing", "HeroPhotoPrint", "HeroSubject", "HeroRays"]) {
+  for (const n of ["HeroStage", "HeroReplica", "HeroThread", "HeroTableRing", HERO_PRINT_NAME, HERO_PRINT_NAME + "Old", "HeroSubject", "HeroRays"]) {
     check(findSceneObjectByName(n) === undefined, `${n} is still in the scene`)
   }
   const rail = main.getHeroRailVisual()

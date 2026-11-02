@@ -1,6 +1,6 @@
 import {Scenario} from "Leaf.lspkg/Scenarios/scenario/Scenario"
 import {findSceneObjectsByName, sleep} from "Leaf.lspkg/Utils/common/Utils"
-import {imageDistance} from "../Scripts/CutawayHero"
+import {HERO_PRINT_NAME, imageDistance} from "../Scripts/CutawayHero"
 import {cleanStart, getMain, press, waitForPhase, waitUntil} from "./CutawayTestUtils"
 import {check, landHero, phaseCount, soundsSince, toLive} from "./HeroTestUtils"
 
@@ -51,11 +51,9 @@ export class H5PhotoScenario extends Scenario {
     check(p2.shown, "expected p2.shown")
     if (Math.abs(p2.blur - blurC) > 1e-4) throw new Error(`print blur ${p2.blur} vs sensor ${blurC}`)
     await sleep(900)
-    const prints = findSceneObjectsByName("HeroPhotoPrint")
-    check(prints.length === 1, () => {
-      const stage = findSceneObjectsByName("HeroStage")
-      const kids = stage.length ? Array.from({length: stage[0].getChildrenCount()}, (_, i) => stage[0].getChild(i).name).join(",") : "no stage"
-      return `prints in the scene: ${prints.length} [${prints.map((p) => `${p.getParent() ? p.getParent().name : "-"}/${p.enabled}`).join(", ")}]; getPrint ${JSON.stringify(hero.getPrint())}; state ${hero.state}; stage: ${kids}`
-    })
+    // Exactly one print, and it is the hero's live print (the replaced one has gone).
+    const prints = findSceneObjectsByName(HERO_PRINT_NAME)
+    const live = hero.getPrintObject()
+    check(prints.length === 1 && live !== null && prints[0].isSame(live), () => `prints named ${HERO_PRINT_NAME}: ${prints.length}; live print ${live ? live.name : "none"}; getPrint ${JSON.stringify(hero.getPrint())}; state ${hero.state}`)
   }
 }
