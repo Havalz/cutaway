@@ -2,7 +2,7 @@
  * Cutaway visual direction in code (see devpost/visual-direction.md).
  * - Light is the ink: everything is drawn additively; large surfaces stay at 15% or less.
  * - Color means energy: amber = motion / sound, cyan = electricity / signal, warm white = light.
- * - UI is white: 85% for text, 25–35% for strokes.
+ * - UI is white: 85% for text. Chip and question outlines sit at 50% so they read in a bright room.
  */
 
 function hex(h: number, a: number = 1): vec4 {
@@ -21,7 +21,7 @@ export const ENERGY = {
 
 export const UI_WHITE = new vec4(1, 1, 1, 1)
 export const TEXT_ALPHA = 0.85
-export const STROKE_ALPHA = 0.3
+export const STROKE_ALPHA = 0.5
 export const FILL_ALPHA = 0.06
 
 /** Additive "ink": color scaled by k (additive blending ignores alpha, so scale rgb too). */

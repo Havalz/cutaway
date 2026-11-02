@@ -22,6 +22,10 @@ export interface ExplainContext {
   camPos: () => vec3
   log: (phase: string) => void
   playChime: () => void
+  /** Mirror flip + shutter click, played from the camera body. */
+  playClick?: () => void
+  /** Soft rising power-up tone, played from the lamp as its light comes on. */
+  playPowerUp?: () => void
   coneOverride?: SceneObject | null
   /** Show this beat's caption under the question (null hides it). */
   caption: (text: string | null) => void
@@ -124,7 +128,7 @@ export abstract class Explanation {
    * logs "beatN", clears the previous beat's labels and swaps the caption; the caption clears
    * at `end`.
    */
-  protected beats(starts: number[], captions: string[], end: number): void {
+  protected beats(starts: number[], captions: (string | null)[], end: number): void {
     this.beatStarts = starts.slice()
     starts.forEach((at, i) =>
       this.cue(at, () => {
@@ -181,6 +185,13 @@ export abstract class Explanation {
     return spawnMesh(parent, name, kit.build(), this.ctx.glowMat, localPos)
   }
 
+  /** Flat glow drawing (MeshKit XY primitives), visible from both sides. */
+  protected flat(parent: SceneObject, name: string, kit: MeshKit, localPos?: vec3): Spawned {
+    const s = this.glow(parent, name, kit, localPos)
+    s.mat.mainPass.twoSided = true
+    return s
+  }
+
   protected model(parent: SceneObject, name: string, kit: MeshKit, alpha: number = 1, localPos?: vec3): Spawned {
     const s = spawnMesh(parent, name, kit.build(), this.ctx.modelMat, localPos)
     s.mat.mainPass.twoSided = true
@@ -211,14 +222,18 @@ export abstract class Explanation {
   /**
    * Ghost shell: the object's bounds as thin edges with brighter corner brackets, never a filled
    * box. The brackets lock on first (150 ms, like the scan), then the edges fade in (300 ms).
+   * `axes` orients the box to the object (unit vectors for size.x / size.y / size.z); default world axes.
    */
-  protected ghostShell(name: string, center: vec3, size: vec3, beat: number, at: number): SceneObject {
+  protected ghostShell(name: string, center: vec3, size: vec3, beat: number, at: number, axes?: {x: vec3; y: vec3; z: vec3}): SceneObject {
     const shell = this.node(name, center)
     const h = size.uniformScale(0.5)
     const r = this.hairAt(center)
-    const ax = new vec3(h.x, 0, 0)
-    const ay = new vec3(0, h.y, 0)
-    const az = new vec3(0, 0, h.z)
+    const X = axes ? axes.x.normalize() : new vec3(1, 0, 0)
+    const Y = axes ? axes.y.normalize() : new vec3(0, 1, 0)
+    const Z = axes ? axes.z.normalize() : new vec3(0, 0, 1)
+    const ax = X.uniformScale(h.x)
+    const ay = Y.uniformScale(h.y)
+    const az = Z.uniformScale(h.z)
     const edges = new MeshKit()
     edges.addBoxEdges(vec3.zero(), ax, ay, az, r, ink(UI_WHITE, 0.2))
     const e = this.glow(shell, "ShellEdges", edges)
@@ -230,10 +245,10 @@ export abstract class Explanation {
     for (const sx of [-1, 1])
       for (const sy of [-1, 1])
         for (const sz of [-1, 1]) {
-          const p = new vec3(sx * h.x, sy * h.y, sz * h.z)
-          ck.addTube([p, p.add(new vec3(-sx * arm(h.x), 0, 0))], r * 0.85, c, 4, 50)
-          ck.addTube([p, p.add(new vec3(0, -sy * arm(h.y), 0))], r * 0.85, c, 4, 50)
-          ck.addTube([p, p.add(new vec3(0, 0, -sz * arm(h.z)))], r * 0.85, c, 4, 50)
+          const p = ax.uniformScale(sx).add(ay.uniformScale(sy)).add(az.uniformScale(sz))
+          ck.addTube([p, p.add(X.uniformScale(-sx * arm(h.x)))], r * 0.85, c, 4, 50)
+          ck.addTube([p, p.add(Y.uniformScale(-sy * arm(h.y)))], r * 0.85, c, 4, 50)
+          ck.addTube([p, p.add(Z.uniformScale(-sz * arm(h.z)))], r * 0.85, c, 4, 50)
         }
     const cm = this.glow(corners, "ShellBrackets", ck)
     this.inkBeat(cm.mat, beat, this.ramp(at, 0.15))
@@ -645,212 +660,359 @@ export class RecordPlayerExplanation extends Explanation {
 }
 
 // =====================================================================================
-// Camera: cutaway shell opens → light rays travel from the room through the lens and land
-// (upside-down) on the sensor.
+// Camera — "How does it take a picture?" Five beats on the DSLR. The x-ray window is a side
+// section through the lens axis, turned to face the viewer: lens elements, mirror and sensor drawn
+// as thin lines. Light is warm white; cyan appears only on the sensor, in beat 5.
 // =====================================================================================
 export class CameraExplanation extends Explanation {
-  readonly duration = 15.5
+  static readonly BEATS = [0.05, 3.4, 7.0, 10.6, 14.2]
+  static readonly END = 17.6
+  readonly duration = CameraExplanation.END + 0.25
 
   /**
-   * @param camCenter centre of the real camera (body + lens) — the DSLR on the shelf
-   * @param facing direction the real lens points (into the room)
-   * @param freeSide world direction with empty space beside the camera (labels go there, clear of the book)
+   * @param facing direction the real lens points (into the room); only its horizontal part is used
+   * @param body the real DSLR body in cm: x = depth along the lens axis, y = height, z = width.
+   *             It is centred on the station's bounds centre.
    */
-  constructor(ctx: ExplainContext, camCenter: vec3, facing: vec3, freeSide: vec3 = new vec3(-1, 0, 0)) {
+  constructor(ctx: ExplainContext, facing: vec3, body: vec3) {
     super(ctx)
     this.energies = [ENERGY.light, ENERGY.signal]
-    // The shell is drawn at the real DSLR's size (body ~14 x 10 cm, body + lens ~18 cm long).
-    const K = 0.65
-    const f = flat(facing)
-    const up = vec3.up()
-    const s = up.cross(f).normalize()
+    const B = CameraExplanation.BEATS
+    const END = CameraExplanation.END
+    const LIGHT = ENERGY.light
+    const SIGNAL = ENERGY.signal
     const cam = ctx.camPos()
-    const m = camCenter
-    const hx = 11 * K
-    const hy = 8 * K
-    const hz = 14 * K
-    const edge = 0.2
+    const up = vec3.up()
+    const f = flat(facing)
+    const grip = f.cross(up).normalize() // the camera's right-hand side
+    const D = body.x
+    const H = body.y
+    const Wb = body.z
+    const center = ctx.bounds.center
+    // Section coordinates are laid out for an 11.5 x 11.3 cm body and stretch with the real one.
+    const kx = D / 11.5
+    const ky = H / 11.3
+    const X = (v: number) => v * kx
+    const Y = (v: number) => v * ky
+    const hair = this.hairAt(center)
+    const LW = hair * 1.5 // part lines
+    const LWF = hair * 1.25 // faint context lines
 
-    // Viewer frame at start: labels sit to the viewer's left of the shell and face them.
-    const view = m.sub(cam).normalize()
-    const vRraw = view.cross(up)
-    const vR = vRraw.length > 1e-3 ? vRraw.normalize() : s
-    const vU = vR.cross(view).normalize()
-    const toCam = view.uniformScale(-1)
-    const sideDot = vR.dot(freeSide)
-    const side = Math.abs(sideDot) > 0.2 && sideDot > 0 ? vR : vR.uniformScale(-1)
-    // Rays spread across the lens along the axis the viewer sees best (vertical from the side,
-    // sideways from above), so the crossing and the flipped image stay readable.
-    const vp = view.sub(f.uniformScale(view.dot(f)))
-    let w = vp.length > 1e-3 ? f.cross(vp).normalize() : up
-    if (w.dot(vU) < 0) w = w.uniformScale(-1)
-    const p = f.cross(w).normalize()
-    const flipWord = Math.abs(w.dot(up)) > 0.7 ? "upside-down" : "flipped"
-    const ls = Math.min(1, Math.max(0.3, cam.distance(m) / 110)) // label scale (matches CutawayLabelsUI)
-    const extent = (v: vec3) => Math.abs(s.dot(v)) * hx + Math.abs(up.dot(v)) * hy + Math.abs(f.dot(v)) * hz
-
-    // Faces of the shell (the front, +f, holds the lens). The one the viewer sees best slides off.
-    const faces = [
-      {n: up, hn: hy, a: s, ha: hx, b: f, hb: hz},
-      {n: up.uniformScale(-1), hn: hy, a: s, ha: hx, b: f, hb: hz},
-      {n: s, hn: hx, a: f, ha: hz, b: up, hb: hy},
-      {n: s.uniformScale(-1), hn: hx, a: f, ha: hz, b: up, hb: hy},
-      {n: f.uniformScale(-1), hn: hz, a: s, ha: hx, b: up, hb: hy}
-    ]
-    let coverIdx = 0
-    for (const i of [2, 3]) if (faces[i].n.dot(toCam) > faces[coverIdx].n.dot(toCam)) coverIdx = i
-    const cf = faces[coverIdx]
-
-    const shell = this.node("CutawayShell", m)
-    shell.enabled = false
-    const edges = new MeshKit()
-    edges.addBoxEdges(vec3.zero(), s.uniformScale(hx), up.uniformScale(hy), f.uniformScale(hz), edge, CYAN)
-    this.glow(shell, "ShellEdges", edges)
-    const panels = new MeshKit()
-    const pc = new vec4(0.6, 0.8, 1.0, 1)
-    faces.forEach((fc, i) => {
-      if (i !== coverIdx) panels.addQuad(fc.n.uniformScale(fc.hn), fc.a.uniformScale(fc.ha), fc.b.uniformScale(fc.hb), pc)
-    })
-    this.model(shell, "ShellPanels", panels, 0.16)
-    const coverKit = new MeshKit()
-    coverKit.addQuad(vec3.zero(), cf.a.uniformScale(cf.ha), cf.b.uniformScale(cf.hb), new vec4(0.7, 0.88, 1.0, 1))
-    const cover = this.model(shell, "ShellCover", coverKit, 0.55, cf.n.uniformScale(cf.hn))
-
-    const lensC = f.uniformScale(hz - 4 * K)
-    const lensKit = new MeshKit()
-    lensKit.addLathe(
-      lensC,
-      f,
+    this.beats(
+      B,
       [
-        [0, -1.4 * K],
-        [2.5 * K, -1.1 * K],
-        [4.5 * K, -0.5 * K],
-        [5.2 * K, 0],
-        [4.5 * K, 0.5 * K],
-        [2.5 * K, 1.1 * K],
-        [0, 1.4 * K]
+        null,
+        "Light from the scene enters the lens.",
+        "The lens bends the light so the rays cross.",
+        "On the sensor, the image lands upside down.",
+        "Each pixel turns light into signal."
       ],
-      [new vec4(0.75, 0.92, 1, 1)],
-      36
+      END
     )
-    this.model(shell, "Lens", lensKit, 0.8)
-    const lensRim = new MeshKit()
-    lensRim.addRing(lensC, f, 5.3 * K, edge, CYAN, 64)
-    this.glow(shell, "LensRim", lensRim)
 
-    const sensorC = f.uniformScale(-hz + 3 * K)
-    const sensorKit = new MeshKit()
-    sensorKit.addQuad(sensorC, s.uniformScale(4 * K), up.uniformScale(3 * K), new vec4(0.45, 1.0, 0.6, 1))
-    const sensor = this.glow(shell, "Sensor", sensorKit)
-    setFade(sensor.mat, 0.35)
+    // ---------------- Beat 1: ghost shell on the body, then the x-ray window opens ----------------
+    this.cue(B[0], () => ctx.log("shell"))
+    this.ghostShell("GhostShell", center, new vec3(D, H, Wb), 0, B[0], {x: f, y: up, z: grip})
 
-    const shellPop = this.pop(shell)
-    const lensW = m.add(lensC)
-    const sensorW = m.add(sensorC)
-
-    // Label anchors: beside the shell on the free side, at the lens / sensor screen height
-    // (spread apart when the two overlap on screen, e.g. when looking down the lens axis).
-    const eR = extent(side)
-    let lensY = lensC.dot(vU)
-    let sensY = sensorC.dot(vU)
-    if (Math.abs(lensY - sensY) < 7) {
-      const mid = (lensY + sensY) / 2
-      const sign = lensY >= sensY ? 1 : -1
-      lensY = mid + 3.5 * sign
-      sensY = mid - 3.5 * sign
+    // The section plane holds the lens axis and turns toward the viewer (every plane through the
+    // axis is a true section; this one reads best). Local x runs along the axis toward the lens,
+    // local y is the section's "up". The mount sits 42% up the body, a little off the grip.
+    const axisO = center.add(up.uniformScale(-0.08 * H)).add(grip.uniformScale(-0.136 * Wb))
+    const toCam = cam.sub(axisO).normalize()
+    let n = toCam.sub(f.uniformScale(toCam.dot(f)))
+    n = n.length > 1e-3 ? n.normalize() : grip
+    let w = n.cross(f).normalize()
+    if (w.dot(up) < 0) {
+      w = w.uniformScale(-1)
+      n = n.uniformScale(-1)
     }
-    const beside = (y: number, halfW: number) =>
-      m.add(vU.uniformScale(y)).add(side.uniformScale(eR + 2 + halfW * ls)).add(toCam.uniformScale(3))
-    const lensLabelW = beside(lensY, 2.5)
-    // Stop pill: beside the shell on the other side from the labels, at mid height.
-    this.stopHint = m.add(side.uniformScale(-(eR + 3 + 3.5 * ls))).add(toCam.uniformScale(3))
-    const sensorLabelW = beside(sensY, 5.5)
-    // Question caption: just behind the camera body, i.e. on the opposite side from the rays.
-    this.captionHint = m.add(f.uniformScale(-(hz + 5))).add(up.uniformScale(hy)).add(toCam.uniformScale(4))
+    const sec = this.node("CameraSection", axisO)
+    const secT = sec.getTransform()
+    secT.setWorldRotation(quat.lookAt(n, w))
+    const toWorld = (x: number, y: number) => secT.getWorldTransform().multiplyPoint(new vec3(x, y, 0))
 
-    this.cue(0.2, () => {
-      ctx.log("shell")
-      shellPop.show(true)
-    })
-    this.cue(1.2, () => {
-      ctx.log("cutaway")
-      this.label("lens", "Lens", lensLabelW)
-      this.label("sensor", "Sensor", sensorLabelW)
-    })
-    this.tick((t) => {
-      const c = easeInOut(phase(t, 1.2, 1.8))
-      cover.so.getTransform().setLocalPosition(cf.n.uniformScale(cf.hn + 10 * c))
-      setFade(cover.mat, 0.55 * (1 - c), true)
-      if (c >= 1) cover.so.enabled = false
-    })
+    // Layout along the axis (cm from the body centre): back, sensor, mirror hinge, mount, lens.
+    const xSensor = X(-1.25)
+    const xMount = X(4.75)
+    const xLens = X(7.25) // where the rays bend (middle of the lens group)
+    const xFront = X(9.75)
+    const yBottom = Y(-4.75)
+    const barrelR = Y(3.0)
+    const hinge = new vec3(X(-0.25), Y(1.8), 0)
+    const mirrorLen = 4.8 * kx
+    const sensorH = Y(2.0)
 
-    // ---- rays from the room, through the lens, onto the sensor (inverted) ----
-    const D = 22
-    const H = 7
-    const srcMid = m.add(f.uniformScale(D))
-    const srcTop = srcMid.add(w.uniformScale(H))
-    const srcBot = srcMid.add(w.uniformScale(-H))
-    const imgTop = sensorW.add(w.uniformScale(-2.4 * K))
-    const imgBot = sensorW.add(w.uniformScale(2.4 * K))
-    const rayDefs = [
-      {src: srcTop, hit: 3.5, img: imgTop, col: WARM},
-      {src: srcTop, hit: 0, img: imgTop, col: WARM},
-      {src: srcTop, hit: -3.5, img: imgTop, col: WARM},
-      {src: srcBot, hit: 2, img: imgBot, col: CYAN},
-      {src: srcBot, hit: -2, img: imgBot, col: CYAN}
-    ]
-    const RAYS = 3.2
-    const rays: {p: GlowPath; h: SceneObject; start: number}[] = []
-    const srcKit = new MeshKit()
-    srcKit.addSphere(this.L(srcTop), 0.9, WARM, 6, 10)
-    srcKit.addSphere(this.L(srcBot), 0.9, CYAN, 6, 10)
-    const srcs = this.glow(ctx.root, "RaySources", srcKit)
-    srcs.so.enabled = false
-    // Just beyond the two sources (away from the lens), so no ray crosses the text.
-    const lightLabelW = srcMid.add(f.uniformScale(4)).add(toCam.uniformScale(2))
-    this.cue(RAYS - 0.2, () => {
-      srcs.so.enabled = true
-      this.label("light", "Light from the room", lightLabelW)
+    // X-ray window: thin rim, faint inner glow (fill under 10%). It grows out of the dot.
+    const winC = new vec3(X(2.0), Y(0.9), 0)
+    const RW = 9.8 * Math.max(kx, ky)
+    const dotLocal = secT.getInvertedWorldTransform().multiplyPoint(this.origin)
+    const win = this.node("XrayWindow", winC, sec)
+    win.getTransform().setLocalScale(vec3.one().uniformScale(1e-4))
+    const winOpen = () => easeOutCubic(phase(this.t, B[0] + 0.15, B[0] + 0.5))
+    this.tick(() => {
+      const k = winOpen()
+      win.getTransform().setLocalPosition(vec3.lerp(dotLocal, winC, k))
+      win.getTransform().setLocalScale(vec3.one().uniformScale(Math.max(1e-4, k)))
     })
-    this.cue(RAYS, () => {
-      ctx.log("rays")
-      rayDefs.forEach((d, i) => {
-        const hitW = lensW.add(w.uniformScale(d.hit * K))
-        const p = this.path("Ray" + i, [d.src, hitW, d.img], 0.2, d.col, 0.6)
-        rays.push({p, h: this.headSphere("RayHead" + i, 0.6, d.col), start: RAYS + i * 0.35})
-      })
-    })
+    this.cue(B[0] + 0.15, () => ctx.log("cutaway"))
+    const rk = new MeshKit()
+    rk.addArcXY(0, 0, RW, hair * 1.4, 0, Math.PI * 2, ink(UI_WHITE, 0.6), 128)
+    rk.addFanXY(0, 0, RW * 0.72, 0, Math.PI * 2, ink(UI_WHITE, 0.02), ink(UI_WHITE, 0.03), 64)
+    rk.addSoftRingXY(0, 0, RW * 0.72, RW - hair, ink(UI_WHITE, 0.03), ink(UI_WHITE, 0.09), 96)
+    const rim = this.flat(win, "XrayRim", rk)
+    this.inkBeat(rim.mat, 0, winOpen)
+
+    // Parts are drawn in window-local coordinates.
+    const wx = (x: number) => x - winC.x
+    const wy = (y: number) => y - winC.y
+    const seg = (k: MeshKit, x0: number, y0: number, x1: number, y1: number, width: number, c: vec4) =>
+      k.addLineXY(wx(x0), wy(y0), wx(x1), wy(y1), width, c)
+    const poly = (k: MeshKit, pts: number[][], width: number, c: vec4) => k.addPolylineXY(pts.map((p) => new vec2(wx(p[0]), wy(p[1]))), width, c)
+    const partsIn = (delay: number) => () => winOpen() * easeOutCubic((this.t - B[0] - 0.35 - delay) / 0.3)
+
+    // Context (faint): lens barrel, focusing screen and pentaprism (the viewfinder path).
+    const faint = ink(UI_WHITE, 0.45)
+    const ck = new MeshKit()
+    poly(ck, [[xMount, -barrelR], [xFront, -barrelR], [xFront, barrelR], [xMount, barrelR]], LWF, faint)
+    seg(ck, xMount, -barrelR - Y(0.4), xMount, barrelR + Y(0.4), LWF, faint)
+    seg(ck, X(-0.4), Y(2.05), X(4.5), Y(2.05), LWF, faint)
+    poly(ck, [[X(-0.4), Y(2.35)], [X(4.4), Y(2.35)], [X(2.8), Y(5.2)], [X(0.0), Y(5.2)], [X(-0.4), Y(4.4)], [X(-0.4), Y(2.35)]], LWF, faint)
+    const ctxMesh = this.flat(win, "SectionContext", ck)
+    this.inkBeat(ctxMesh.mat, 2, partsIn(0))
+
+    // Lens elements (they handle light: warm white).
+    const lensInk = ink(LIGHT, 0.8)
+    const lensKit = new MeshKit()
+    const lensEl = (cx: number, h: number, tc: number, te: number) => {
+      const N = 14
+      const L: number[][] = []
+      const R: number[][] = []
+      for (let i = 0; i <= N; i++) {
+        const y = -h + (2 * h * i) / N
+        const q = (y / h) * (y / h)
+        const half = tc >= te ? te / 2 + ((tc - te) / 2) * (1 - q) : tc / 2 + ((te - tc) / 2) * q
+        L.push([cx - half, y])
+        R.push([cx + half, y])
+      }
+      poly(lensKit, L, LW, lensInk)
+      poly(lensKit, R, LW, lensInk)
+      seg(lensKit, L[0][0], -h, R[0][0], -h, LW, lensInk)
+      seg(lensKit, L[N][0], h, R[N][0], h, LW, lensInk)
+    }
+    lensEl(X(8.9), Y(2.6), X(1.0), X(0.25))
+    lensEl(X(7.25), Y(2.0), X(0.25), X(0.8))
+    lensEl(X(5.7), Y(2.3), X(0.85), X(0.25))
+    const lens = this.flat(win, "Lens", lensKit)
+    this.inkBeat(lens.mat, 2, partsIn(0))
+
+    // Mirror: hinged at its top-back edge, down at 45° (it sends light up to the viewfinder).
+    const mirror = this.node("Mirror", new vec3(wx(hinge.x), wy(hinge.y), 0.02), win)
+    const mk = new MeshKit()
+    mk.addLineXY(0, 0, mirrorLen, 0, LW * 1.3, ink(LIGHT, 0.95))
+    mk.addLineXY(0, -0.18, mirrorLen, -0.18, LWF, ink(LIGHT, 0.35))
+    const mirrorMesh = this.flat(mirror, "MirrorMesh", mk)
+    this.inkBeat(mirrorMesh.mat, 3, partsIn(0.07))
+    const DOWN = -Math.PI / 4
+    let mirrorAngle = DOWN
+    mirror.getTransform().setLocalRotation(quat.angleAxis(DOWN, vec3.forward()))
+
+    // Sensor: a pixel grid seen at an angle (oblique), its front edge where the image lands.
+    const ROWS = 8
+    const COLS = 3
+    const dv = new vec3(X(-1.1), Y(0.65), 0)
+    const cell = (x: number, y: number, d: number) => new vec3(x + dv.x * d, y + dv.y * d, 0)
+    const sk = new MeshKit()
+    const sensorInk = ink(LIGHT, 0.55)
+    for (let r = 0; r <= ROWS; r++) {
+      const y = -sensorH + (2 * sensorH * r) / ROWS
+      const a = cell(xSensor, y, 0)
+      const b = cell(xSensor, y, 1)
+      seg(sk, a.x, a.y, b.x, b.y, LWF, sensorInk)
+    }
+    for (let c = 0; c <= COLS; c++) {
+      const a = cell(xSensor, -sensorH, c / COLS)
+      const b = cell(xSensor, sensorH, c / COLS)
+      seg(sk, a.x, a.y, b.x, b.y, c === 0 ? LW : LWF, c === 0 ? ink(LIGHT, 0.85) : sensorInk)
+    }
+    const sensor = this.flat(win, "Sensor", sk)
+    this.inkBeat(sensor.mat, 4, partsIn(0.14))
+
+    // Labels: each anchored on its part, with a short leader to just outside the rim.
+    const outside = (ax: number, ay: number, dx: number, dy: number, margin: number) => {
+      const d = new vec2(dx, dy).normalize()
+      const px = ax - winC.x
+      const py = ay - winC.y
+      const b = px * d.x + py * d.y
+      const c = px * px + py * py - (RW + margin) * (RW + margin)
+      const t = -b + Math.sqrt(Math.max(0, b * b - c))
+      return toWorld(ax + d.x * t, ay + d.y * t)
+    }
+    const mirrorMid = hinge.add(new vec3(Math.cos(DOWN), Math.sin(DOWN), 0).uniformScale(mirrorLen / 2))
+    this.cue(B[0] + 0.9, () => this.label("lens", "Lens", outside(X(8.9), Y(2.75), 0.6, 0.8, 1.4), toWorld(X(8.9), Y(2.75))))
+    this.cue(B[0] + 1.0, () => this.label("mirror", "Mirror", outside(mirrorMid.x, mirrorMid.y, 0.35, -0.94, 1.0), toWorld(mirrorMid.x, mirrorMid.y)))
+    this.cue(B[0] + 1.1, () => this.label("sensor", "Sensor", outside(xSensor, -sensorH, -0.6, -0.8, 1.6), toWorld(xSensor, -sensorH)))
+
+    // ---------------- Beat 2: the subject, and light from it entering the lens ----------------
+    const DIST = 36 // subject in front of the lens (cm)
+    const xObj = xLens + DIST
+    const yBase = yBottom + Y(0.6)
+    const yTip = yBase + 11
+    const mag = (xLens - xSensor) / DIST
+    const imgTip = -mag * yTip
+    const imgBase = -mag * yBase
+    const subject = this.node("SubjectArrow", new vec3(xObj, yBase, 0), sec)
+    const ak = new MeshKit()
+    const AH = yTip - yBase
+    ak.addLineXY(0, 0, 0, AH, LW * 1.4, ink(LIGHT, 1), hair * 2.5, ink(LIGHT, 0.18))
+    ak.addLineXY(0, AH, -0.95, AH - 1.4, LW * 1.4, ink(LIGHT, 1))
+    ak.addLineXY(0, AH, 0.95, AH - 1.4, LW * 1.4, ink(LIGHT, 1))
+    for (const y of [0, AH]) {
+      ak.addFanXY(0, y, 0.35, 0, Math.PI * 2, ink(LIGHT, 1), ink(LIGHT, 0.6), 16)
+      ak.addSoftRingXY(0, y, 0.35, 1.3, ink(LIGHT, 0.22), ZERO, 24)
+    }
+    const arrowMesh = this.flat(subject, "SubjectMesh", ak)
+    const arrowIn = () => easeOutCubic((this.t - B[1] - 0.1) / 0.3)
+    // Stays bright through beat 4, so the upright subject and the upside-down image can be compared.
+    this.inkBeat(arrowMesh.mat, 3, arrowIn)
+    subject.getTransform().setLocalScale(vec3.one().uniformScale(1e-4))
+    this.tick(() => subject.getTransform().setLocalScale(vec3.one().uniformScale(Math.max(1e-4, arrowIn()))))
+    this.cue(B[1] + 0.1, () => ctx.log("arrow"))
+    this.cue(B[1] + 0.7, () => this.label("subject", "Subject", toWorld(xObj + 2.6, yBase - 3.4), toWorld(xObj, yBase)))
+
+    // Rays: from the tip and the base to three points on the lens; one clean bend there; then
+    // down to the mirror (beat 3) or, once it flips up, on to the sensor (beat 4).
+    const mU = new vec3(Math.cos(DOWN), Math.sin(DOWN), 0)
+    const mN = new vec3(-mU.y, mU.x, 0) // faces the lens and the viewfinder
+    const cross2 = (a: vec3, b: vec3) => a.x * b.y - a.y * b.x
+    const yScreen = Y(4.4)
+    const FLIP = B[3] + 0.35
+    const rays: {pin: GlowPath; pout: GlowPath; pb: GlowPath; pf: GlowPath; hitF: number; head: SceneObject; st: number}[] = []
+    const rayOpts = (c: vec4) => ({radius: hair * 0.55, color: c, halo: hair * 2.2, haloAlpha: 0.16, sides: 5, step: 0.6})
+    const bounceA = () => 1 - clamp01((this.t - FLIP) / 0.15)
+    let ri = 0
+    for (const [ySrc, yImg] of [[yTip, imgTip], [yBase, imgBase]]) {
+      for (const h of [Y(1.4), 0, Y(-1.4)]) {
+        const src = new vec3(xObj, ySrc, 0)
+        const lp = new vec3(xLens, h, 0)
+        const img = new vec3(xSensor, yImg, 0)
+        const d = img.sub(lp)
+        const t = cross2(hinge.sub(lp), mU) / cross2(d, mU)
+        const hit = lp.add(d.uniformScale(t))
+        const dn = d.normalize()
+        const refl = dn.sub(mN.uniformScale(2 * dn.dot(mN)))
+        const bEnd = hit.add(refl.uniformScale((yScreen - hit.y) / Math.max(0.2, refl.y)))
+        const c = ink(LIGHT, 0.9)
+        const pin = new GlowPath(sec, "Ray" + ri, ctx.glowMat, [src, lp], rayOpts(c))
+        const pout = new GlowPath(sec, "RayBent" + ri, ctx.glowMat, [lp, hit], rayOpts(c))
+        const pb = new GlowPath(sec, "RayViewfinder" + ri, ctx.glowMat, [hit, bEnd], rayOpts(ink(LIGHT, 0.7)))
+        // Beat 4 lights the whole path from the lens to the sensor; it grows on from the mirror point.
+        const pf = new GlowPath(sec, "RayToSensor" + ri, ctx.glowMat, [lp, hit, img], rayOpts(c))
+        const hitF = lp.distance(hit) / (lp.distance(hit) + hit.distance(img))
+        this.inkBeat(pin.mat, 1)
+        this.inkBeat(pout.mat, 2, () => (this.t < FLIP + 0.15 ? 1 : 0))
+        this.inkBeat(pb.mat, 2, bounceA)
+        this.inkBeat(pf.mat, 3)
+        const hk = new MeshKit()
+        hk.addFanXY(0, 0, hair * 2.2, 0, Math.PI * 2, ink(LIGHT, 1), ink(LIGHT, 0.7), 16)
+        hk.addSoftRingXY(0, 0, hair * 2.2, hair * 6, ink(LIGHT, 0.3), ZERO, 20)
+        const head = this.flat(sec, "RayHead" + ri, hk)
+        head.so.enabled = false
+        this.inkBeat(head.mat, 4)
+        rays.push({pin, pout, pb, pf, hitF, head: head.so, st: ri * 0.07})
+        ri++
+      }
+    }
+    this.cue(B[1] + 0.5, () => ctx.log("rays"))
+    this.cue(B[2] + 0.3, () => ctx.log("bend"))
     this.tick((t) => {
       for (const r of rays) {
-        const k = easeInOut(phase(t, r.start, r.start + 3.0))
-        r.p.setRange(0, k)
-        r.h.enabled = k > 0 && k < 1
-        r.h.getTransform().setLocalPosition(r.p.pointAt(k))
+        const kin = easeInOutCubic(phase(t, B[1] + 0.5 + r.st, B[1] + 1.6 + r.st))
+        const kout = easeInOutCubic(phase(t, B[2] + 0.3 + r.st, B[2] + 0.75 + r.st))
+        const kb = easeOutCubic(phase(t, B[2] + 0.75 + r.st, B[2] + 1.1 + r.st))
+        const kf = easeInOutCubic(phase(t, FLIP + 0.15 + r.st, FLIP + 0.5 + r.st))
+        if (kin > 0) r.pin.setRange(0, kin)
+        if (kout > 0) r.pout.setRange(0, kout)
+        if (kb > 0 && t < FLIP + 0.2) r.pb.setRange(0, kb)
+        else if (t >= FLIP + 0.2) r.pb.setRange(0, 0)
+        if (kf > 0) r.pf.setRange(0, r.hitF + (1 - r.hitF) * kf)
+        let head: vec3 | null = null
+        if (kin > 0 && kin < 1) head = r.pin.pointAt(kin)
+        else if (kout > 0 && kout < 1) head = r.pout.pointAt(kout)
+        else if (kb > 0 && kb < 1) head = r.pb.pointAt(kb)
+        else if (kf > 0 && kf < 1) head = r.pf.pointAt(r.hitF + (1 - r.hitF) * kf)
+        r.head.enabled = head !== null
+        if (head) r.head.getTransform().setLocalPosition(head.add(new vec3(0, 0, 0.05)))
       }
     })
 
-    // ---- the picture forms on the sensor ----
-    const SENSOR = 8.4
-    const arrowKit = new MeshKit()
-    const ac = sensorC.add(f.uniformScale(0.3))
-    // The picture of the (warm) top of the scene lands at the far side: an arrow pointing the "wrong" way.
-    arrowKit.addTube([ac.add(w.uniformScale(2.2 * K)), ac.add(w.uniformScale(-2.2 * K))], 0.15, WARM, 5, 1)
-    arrowKit.addTube([ac.add(w.uniformScale(-2.2 * K)), ac.add(w.uniformScale(-1.2 * K)).add(p.uniformScale(1.0 * K))], 0.15, WARM, 5, 1)
-    arrowKit.addTube([ac.add(w.uniformScale(-2.2 * K)), ac.add(w.uniformScale(-1.2 * K)).add(p.uniformScale(-1.0 * K))], 0.15, WARM, 5, 1)
-    const arrow = this.glow(shell, "SensorImage", arrowKit)
-    arrow.so.enabled = false
-    this.cue(SENSOR, () => {
-      ctx.log("sensor")
-      arrow.so.enabled = true
-      this.unlabel("light")
-      this.label("sensor", "Light lands " + flipWord + "\non the sensor: a photo", sensorLabelW)
+    // ---------------- Beat 4: the mirror flips up (click); the image lands upside down ----------------
+    this.cue(FLIP, () => {
+      ctx.log("mirror")
+      if (ctx.playClick) ctx.playClick()
+      ctx.log("click")
     })
     this.tick((t) => {
-      if (t < SENSOR) return
-      setFade(sensor.mat, 0.6 + 0.4 * Math.sin((t - SENSOR) * 5))
-      setFade(arrow.mat, clamp01((t - SENSOR) / 0.4))
+      // A fast mechanical flip (130 ms), then it stays up against the focusing screen.
+      const a = DOWN * (1 - easeOutCubic(phase(t, FLIP, FLIP + 0.13)))
+      if (a !== mirrorAngle) {
+        mirrorAngle = a
+        mirror.getTransform().setLocalRotation(quat.angleAxis(a, vec3.forward()))
+      }
     })
-    this.cue(14.6, () => {
+    const image = this.node("SensorImage", vec3.zero(), sec)
+    const ik = new MeshKit()
+    const xi = xSensor + 0.05
+    ik.addLineXY(xi, imgBase, xi, imgTip, LW * 1.7, ink(LIGHT, 1), hair * 2.5, ink(LIGHT, 0.25))
+    ik.addLineXY(xi, imgTip, xi - 0.5, imgTip + 0.65, LW * 1.6, ink(LIGHT, 1))
+    ik.addLineXY(xi, imgTip, xi + 0.5, imgTip + 0.65, LW * 1.6, ink(LIGHT, 1))
+    const imageMesh = this.flat(image, "SensorImageMesh", ik)
+    this.inkBeat(imageMesh.mat, 3, this.ramp(FLIP + 0.5, 0.3))
+    image.enabled = false
+    this.cue(FLIP + 0.5, () => {
+      ctx.log("sensor")
+      image.enabled = true
+    })
+
+    // ---------------- Beat 5: the pixels it lands on flash cyan, row by row ----------------
+    const PIX = B[4] + 0.3
+    const lo = Math.min(imgTip, imgBase)
+    const hi = Math.max(imgTip, imgBase)
+    let row = 0
+    for (let r = ROWS - 1; r >= 0; r--) {
+      const y0 = -sensorH + (2 * sensorH * r) / ROWS
+      const y1 = y0 + (2 * sensorH) / ROWS
+      if (y1 < lo || y0 > hi) continue
+      const fk = new MeshKit()
+      for (let c = 0; c < COLS; c++) {
+        const ctr = cell(xSensor, (y0 + y1) / 2, (c + 0.5) / COLS)
+        const half = 0.43
+        const du = new vec3((dv.x / COLS) * half, (dv.y / COLS) * half, 0)
+        const dy = new vec3(0, ((y1 - y0) / 2) * 0.86, 0)
+        fk.addQuad(new vec3(wx(ctr.x), wy(ctr.y), 0.01), dy, du, ink(SIGNAL, 1))
+      }
+      const fm = this.flat(win, "Pixels" + r, fk)
+      const t0 = PIX + 0.05 * row
+      this.inkBeat(fm.mat, 4, () => {
+        const tt = this.t - t0
+        if (tt < 0) return 0
+        if (tt < 0.07) return tt / 0.07
+        return 0.6 + 0.4 * Math.exp(-(tt - 0.07) / 0.35)
+      })
+      row++
+    }
+    this.cue(PIX, () => ctx.log("pixels"))
+
+    // Text and controls: the question (with the caption under it) above the window, Stop below.
+    const v = center.sub(cam).normalize()
+    const vR = v.cross(up).normalize()
+    const vU = vR.cross(v).normalize()
+    const ui = ctx.uiScale
+    const wc = toWorld(winC.x, winC.y)
+    const overBody = vR.uniformScale(center.sub(wc).dot(vR))
+    this.captionHint = wc.add(overBody).add(vU.uniformScale(RW + 0.8 * ui + 1.3 * ui + 0.9 * ui + 1.6 * ui))
+    this.stopHint = wc.add(overBody).add(vU.uniformScale(-(RW + 3.1 * ui))).add(v.uniformScale(-2))
+
+    this.cue(END, () => {
       ctx.log("done")
       this.hideLabels()
     })

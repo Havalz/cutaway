@@ -73,9 +73,9 @@ class CapsuleGlow {
     this.opacity = a
   }
 
-  /** Aimed at: strokes brighten from 30% to ~75%. */
+  /** Aimed at: strokes brighten from 50% to ~80%. */
   setHover(h: boolean): void {
-    this.hoverTarget = h ? 2.5 : 1
+    this.hoverTarget = h ? 1.6 : 1
   }
 
   update(dt: number): void {

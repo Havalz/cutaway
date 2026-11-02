@@ -28,11 +28,12 @@
   ExportUid: 00000000-0000-0000-0000-000000000000
   PackagePolicy: CanBeUnpacked
   ScriptInputsHidden:
+    cameraBodySize: false
     cameraFacing: false
-    cameraLabelSide: false
     cameraMarker: false
     cameraUI: false
     chimeAudio: false
+    clickAudio: false
     coneModel: false
     cordStartMarker: false
     gazeEnterDeg: false
@@ -76,7 +77,8 @@
       coneModel: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
       shelfY: !<float> -144.000000
       cameraFacing: !<Vec3> {x: -1.000000, y: 0.000000, z: 0.000000}
-      cameraLabelSide: !<Vec3> {x: -1.000000, y: 0.000000, z: 0.000000}
+      cameraBodySize: !<Vec3> {x: 11.500000, y: 11.300000, z: 14.700000}
+      clickAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       gazeEnterDeg: !<float> 12.000000
       gazeExitDeg: !<float> 24.000000
   ScriptTypes:
@@ -107,8 +109,9 @@
     - '// @input Component.AudioComponent chimeAudio {"hint":"Spatial AudioComponent placed at the speaker, holding the chime"}'
     - '// @input SceneObject coneModel {"hint":"Optional: your own speaker-cone model (pinned at the speaker marker). Leave empty to use the built-in cone"}'
     - '// @input float shelfY = -144 {"hint":"Height (world Y, cm) of the shelf the line of light runs along"}'
-    - "// @input vec3 cameraFacing = {-0.3,0,-0.95} {\"hint\":\"Direction the real camera's lens points (into the room)\"}"
-    - '// @input vec3 cameraLabelSide = {-1,0,0} {"hint":"World direction with empty space beside the camera; its labels go on that side (away from the book)"}'
+    - "// @input vec3 cameraFacing = {0.94,0,-0.34} {\"hint\":\"Direction the real camera's lens points (into the room, horizontal)\"}"
+    - "// @input vec3 cameraBodySize = {11.5,11.3,14.7} {\"hint\":\"Real DSLR body (cm): x = depth along the lens axis, y = height, z = width. Centred on the camera station's bounds centre\"}"
+    - '// @input Component.AudioComponent clickAudio {"hint":"Spatial AudioComponent at the camera body: mirror flip and shutter click"}'
     - '// @ui {"widget":"group_end"}'
     - '// @ui {"widget":"group_start", "label":"Looking"}'
     - "// @input float gazeEnterDeg = 12 {\"hint\":\"An object counts as 'looked at' when it is within this angle of the view center (degrees)\", \"widget\":\"slider\", \"min\":4, \"max\":30, \"step\":1}"

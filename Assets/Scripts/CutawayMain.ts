@@ -112,12 +112,22 @@ export class CutawayMain extends BaseScriptComponent {
   shelfY: number = -144
 
   @input
-  @hint("Direction the real camera's lens points (into the room)")
-  cameraFacing: vec3 = new vec3(-0.3, 0, -0.95)
+  @hint("Direction the real camera's lens points (into the room, horizontal)")
+  cameraFacing: vec3 = new vec3(0.94, 0, -0.34)
 
   @input
-  @hint("World direction with empty space beside the camera; its labels go on that side (away from the book)")
-  cameraLabelSide: vec3 = new vec3(-1, 0, 0)
+  @hint("Real DSLR body (cm): x = depth along the lens axis, y = height, z = width. Centred on the camera station's bounds centre")
+  cameraBodySize: vec3 = new vec3(11.5, 11.3, 14.7)
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent at the camera body: mirror flip and shutter click")
+  clickAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent at the lamp: soft rising power-up tone as the light comes on")
+  powerUpAudio: AudioComponent
   @ui.group_end
 
   @ui.group_start("Looking")
@@ -146,11 +156,12 @@ export class CutawayMain extends BaseScriptComponent {
       {key: "camera", ui: this.cameraUI, target: this.cameraMarker, mode: "rest", explained: false, armed: true},
       {key: "lamp", ui: this.lampUI, target: this.lampMarker, mode: "rest", explained: false, armed: true}
     ]
-    if (this.chimeAudio) {
+    for (const a of [this.chimeAudio, this.clickAudio, this.powerUpAudio]) {
+      if (!a) continue
       try {
-        this.chimeAudio.playbackMode = Audio.PlaybackMode.LowLatency
+        a.playbackMode = Audio.PlaybackMode.LowLatency
       } catch (e) {
-        print("Cutaway: could not set chime playback mode: " + e)
+        print("Cutaway: could not set audio playback mode: " + e)
       }
     }
     if (this.labelsUI && this.glowMaterial) this.labelsUI.setLineMaterial(this.glowMaterial)
@@ -274,6 +285,8 @@ export class CutawayMain extends BaseScriptComponent {
       camPos: () => this.camPos(),
       log: (p) => this.log(p),
       playChime: () => this.playChime(),
+      playClick: () => this.playClick(),
+      playPowerUp: () => this.playPowerUp(),
       coneOverride: this.coneModel ?? null,
       caption: (text) => this.labelsUI.setCaption(text, text ? s.ui.getCaptionAnchor() : undefined),
       bounds: s.ui.getBounds(),
@@ -283,7 +296,7 @@ export class CutawayMain extends BaseScriptComponent {
     if (s.key === "recordPlayer") {
       exp = new RecordPlayerExplanation(ctx, this.pos(this.needleMarker), this.pos(this.speakerMarker), this.shelfY, this.pos(this.recordPlayerMarker))
     } else if (s.key === "camera") {
-      exp = new CameraExplanation(ctx, this.pos(this.cameraMarker), this.cameraFacing, this.cameraLabelSide)
+      exp = new CameraExplanation(ctx, this.cameraFacing, this.cameraBodySize)
     } else {
       exp = new LampExplanation(ctx, this.pos(this.lampMarker), this.pos(this.lampBaseMarker), this.pos(this.cordStartMarker))
     }
@@ -333,6 +346,24 @@ export class CutawayMain extends BaseScriptComponent {
     this.chimeAudio.play(1)
     this.chimeLog.push({time: getTime(), position: this.chimeAudio.getSceneObject().getTransform().getWorldPosition()})
     this.log("chime")
+  }
+
+  private playClick(): void {
+    if (!this.clickAudio) {
+      this.log("click:missing")
+      return
+    }
+    if (this.clickAudio.isPlaying()) this.clickAudio.stop(false)
+    this.clickAudio.play(1)
+  }
+
+  private playPowerUp(): void {
+    if (!this.powerUpAudio) {
+      this.log("powerUp:missing")
+      return
+    }
+    if (this.powerUpAudio.isPlaying()) this.powerUpAudio.stop(false)
+    this.powerUpAudio.play(1)
   }
 
   // ---------------- Frame loop ----------------
