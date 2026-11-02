@@ -107,6 +107,24 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     label.fader.show(true, false, label.leader ? 0.12 : 0)
   }
 
+  /** Move a label that is showing (and its callout) without rebuilding it, e.g. to follow a moving part. */
+  move(id: string, worldPos: vec3, anchor?: vec3): void {
+    const label = this.labels.get(id)
+    if (!label || !label.fader.isShown) return
+    const tr = label.so.getTransform()
+    tr.setWorldPosition(worldPos)
+    tr.setLocalScale(vec3.one().uniformScale(this.scaleAt(worldPos)))
+    if (anchor && label.leader && label.dot) {
+      const d = worldPos.sub(anchor)
+      const len = d.length
+      const ltr = label.leader.getTransform()
+      ltr.setWorldPosition(anchor)
+      if (len > 1e-3) ltr.setWorldRotation(quat.lookAt(d.normalize(), Math.abs(d.normalize().y) > 0.95 ? vec3.forward() : vec3.up()))
+      label.leaderLen = len
+      label.dot.getTransform().setWorldPosition(anchor)
+    }
+  }
+
   hide(id: string): void {
     const label = this.labels.get(id)
     if (label) label.fader.show(false)

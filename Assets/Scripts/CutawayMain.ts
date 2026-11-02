@@ -4,6 +4,9 @@ import {CutawayResetUI} from "./CutawayResetUI"
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
 import {CameraExplanation, ExplainContext, Explanation, LampExplanation, RecordPlayerExplanation} from "./CutawayExplanations"
 import {easeIn} from "./CutawayTween"
+import {CameraHero, HeroSound} from "./CutawayHero"
+import {CutawayHeroUI} from "./CutawayHeroUI"
+import {ENERGY} from "./CutawayStyle"
 
 export type StationKey = "recordPlayer" | "camera" | "lamp"
 export type StationState = "idle" | "chip" | "questions" | "playing" | "explained"
@@ -87,6 +90,72 @@ export class CutawayMain extends BaseScriptComponent {
   @input
   @hint("Where the lamp cord starts (wall outlet)")
   cordStartMarker: SceneObject
+
+  @input
+  @hint("Camera hero stage: the centre of the top surface of the round coffee table in front of the sofa. The 3x replica lands 10 cm above it")
+  tableMarker: SceneObject
+
+  @input
+  @hint("Camera hero stage: the lens inside its bag next to the camera on the console. The replica's lens rises out of here")
+  lensBagMarker: SceneObject
+  @ui.group_end
+
+  @ui.group_start("Camera hero stage (Bring it closer)")
+  @input
+  @hint("Control rail beside the replica (Take apart / Focus / Take a photo / Put it back)")
+  heroUI: CutawayHeroUI
+
+  @input
+  @hint("Replica body mesh (Models/CameraReplica: Body), pivot at the lens mount, 14 cm wide at scale 1")
+  replicaBodyMesh: RenderMesh
+
+  @input
+  @hint("Replica lens mesh (Models/CameraReplica: Lens), pivot at the mount, pointing along +Z")
+  replicaLensMesh: RenderMesh
+
+  @input
+  @hint("The replica's shell material (ReplicaShell slot: textures + 35% emissive lift + warm fresnel rim)")
+  replicaShellMaterial: Material
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent: soft rising tone as the copy lifts off the camera")
+  heroLiftAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent: bayonet click where the lens mounts")
+  heroBayonetAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent: soft air sweep that follows the replica in flight")
+  heroFlightAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent: soft landing tone from the table")
+  heroLandAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent: one soft click per part as it frees itself")
+  heroPartAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent: mirror lift (MirrorClick.wav)")
+  heroMirrorAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent: two-part shutter sound")
+  heroShutterAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent: the print sliding out")
+  heroPrintAudio: AudioComponent
   @ui.group_end
 
   @ui.group_start("Effects")
@@ -168,6 +237,7 @@ export class CutawayMain extends BaseScriptComponent {
   private phaseLog: string[] = []
   private chimeLog: {time: number; position: vec3}[] = []
   private soundLog: {name: string; time: number; position: vec3}[] = []
+  private hero: CameraHero | null = null
 
   onAwake(): void {
     this.stations = [
@@ -175,7 +245,7 @@ export class CutawayMain extends BaseScriptComponent {
       {key: "camera", ui: this.cameraUI, target: this.cameraMarker, mode: "rest", explained: false, armed: true},
       {key: "lamp", ui: this.lampUI, target: this.lampMarker, mode: "rest", explained: false, armed: true}
     ]
-    for (const a of [this.chimeAudio, this.clickAudio, this.powerUpAudio, this.crackleAudio, this.tickAudio, this.scanAudio]) {
+    for (const a of [this.chimeAudio, this.clickAudio, this.powerUpAudio, this.crackleAudio, this.tickAudio, this.scanAudio, ...this.heroAudios()]) {
       if (!a) continue
       try {
         a.playbackMode = Audio.PlaybackMode.LowLatency
@@ -202,7 +272,88 @@ export class CutawayMain extends BaseScriptComponent {
     })
     this.resetUI.onResetPressed.add(() => this.resetAll())
     this.resetUI.onPinch.add((p) => this.playAt("tick", this.tickAudio, p))
+    this.setupHero()
     print("Cutaway ready: 3 stations")
+  }
+
+  // ---------------- Camera hero stage ----------------
+
+  private heroAudios(): AudioComponent[] {
+    return [this.heroLiftAudio, this.heroBayonetAudio, this.heroFlightAudio, this.heroLandAudio, this.heroPartAudio, this.heroMirrorAudio, this.heroShutterAudio, this.heroPrintAudio].filter((a) => !!a)
+  }
+
+  private heroAudio(s: HeroSound): AudioComponent | null {
+    const map: {[k in HeroSound]: AudioComponent} = {
+      lift: this.heroLiftAudio,
+      bayonet: this.heroBayonetAudio,
+      flight: this.heroFlightAudio,
+      land: this.heroLandAudio,
+      part: this.heroPartAudio,
+      mirror: this.heroMirrorAudio,
+      shutter: this.heroShutterAudio,
+      print: this.heroPrintAudio
+    }
+    return map[s] ?? null
+  }
+
+  private setupHero(): void {
+    if (!this.heroUI || !this.replicaBodyMesh || !this.replicaLensMesh || !this.replicaShellMaterial || !this.tableMarker || !this.lensBagMarker) {
+      print("Cutaway: camera hero stage is not wired (rail, replica meshes, shell material, table and lens-bag markers)")
+      return
+    }
+    const camProvider = WorldCameraFinderProvider.getInstance()
+    this.hero = new CameraHero({
+      parent: this.sceneObject,
+      glowMat: this.glowMaterial,
+      shellMat: this.replicaShellMaterial,
+      bodyMesh: this.replicaBodyMesh,
+      lensMesh: this.replicaLensMesh,
+      labels: this.labelsUI,
+      rail: this.heroUI,
+      camPos: () => this.camPos(),
+      camera: camProvider.getComponent(),
+      realBounds: () => this.cameraUI.getBounds(),
+      realFacing: this.cameraFacing,
+      table: () => this.pos(this.tableMarker),
+      bag: () => this.pos(this.lensBagMarker),
+      sound: (s, p) => {
+        const a = this.heroAudio(s)
+        if (a) this.playAt("hero_" + s, a, p)
+        else this.soundLog.push({name: "hero_" + s, time: getTime(), position: p})
+      },
+      moveSound: (s, p) => {
+        const a = this.heroAudio(s)
+        if (a) a.getSceneObject().getTransform().setWorldPosition(p)
+      },
+      log: (p) => this.log(p),
+      caption: (text, at) => this.labelsUI.setCaption(text, at)
+    })
+    this.heroUI.onPutBack.add(() => this.hero.putBack())
+    this.heroUI.onPhoto.add(() => this.hero.photo())
+    this.heroUI.onPinch.add((p) => this.playAt("tick", this.tickAudio, p))
+    this.cameraUI.onCloserPressed.add(() => this.launchHero())
+  }
+
+  /** "Bring it closer" (the camera's pill or its second question): launch the 3x replica. */
+  private launchHero(): void {
+    const i = this.index("camera")
+    const s = this.stations[i]
+    if (!this.hero || this.running) return
+    if (this.hero.isOut) {
+      if (s.mode === "questions") this.setMode(i, "rest")
+      return
+    }
+    // The stage follows the camera's explanation: the camera keeps (or gets) its explained dot.
+    if (!s.explained) {
+      s.explained = true
+      s.ui.setEnergies([ENERGY.light, ENERGY.signal])
+    }
+    s.armed = false
+    this.setMode(i, "rest")
+    s.ui.setCloser(false)
+    this.phaseLog = []
+    this.log("hero:start")
+    this.hero.launch()
   }
 
   // ---------------- Input handlers ----------------
@@ -216,6 +367,11 @@ export class CutawayMain extends BaseScriptComponent {
   private onQuestion(i: number, q: number): void {
     const s = this.stations[i]
     if (this.running || s.mode !== "questions") return
+    // The camera's second question is the hero stage's other entry point.
+    if (s.key === "camera" && q === 1 && this.hero) {
+      this.launchHero()
+      return
+    }
     this.startExplanation(i, q)
   }
 
@@ -232,6 +388,7 @@ export class CutawayMain extends BaseScriptComponent {
 
   /** Clears every explained dot and returns all three objects to idle. */
   resetAll(): void {
+    if (this.hero) this.hero.clear()
     if (this.running) {
       this.running.exp.hideLabels()
       this.running.root.destroy()
@@ -418,7 +575,16 @@ export class CutawayMain extends BaseScriptComponent {
         if (r.collapseT >= r.collapseDur) this.endRunning()
       }
     }
+    if (this.hero) this.hero.update(dt)
+    this.updateCloser()
     this.updateGaze()
+  }
+
+  /** The camera's "Bring it closer" pill: under the camera once it is explained and idle. */
+  private updateCloser(): void {
+    const s = this.stations[this.index("camera")]
+    if (!s || !s.ui.hasCloser) return
+    s.ui.setCloser(!!this.hero && s.explained && s.mode === "rest" && !this.running && !this.hero.isOut)
   }
 
   private updateGaze(): void {
@@ -557,5 +723,23 @@ export class CutawayMain extends BaseScriptComponent {
 
   getEffectsRootName(): string | null {
     return this.running ? this.running.root.name : null
+  }
+
+  /** The camera hero stage (null if it is not wired). */
+  getHero(): CameraHero | null {
+    return this.hero
+  }
+
+  /** Test hook: true freezes the hero stage's timeline (for screenshots of one step). */
+  setHoldHero(v: boolean): void {
+    if (this.hero) this.hero.hold = v
+  }
+
+  getHeroRailVisual(): {apart: boolean; focus: boolean; putBack: boolean; photo: boolean} | null {
+    return this.heroUI ? this.heroUI.getVisual() : null
+  }
+
+  getTablePosition(): vec3 {
+    return this.tableMarker ? this.pos(this.tableMarker) : vec3.zero()
   }
 }

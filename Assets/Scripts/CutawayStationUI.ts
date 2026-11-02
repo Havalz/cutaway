@@ -13,6 +13,7 @@ export interface StationVisual {
   chip: boolean
   questions: boolean[]
   stop: boolean
+  closer: boolean
 }
 
 /**
@@ -177,12 +178,23 @@ export class CutawayStationUI extends BaseScriptComponent {
   @input
   @hint("Label on the Stop pill")
   stopLabel: string = "Stop"
+
+  @input
+  @hint("Optional follow-up pill shown under the object once it is explained (e.g. \"Bring it closer\"). Empty = none")
+  closerLabel: string = ""
+
+  @input
+  @hint("Width of the follow-up pill at design scale (cm)")
+  @widget(new SliderWidget(6, 20, 0.5))
+  closerWidth: number = 12
   @ui.group_end
 
   readonly onChipPressed = new Event<void>()
   readonly onQuestionPressed = new Event<number>()
   readonly onStopPressed = new Event<void>()
   readonly onDotPressed = new Event<void>()
+  /** The follow-up pill ("Bring it closer") was pinched. */
+  readonly onCloserPressed = new Event<void>()
   /** Fired when the scan starts sweeping (world position of the object's bounds center). */
   readonly onScan = new Event<vec3>()
   /** Fired on every pinch of one of this station's controls (world position of the control). */
@@ -203,6 +215,7 @@ export class CutawayStationUI extends BaseScriptComponent {
   private questionPieces: Piece[] = []
   private questionSlots: vec3[] = []
   private stop: Piece
+  private closer: Piece | null = null
   private pieces: Piece[] = []
   private pendingVisuals: Button[] = []
   private camTransform: Transform | null = null
@@ -248,6 +261,13 @@ export class CutawayStationUI extends BaseScriptComponent {
     this.explainedDot = this.buildButton(this.panel, this.namePrefix + "Dot", new vec3(dotSize, dotSize, 1), "Round", null, "ui", 0.5)
     this.buildExplainedDotVisual()
     this.stop = this.buildButton(this.stopAnchor, this.namePrefix + "Stop", new vec3(6.5, this.rowHeight * 0.8, 1), "Capsule", this.stopLabel, "ui", 0.85)
+    // Same style as Stop, in the same spot under the object (the two never show together).
+    if (this.closerLabel && this.closerLabel.trim().length > 0) {
+      this.closer = this.buildButton(this.stopAnchor, this.namePrefix + "Closer", new vec3(this.closerWidth, this.rowHeight * 0.8, 1), "Capsule", this.closerLabel, "ui", 0.85)
+      this.closer.btn.onTriggerUp.add(() => {
+        if (this.closer.pop.isShown) this.onCloserPressed.invoke()
+      })
+    }
     this.buildFlash()
     this.buildScan()
 
@@ -337,6 +357,17 @@ export class CutawayStationUI extends BaseScriptComponent {
     this.stop.pop.show(v)
   }
 
+  /** Show the follow-up pill (if this station has one) under the object, at the Stop pill's spot. */
+  setCloser(v: boolean): void {
+    if (!this.closer) return
+    if (v && !this.closer.pop.isShown) this.resetStopPosition()
+    this.closer.pop.show(v)
+  }
+
+  get hasCloser(): boolean {
+    return this.closer !== null
+  }
+
   /** Scan: a line of light sweeps down the object's bounds, then corner brackets lock on. */
   setScan(v: boolean): void {
     if (v && !this.scanFader.isShown) this.startScan()
@@ -348,6 +379,7 @@ export class CutawayStationUI extends BaseScriptComponent {
     this.chip.pop.show(false)
     this.setQuestions(false)
     this.stop.pop.show(false)
+    if (this.closer) this.closer.pop.show(false)
     this.setScan(false)
   }
 
@@ -373,7 +405,8 @@ export class CutawayStationUI extends BaseScriptComponent {
       explainedDot: this.explainedDot.pop.isShown,
       chip: this.chip.pop.isShown,
       questions: this.questionPieces.map((p) => p.pop.isShown),
-      stop: this.stop.pop.isShown
+      stop: this.stop.pop.isShown,
+      closer: this.closer ? this.closer.pop.isShown : false
     }
   }
 

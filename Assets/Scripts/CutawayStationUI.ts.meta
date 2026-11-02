@@ -32,6 +32,8 @@
     boundsSize: false
     chipLift: false
     chipWidth: false
+    closerLabel: false
+    closerWidth: false
     designDistance: false
     dotMaterial: false
     idleDotRadius: false
@@ -70,6 +72,8 @@
       rowGap: 0.600000
       idleDotRadius: 0.450000
       stopLabel: Stop
+      closerLabel: ""
+      closerWidth: !<float> 12.000000
   ScriptTypes:
     -
       {}
@@ -95,4 +99,6 @@
     - '// @input float rowGap = 0.6 {"hint":"Gap between stacked buttons at design scale (cm)", "widget":"slider", "min":0.2, "max":2, "step":0.1}'
     - '// @input float idleDotRadius = 0.45 {"hint":"Idle dot radius at design scale (cm) — small and quiet", "widget":"slider", "min":0.2, "max":1.5, "step":0.05}'
     - '// @input string stopLabel = "Stop" {"hint":"Label on the Stop pill"}'
+    - '// @input string closerLabel {"hint":"Optional follow-up pill shown under the object once it is explained (e.g. \"Bring it closer\"). Empty = none"}'
+    - '// @input float closerWidth = 12 {"hint":"Width of the follow-up pill at design scale (cm)", "widget":"slider", "min":6, "max":20, "step":0.5}'
     - '// @ui {"widget":"group_end"}'

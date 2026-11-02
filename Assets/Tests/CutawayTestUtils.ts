@@ -47,6 +47,15 @@ export async function press(name: string): Promise<void> {
   await sleep(350)
 }
 
+/** Grab an Interactable by name and drag it by `perUpdate` (world cm per drag update) for `ms`. */
+export async function drag(name: string, perUpdate: vec3, ms: number): Promise<void> {
+  const it = findInteractableByName(name, undefined, true)
+  if (!it) throw new Error(`Interactable "${name}" not found or not enabled`)
+  if (!interactor) throw new Error("No LEAF interactor: call cleanStart() at the start of the scenario")
+  await interactor.drag(it, perUpdate, ms)
+  await sleep(200)
+}
+
 export function isEnabled(name: string): boolean {
   const so = findSceneObjectByName(name)
   return !!so && so.isEnabledInHierarchy
@@ -98,7 +107,13 @@ export function expectOrder(main: CutawayMain, phases: string[]): void {
 /** Start from a clean slate: nothing explained, nothing running, looking at the ceiling. */
 export async function cleanStart(main: CutawayMain): Promise<void> {
   interactor = new DefaultLeafInteractor()
+  await softReset(main)
+}
+
+/** cleanStart without a new interactor (for several clean starts inside one scenario). */
+export async function softReset(main: CutawayMain): Promise<void> {
   main.holdExplanation = false
+  main.setHoldHero(false)
   main.setHeadOverride(null)
   main.resetAll()
   main.lookAway()

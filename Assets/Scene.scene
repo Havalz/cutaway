@@ -562,6 +562,21 @@
     []
   Components:
     - !<own> d365778f-0a2f-4f6a-b373-a9899719c3bf
+- !<SceneObject/1ca3ad7f-71c9-4a1d-88b9-ff415efa981a>
+  PrefabRemaps:
+    []
+  Name: HeroRail
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 1ffd1e08-12d1-4be1-a375-589fba7f0fe1
 - !<AudioComponent/1d1ac4cd-1458-4046-ac27-af5586f5ac76>
   PrefabRemaps:
     []
@@ -614,6 +629,35 @@
     []
   Components:
     - !<own> e1031f7e-3474-489f-a529-282f7192f812
+- !<ScriptComponent/1ffd1e08-12d1-4be1-a375-589fba7f0fe1>
+  PrefabRemaps:
+    []
+  Name: CutawayHeroUI
+  Enabled: true
+  ScriptAsset: !<reference> 9a4d166a-cbf0-4bed-8784-2e18fbd3aeef
+  ScriptInputsDefault:
+    sliderWidth: true
+    rowHeight: true
+    designDistance: true
+    apartLabel: true
+    focusLabel: true
+    putBackLabel: true
+    photoLabel: true
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      glowMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
+      sliderWidth: !<float> 16.000000
+      rowHeight: 3.200000
+      designDistance: !<float> 110.000000
+      apartLabel: Take apart
+      focusLabel: Focus
+      putBackLabel: Put it back
+      photoLabel: Take a photo
+  ScriptTypes:
+    "":
+      {}
 - !<SceneObject/22ca3186-3bb5-4431-8837-25c0c0e69e7a>
   PrefabRemaps:
     []
@@ -909,6 +953,23 @@
     - !<own> cec12eef-3a06-4b4a-b0ba-3de212ca34dc
   Components:
     []
+- !<AudioComponent/37bc3485-5bc6-48e3-95a0-b3c47b4b9173>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> 04de23dc-f62f-45ad-bfc2-34b88fc68853
+  EnableAutoplayLoop: false
+  Volume: 0.600000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<SceneObject/38562bff-09c5-4232-bff1-7ea62a1e7ec5>
   PrefabRemaps:
     []
@@ -1104,6 +1165,23 @@
     []
   Components:
     []
+- !<AudioComponent/49d592bb-f36f-4e5b-9eca-da91086497d3>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> 9dc98684-a394-49f6-b4ef-555facb58236
+  EnableAutoplayLoop: false
+  Volume: 0.500000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<SceneObject/4c195c04-c397-454e-bd08-3485f37d84fe>
   PrefabRemaps:
     []
@@ -1153,6 +1231,8 @@
     - !<own> 3a3a3976-7a21-4b1b-87e5-31c1643c55db
     - !<own> 47e729df-ba6a-412f-aa9f-dd0290440345
     - !<own> fa5e171b-ca81-4ed6-b641-bb02da63ab52
+    - !<own> f98e4bc6-fc6d-4a85-bc38-751fb208e7f9
+    - !<own> b3398625-79cb-430b-863b-ddad67007e65
   Components:
     []
 - !<SceneObject/52ecefe4-5642-445a-ad16-52ce818076bc>
@@ -1241,6 +1321,8 @@
     rowGap: true
     idleDotRadius: true
     stopLabel: true
+    closerLabel: true
+    closerWidth: true
   ScriptTypesDefault:
     {}
   ScriptInputs:
@@ -1262,6 +1344,8 @@
       rowGap: 0.600000
       idleDotRadius: 0.450000
       stopLabel: Stop
+      closerLabel: ""
+      closerWidth: !<float> 12.000000
   ScriptTypes:
     "":
       {}
@@ -1521,6 +1605,21 @@
     - !<own> 0e778a10-bd57-4a2a-b20a-b6f4326e8058
   Components:
     []
+- !<SceneObject/6dba24fb-289e-4c5b-add8-4c35b943f5a5>
+  PrefabRemaps:
+    []
+  Name: HeroBayonetSound
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 37bc3485-5bc6-48e3-95a0-b3c47b4b9173
 - !<SceneObject/6dbaab8f-d98a-4f36-b836-1d7c8a0cca87>
   PrefabRemaps:
     []
@@ -1691,6 +1790,21 @@
     []
   Components:
     - !<own> c8e031d3-a8a1-468a-a419-427f8556de4c
+- !<SceneObject/77fa7427-5d50-43b1-ba33-a4570ad1daa3>
+  PrefabRemaps:
+    []
+  Name: HeroMirrorSound
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 98d59eba-7c61-422d-aa9a-bfb6720654f4
 - !<SceneObject/7aa85bd8-d423-42cd-b190-473711e94929>
   PrefabRemaps:
     []
@@ -1802,6 +1916,28 @@
     []
   Components:
     - !<own> 335c5f8b-2917-49e8-8af5-220696e9bc09
+- !<SceneObject/809b80df-5d1f-435f-820c-c5f7dd812c4d>
+  PrefabRemaps:
+    []
+  Name: HeroAudio
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    - !<own> aef893f7-6976-4703-a8ac-bd96481bfb27
+    - !<own> 6dba24fb-289e-4c5b-add8-4c35b943f5a5
+    - !<own> c0bba8b7-6549-43fc-8d37-b6c6200626c7
+    - !<own> 895da050-8862-46da-95a5-604213cecd64
+    - !<own> 98f5e50d-4086-4076-97ff-46deef6d0776
+    - !<own> 77fa7427-5d50-43b1-ba33-a4570ad1daa3
+    - !<own> f6568f77-bbcb-428c-abf0-5503f373e163
+    - !<own> 8ba2a743-a605-48d7-858e-4e8234e0d810
+  Components:
+    []
 - !<SceneObject/82a4b4e8-283b-441c-8b94-9fdc50c958f2>
   PrefabRemaps:
     []
@@ -1911,6 +2047,21 @@
     - !<own> 1fc7fa3e-6910-4741-b8a7-1b6660a39a9d
   Components:
     - !<own> 28e05826-1521-46fa-a54c-80f2957ec80c
+- !<SceneObject/895da050-8862-46da-95a5-604213cecd64>
+  PrefabRemaps:
+    []
+  Name: HeroLandSound
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> bcb444a9-655f-4c95-8591-dbb667ac4552
 - !<SceneObject/8b877074-7eee-4be1-b669-714f8d5a1da3>
   PrefabRemaps:
     []
@@ -1926,6 +2077,21 @@
     []
   Components:
     - !<own> e96fa241-3fac-465c-ad2e-b71442b16bde
+- !<SceneObject/8ba2a743-a605-48d7-858e-4e8234e0d810>
+  PrefabRemaps:
+    []
+  Name: HeroPrintSound
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> a3b8c688-3229-4dac-b013-0bb98efbeae9
 - !<RenderMeshVisual/8c3be019-7b67-4fb9-8158-1262f117b8e1>
   PrefabRemaps:
     []
@@ -1980,6 +2146,8 @@
     rowGap: true
     idleDotRadius: true
     stopLabel: true
+    closerLabel: true
+    closerWidth: true
   ScriptTypesDefault:
     {}
   ScriptInputs:
@@ -2001,6 +2169,8 @@
       rowGap: 0.600000
       idleDotRadius: 0.450000
       stopLabel: Stop
+      closerLabel: ""
+      closerWidth: !<float> 12.000000
   ScriptTypes:
     "":
       {}
@@ -2050,6 +2220,55 @@
     - !<own> a4de4ce7-f468-4966-8a06-e29eea60c023
   Components:
     []
+- !<AudioComponent/98d59eba-7c61-422d-aa9a-bfb6720654f4>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> c4717f45-21af-4d5b-ab6d-8364c47ec1a8
+  EnableAutoplayLoop: false
+  Volume: 0.600000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
+- !<SceneObject/98f5e50d-4086-4076-97ff-46deef6d0776>
+  PrefabRemaps:
+    []
+  Name: HeroPartSound
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> e1bb932c-1b40-40f0-b687-855246e12f6d
+- !<AudioComponent/9a08c981-5517-4fa1-8efa-5e1f184dd290>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> dad84338-07be-485b-ae8f-a15d3dc2f262
+  EnableAutoplayLoop: false
+  Volume: 0.650000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<SceneObject/9c3a7929-faa9-4369-a85c-c75a6ab4eee7>
   PrefabRemaps:
     []
@@ -2111,6 +2330,23 @@
     - !<own> 46ea93d6-d161-4453-9064-6ac11e1d6523
   Components:
     []
+- !<AudioComponent/a3b8c688-3229-4dac-b013-0bb98efbeae9>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> 232c092c-ea19-464a-bd79-110114f233ad
+  EnableAutoplayLoop: false
+  Volume: 0.450000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<SceneObject/a4b1ce71-4840-4493-bc52-58f3c13933e1>
   PrefabRemaps:
     []
@@ -2280,6 +2516,21 @@
     []
   Components:
     - !<own> b302f3a5-ca80-4723-9014-a15c4cdc23e9
+- !<SceneObject/aef893f7-6976-4703-a8ac-bd96481bfb27>
+  PrefabRemaps:
+    []
+  Name: HeroLiftSound
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 49d592bb-f36f-4e5b-9eca-da91086497d3
 - !<SceneObject/b22d97e6-4c06-4135-af29-d26adb2b9d86>
   PrefabRemaps:
     []
@@ -2312,6 +2563,21 @@
   MaxDistance: 1500.000000
   EnableDirectivityEffect: false
   EnablePositionEffect: true
+- !<SceneObject/b3398625-79cb-430b-863b-ddad67007e65>
+  PrefabRemaps:
+    []
+  Name: LensBagMarker
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 10.500000, y: -40.000000, z: 3.900000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    []
 - !<SceneObject/b463be13-dddb-4b36-a3dd-c344bd3d8ef5>
   PrefabRemaps:
     []
@@ -2462,6 +2728,23 @@
     - !<own> fe93d992-1114-4f1f-8bef-0a0bbd75747d
   Components:
     []
+- !<AudioComponent/bcb444a9-655f-4c95-8591-dbb667ac4552>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> e6dda6be-290a-4036-a9d6-015da4c08e71
+  EnableAutoplayLoop: false
+  Volume: 0.550000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<SceneObject/bf2095b6-c6f8-48c8-b840-e0a6cec0dc99>
   PrefabRemaps:
     []
@@ -2477,6 +2760,21 @@
     []
   Components:
     []
+- !<SceneObject/c0bba8b7-6549-43fc-8d37-b6c6200626c7>
+  PrefabRemaps:
+    []
+  Name: HeroFlightSound
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> cdd90f4e-64d3-4299-b6a2-373444021987
 - !<ScriptComponent/c8e031d3-a8a1-468a-a419-427f8556de4c>
   PrefabRemaps:
     []
@@ -2590,6 +2888,23 @@
     index-2: !<reference> 2dae2a27-8ce6-466a-8bff-622195c1b3a8
     thumb-3_end_end_end_end: !<reference> bf2095b6-c6f8-48c8-b840-e0a6cec0dc99
     wrist_to_pinky: !<reference> 3b4f5057-b516-4d3b-9c8d-14c81af2f505
+- !<AudioComponent/cdd90f4e-64d3-4299-b6a2-373444021987>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> 5957a7e6-f1e7-4cff-892f-f5cbbbc83d1f
+  EnableAutoplayLoop: false
+  Volume: 0.450000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<SceneObject/ce2213a1-7aa1-4201-a3c7-c2aaa06fd4ff>
   PrefabRemaps:
     []
@@ -2650,6 +2965,7 @@
     rowGap: true
     idleDotRadius: true
     stopLabel: true
+    closerWidth: true
   ScriptTypesDefault:
     {}
   ScriptInputs:
@@ -2658,6 +2974,7 @@
       namePrefix: Camera
       questions: !<string[]>
         - "How does it take a picture?"
+        - Bring it closer
       dotMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
       boundsCenter: !<Vec3> {x: 0.950000, y: -5.850000, z: 3.400000}
       boundsSize: !<Vec3> {x: 15.800000, y: 11.300000, z: 17.799999}
@@ -2671,6 +2988,8 @@
       rowGap: 0.600000
       idleDotRadius: 0.450000
       stopLabel: Stop
+      closerLabel: Bring it closer
+      closerWidth: !<float> 12.000000
   ScriptTypes:
     "":
       {}
@@ -2871,6 +3190,23 @@
   BlendNormals: false
   BlendShapes:
     {}
+- !<AudioComponent/e1bb932c-1b40-40f0-b687-855246e12f6d>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> c1e094ab-4dff-43a4-be36-664614a47ab2
+  EnableAutoplayLoop: false
+  Volume: 0.450000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<SceneObject/e2ba526d-75d1-466b-86a5-9cd7c42dca84>
   PrefabRemaps:
     []
@@ -2992,6 +3328,20 @@
       lampMarker: !<reference.SceneObject> 3a3a3976-7a21-4b1b-87e5-31c1643c55db
       lampBaseMarker: !<reference.SceneObject> 47e729df-ba6a-412f-aa9f-dd0290440345
       cordStartMarker: !<reference.SceneObject> fa5e171b-ca81-4ed6-b641-bb02da63ab52
+      tableMarker: !<reference.SceneObject> f98e4bc6-fc6d-4a85-bc38-751fb208e7f9
+      lensBagMarker: !<reference.SceneObject> b3398625-79cb-430b-863b-ddad67007e65
+      heroUI: !<MappingBased.AssignableType_6> 1ffd1e08-12d1-4be1-a375-589fba7f0fe1
+      replicaBodyMesh: !<reference.RenderMesh> 2508b8a9-5ac5-44fb-813d-a015107373dd
+      replicaLensMesh: !<reference.RenderMesh> 0ce30d7a-4844-4ab7-8ee3-ac17bb2eecd7
+      replicaShellMaterial: !<reference.Material> 3caf7b48-6761-4d3f-a155-9e5aaa4070f6
+      heroLiftAudio: !<reference.AudioComponent> 49d592bb-f36f-4e5b-9eca-da91086497d3
+      heroBayonetAudio: !<reference.AudioComponent> 37bc3485-5bc6-48e3-95a0-b3c47b4b9173
+      heroFlightAudio: !<reference.AudioComponent> cdd90f4e-64d3-4299-b6a2-373444021987
+      heroLandAudio: !<reference.AudioComponent> bcb444a9-655f-4c95-8591-dbb667ac4552
+      heroPartAudio: !<reference.AudioComponent> e1bb932c-1b40-40f0-b687-855246e12f6d
+      heroMirrorAudio: !<reference.AudioComponent> 98d59eba-7c61-422d-aa9a-bfb6720654f4
+      heroShutterAudio: !<reference.AudioComponent> 9a08c981-5517-4fa1-8efa-5e1f184dd290
+      heroPrintAudio: !<reference.AudioComponent> a3b8c688-3229-4dac-b013-0bb98efbeae9
       glowMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
       modelMaterial: !<reference.Material> ebad19e1-17e5-4c48-b8cb-c3f6ef661659
       chimeAudio: !<reference.AudioComponent> f36c4c48-d97d-4cc0-a43f-e50994519674
@@ -3058,6 +3408,8 @@
     - !<own> dd9eb017-3a69-4647-b9a7-43aebf6ce018
     - !<own> 25a61e62-fac3-43c1-bd4b-07438193f47f
     - !<own> ae24a046-02db-4e5d-a8ea-a60fd276ca4c
+    - !<own> 1ca3ad7f-71c9-4a1d-88b9-ff415efa981a
+    - !<own> 809b80df-5d1f-435f-820c-c5f7dd812c4d
   Components:
     []
 - !<SceneObject/f36287fd-ed56-442d-ba20-78f9ef6f3502>
@@ -3254,6 +3606,21 @@
     - !<own> 9468c53c-f76f-49b7-8a49-b5ec6af1c5a3
   Components:
     []
+- !<SceneObject/f6568f77-bbcb-428c-abf0-5503f373e163>
+  PrefabRemaps:
+    []
+  Name: HeroShutterSound
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 9a08c981-5517-4fa1-8efa-5e1f184dd290
 - !<SceneObject/f666b5eb-6a03-4db0-9d84-5b34c6e8905a>
   PrefabRemaps:
     []
@@ -3297,6 +3664,21 @@
     HasSegmentScaleCompensation: false
   Children:
     - !<own> a7526b33-fca3-4f28-8e32-b0e9aa13c4b4
+  Components:
+    []
+- !<SceneObject/f98e4bc6-fc6d-4a85-bc38-751fb208e7f9>
+  PrefabRemaps:
+    []
+  Name: TableMarker
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 7.000000, y: -135.000000, z: -262.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
   Components:
     []
 - !<SceneObject/fa5e171b-ca81-4ed6-b641-bb02da63ab52>

@@ -1,0 +1,73 @@
+- !<AssetImportMetadata/539b2f42-56f2-4680-9966-374e3be77893>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> 9a4d166a-cbf0-4bed-8784-2e18fbd3aeef
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> 9a4d166a-cbf0-4bed-8784-2e18fbd3aeef
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> 2d37a053-5e17-461e-a04e-18e0a0db1460
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/2d37a053-5e17-461e-a04e-18e0a0db1460>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: 9ec184f5-2bc9-4e33-b380-3c6bbc949387
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    apartLabel: false
+    designDistance: false
+    focusLabel: false
+    glowMaterial: false
+    photoLabel: false
+    putBackLabel: false
+    rowHeight: false
+    sliderWidth: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - glowMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
+      sliderWidth: !<float> 16.000000
+      rowHeight: 3.200000
+      designDistance: !<float> 110.000000
+      apartLabel: Take apart
+      focusLabel: Focus
+      putBackLabel: Put it back
+      photoLabel: Take a photo
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"Cutaway — camera hero control rail (Take apart / Focus / Take a photo / Put it back)"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"Style (matches the chips)"}'
+    - '// @input Asset.Material glowMaterial {"hint":"Additive glow material for strokes (the one the chips use)"}'
+    - '// @input float sliderWidth = 16 {"hint":"Slider track width at the design scale (cm)", "widget":"slider", "min":10, "max":24, "step":0.5}'
+    - '// @input float rowHeight = 3.2 {"hint":"Row height at the design scale (cm): slider knob and pill height", "widget":"slider", "min":2.4, "max":5, "step":0.1}'
+    - '// @input float designDistance = 110 {"hint":"Distance (cm) at which the rail is shown 1:1, as for the chips", "widget":"slider", "min":60, "max":200, "step":5}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"group_start", "label":"Labels"}'
+    - '// @input string apartLabel = "Take apart" {"hint":"Label above the take-apart slider"}'
+    - '// @input string focusLabel = "Focus" {"hint":"Label above the focus slider"}'
+    - '// @input string putBackLabel = "Put it back" {"hint":"The stop pill for this stage"}'
+    - '// @input string photoLabel = "Take a photo" {"hint":"The shutter button"}'
+    - '// @ui {"widget":"group_end"}'
