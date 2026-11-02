@@ -460,6 +460,21 @@
     - !<own> b54dc8b5-dbcf-4fcc-a310-fb436127cc60
   Components:
     []
+- !<SceneObject/1114b8d9-590d-4a97-a75c-68c589c42ced>
+  PrefabRemaps:
+    []
+  Name: HeroTapSound
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 3d5f6a3e-aff7-49d4-b726-3963b22fc9ff
 - !<SceneObject/11ac73c9-b802-4eb6-abf5-f73054ca7e20>
   PrefabRemaps:
     []
@@ -1045,6 +1060,23 @@
     []
   Components:
     - !<own> 1d1ac4cd-1458-4046-ac27-af5586f5ac76
+- !<AudioComponent/3d5f6a3e-aff7-49d4-b726-3963b22fc9ff>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> 62474830-b3b9-422d-954a-dc081e72ea80
+  EnableAutoplayLoop: false
+  Volume: 0.500000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<SceneObject/3de2c7ea-1525-465a-9056-68565a4014a7>
   PrefabRemaps:
     []
@@ -1936,6 +1968,7 @@
     - !<own> 77fa7427-5d50-43b1-ba33-a4570ad1daa3
     - !<own> f6568f77-bbcb-428c-abf0-5503f373e163
     - !<own> 8ba2a743-a605-48d7-858e-4e8234e0d810
+    - !<own> 1114b8d9-590d-4a97-a75c-68c589c42ced
   Components:
     []
 - !<SceneObject/82a4b4e8-283b-441c-8b94-9fdc50c958f2>
@@ -3307,6 +3340,8 @@
   Enabled: true
   ScriptAsset: !<reference> c9ba68ab-1a2b-4a8e-9b18-eccc75b01f62
   ScriptInputsDefault:
+    tableTopHeight: true
+    tableRadius: true
     coneModel: true
     shelfY: true
     cameraBodySize: true
@@ -3329,6 +3364,8 @@
       lampBaseMarker: !<reference.SceneObject> 47e729df-ba6a-412f-aa9f-dd0290440345
       cordStartMarker: !<reference.SceneObject> fa5e171b-ca81-4ed6-b641-bb02da63ab52
       tableMarker: !<reference.SceneObject> f98e4bc6-fc6d-4a85-bc38-751fb208e7f9
+      tableTopHeight: -144.399994
+      tableRadius: !<float> 45.000000
       lensBagMarker: !<reference.SceneObject> b3398625-79cb-430b-863b-ddad67007e65
       heroUI: !<MappingBased.AssignableType_6> 1ffd1e08-12d1-4be1-a375-589fba7f0fe1
       replicaBodyMesh: !<reference.RenderMesh> 2508b8a9-5ac5-44fb-813d-a015107373dd
@@ -3338,6 +3375,8 @@
       heroBayonetAudio: !<reference.AudioComponent> 37bc3485-5bc6-48e3-95a0-b3c47b4b9173
       heroFlightAudio: !<reference.AudioComponent> cdd90f4e-64d3-4299-b6a2-373444021987
       heroLandAudio: !<reference.AudioComponent> bcb444a9-655f-4c95-8591-dbb667ac4552
+      heroTapAudio: !<reference.AudioComponent> 3d5f6a3e-aff7-49d4-b726-3963b22fc9ff
+      heroMatter: !<reference.Matter> 2793d170-f840-445b-8624-d479f61fac12
       heroPartAudio: !<reference.AudioComponent> e1bb932c-1b40-40f0-b687-855246e12f6d
       heroMirrorAudio: !<reference.AudioComponent> 98d59eba-7c61-422d-aa9a-bfb6720654f4
       heroShutterAudio: !<reference.AudioComponent> 9a08c981-5517-4fa1-8efa-5e1f184dd290
@@ -3673,7 +3712,7 @@
   Enabled: true
   Layers: 1
   LocalTransform: !<TransformEntity>
-    Position: {x: 7.000000, y: -135.000000, z: -262.000000}
+    Position: {x: 2.200000, y: -144.399994, z: -300.000000}
     Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false

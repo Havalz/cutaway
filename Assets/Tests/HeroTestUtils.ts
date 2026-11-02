@@ -74,3 +74,36 @@ export async function waitHome(main: CutawayMain): Promise<void> {
   await sleep(300)
   await waitUntil(() => getHero(main).state === "none", 1000)
 }
+
+/**
+ * P2 contact accuracy (pass 2): still (under 0.5 cm/s), level, its lowest point within 2 mm of
+ * the table top and no part below it, and the whole footprint on the table.
+ */
+export function checkContact(hero: CameraHero, what: string): void {
+  const i = hero.getInfo()
+  const gap = i.lowestY - i.tableY
+  check(i.pose === "rest", () => `${what}: pose is ${i.pose}, not rest`)
+  check(i.speed < 0.5, () => `${what}: still moving at ${i.speed.toFixed(3)} cm/s`)
+  check(gap >= -0.005, () => `${what}: a part is ${(-gap * 10).toFixed(2)} mm below the table top`)
+  check(gap <= 0.2, () => `${what}: lowest point ${(gap * 10).toFixed(2)} mm above the table top`)
+  check(i.up.dot(vec3.up()) > 0.99996, () => `${what}: not level, up = ${i.up}`)
+  check(i.footReach <= i.tableRadius + 0.01, () => `${what}: the footprint reaches ${i.footReach.toFixed(2)} cm from the table centre (radius ${i.tableRadius.toFixed(2)})`)
+}
+
+/** Flat distance from the footprint centre to the table centre (cm). */
+export function footOffCenter(hero: CameraHero): number {
+  const i = hero.getInfo()
+  return new vec3(i.foot.x - i.tableCenter.x, 0, i.foot.z - i.tableCenter.z).length
+}
+
+/** Wait until the replica rests (pose "rest", still) on the table, at most `ms`. */
+export async function waitRest(hero: CameraHero, ms: number, what: string): Promise<void> {
+  await waitUntil(
+    () => {
+      const i = hero.getInfo()
+      return i.pose === "rest" && i.speed < 0.5 && !i.held
+    },
+    ms,
+    () => `${what}: not at rest after ${ms} ms: ${JSON.stringify({pose: hero.getInfo().pose, speed: hero.getInfo().speed, gap: hero.getInfo().lowestY - hero.getInfo().tableY})}`
+  )
+}

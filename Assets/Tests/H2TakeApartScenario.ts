@@ -19,9 +19,11 @@ export class H2TakeApartScenario extends Scenario {
     const t0 = getTime()
     check(main.getHeroRailVisual().apart, "expected main.getHeroRailVisual().apart")
 
-    // Halfway: some parts are out, the later ones are not yet (the stagger).
+    // Halfway: it first rises to hover (pass 2), then some parts are out, the later ones are not
+    // yet (the stagger).
     hero.setApart(0.5)
-    await sleep(500)
+    await waitForPhase(main, "hero:hover", 1500)
+    await sleep(600)
     const half = hero.getParts()
     const sensorHalf = half.find((p) => p.key === "sensor")
     check(sensorHalf.offset < 0.1, "expected sensorHalf.offset < 0.1")

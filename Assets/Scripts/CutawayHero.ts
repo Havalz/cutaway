@@ -14,12 +14,19 @@
 import {Interactable} from "SpectaclesInteractionKit.lspkg/Components/Interaction/Interactable/Interactable"
 import {CutawayHeroUI} from "./CutawayHeroUI"
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
-import {GlowPath, MeshKit, setFade, spawnMesh, TrailRibbon} from "./CutawayGeometry"
+import {MeshKit, setFade, spawnMesh, TrailRibbon} from "./CutawayGeometry"
+import {TableSurface} from "./CutawayHeroSurface"
+import {BODY_BOX_CENTER, BODY_BOX_SIZE, BODY_MIN_Y, FOOT_CENTER, FOOT_SIZE, FOOTPRINT, footReach, HeroPhysics, hullLowestY, LENS_LENGTH, LENS_RADIUS, LENS_Z0, maxFootDistance} from "./CutawayHeroPhysics"
 import {ENERGY, ink, keyWord, UI_WHITE} from "./CutawayStyle"
 import {clamp01, easeIn, easeInOutCubic, easeOutCubic, faceToward} from "./CutawayTween"
 
-export type HeroSound = "lift" | "bayonet" | "flight" | "land" | "part" | "mirror" | "shutter" | "print"
+export type HeroSound = "lift" | "bayonet" | "flight" | "land" | "tap" | "part" | "mirror" | "shutter" | "print"
 export type HeroState = "none" | "launch" | "landed" | "light" | "returning"
+/**
+ * Where the replica is on the table (pass 2): flying in, dropping under physics, at rest, rising to
+ * hover, hovering for the experiment, coming back down, or lifting off to go home.
+ */
+export type HeroPose = "fly" | "drop" | "rest" | "rise" | "hover" | "descend" | "lift"
 
 export interface HeroContext {
   parent: SceneObject
@@ -35,8 +42,12 @@ export interface HeroContext {
   realBounds: () => {center: vec3; size: vec3}
   /** Direction the real camera's lens points (horizontal). */
   realFacing: vec3
-  /** Centre of the coffee table's top surface. */
-  table: () => vec3
+  /** The table top in use (hit test or fallback); its centre is the landing spot. */
+  surface: () => TableSurface
+  /** Survey the table now (World Query hit test); `done` gets the surface in use afterwards. */
+  survey: (done: (s: TableSurface) => void) => void
+  /** Matter for the table and the replica (high friction, low bounce); null = engine default. */
+  matter: Matter | null
   /** The lens inside its bag. */
   bag: () => vec3
   sound: (s: HeroSound, p: vec3) => void
@@ -87,10 +98,30 @@ export function blurCircle(d_o: number, L: number): number {
 
 // ---------------- Replica geometry (local cm at 1x) ----------------
 const SCALE = 3
-const BODY_MIN_Y = -4.28
-const BODY_CENTER = new vec3(-1.36, 1.135, -3.7)
-const LENS_CENTER_Z = 4.97
-const LIFT_CM = 10
+const BODY_CENTER = BODY_BOX_CENTER
+const LENS_CENTER_Z = LENS_Z0 + LENS_LENGTH / 2
+/** The flight ends with the lowest point this high above the table centre; then it drops. */
+const DROP_CM = 20
+/** Lift while held, hover height for the experiment, lift before flying home (cm). */
+const HOLD_CM = 1.5
+const HOVER_CM = 12
+const PUTBACK_LIFT_CM = 3
+/** Hover bob: ±2 mm (4 mm travel) over 4 s. */
+const BOB_CM = 0.2
+const BOB_PERIOD = 4
+const RISE_DUR = 0.5
+const DESCEND_DUR = 0.45
+const HOLD_DUR = 0.18
+/** The parts follow the take-apart slider at most this fast once hovering (slider units per s). */
+const APART_RATE = 1.6
+/** Soft resistance near the table edge (cm) and the margin kept from it. */
+const EDGE_SOFT = 4
+const EDGE_MARGIN = 0.3
+/** Glow and disc sit this far above the table top (cm), so they never z-fight. */
+const ON_TABLE = 0.2
+/** At rest: speed under this (cm/s) and spin under this (rad/s). */
+const STILL_SPEED = 0.5
+const STILL_SPIN = 0.02
 /** Thin-lens plane, measured from the barrel's rear. */
 const PLANE_IN_BARREL = 2.0
 const BARREL_MIN = 0.9
@@ -108,15 +139,19 @@ const T_RISE = 0.7
 const T_SEAT = 0.9
 const T_TWIST = 1.1
 const T_FLY0 = 1.12
-const T_FLY1 = 2.87
+const T_FLY1 = 2.72
 const T_FILL = 0.4
 const VF_BEAT = 3.0
 const MIRROR_UP_DUR = 0.3
 const LIVE_AT = VF_BEAT + 0.4
 const RET_ASSEMBLE = 0.6
-const RET_FLY0 = 0.7
-const RET_FLY1 = 2.3
-const RET_END = 3.0
+/** "Put it back" lifts 3 cm in 0.25 s, then flies. */
+const RET_FLY0 = RET_ASSEMBLE + 0.25
+const RET_FLY1 = RET_FLY0 + 1.6
+const RET_END = RET_FLY1 + 0.7
+
+/** Points along the thread from the real camera to the replica. */
+const THREAD_N = 48
 
 const LIGHT = ENERGY.light
 const SIGNAL = ENERGY.signal
@@ -147,6 +182,43 @@ interface Beam {
 function flatDir(v: vec3): vec3 {
   const f = new vec3(v.x, 0, v.z)
   return f.length > 1e-4 ? f.normalize() : new vec3(0, 0, -1)
+}
+
+/**
+ * A soft band around a closed outline (XY, facing +Z): rows at the given outward offsets, each with
+ * its colour (bright at the edge, fading to nothing). Corners use mitred offsets.
+ */
+function softOutline(k: MeshKit, pts: vec2[], offsets: number[], colors: vec4[]): void {
+  const n = pts.length
+  let area = 0
+  for (let i = 0; i < n; i++) area += pts[i].x * pts[(i + 1) % n].y - pts[(i + 1) % n].x * pts[i].y
+  const sgn = area > 0 ? 1 : -1
+  const out = (a: vec2, b: vec2) => {
+    const d = b.sub(a).normalize()
+    return new vec2(d.y * sgn, -d.x * sgn)
+  }
+  const miter: vec2[] = []
+  for (let i = 0; i < n; i++) {
+    const n1 = out(pts[(i - 1 + n) % n], pts[i])
+    const n2 = out(pts[i], pts[(i + 1) % n])
+    const m = n1.add(n2).normalize()
+    miter.push(m.uniformScale(1 / Math.max(0.35, m.dot(n1))))
+  }
+  const nz = new vec3(0, 0, 1)
+  const base: number[] = []
+  offsets.forEach((o, r) => {
+    base.push(k.vert(new vec3(pts[0].x + miter[0].x * o, pts[0].y + miter[0].y * o, 0), nz, colors[r]))
+    for (let i = 1; i < n; i++) k.vert(new vec3(pts[i].x + miter[i].x * o, pts[i].y + miter[i].y * o, 0), nz, colors[r])
+  })
+  for (let r = 0; r < offsets.length - 1; r++)
+    for (let i = 0; i < n; i++) {
+      const a = base[r] + i
+      const b = base[r] + ((i + 1) % n)
+      const c = base[r + 1] + ((i + 1) % n)
+      const d = base[r + 1] + i
+      k.tri(a, b, c)
+      k.tri(a, c, d)
+    }
 }
 
 function bezier(a: vec3, c: vec3, b: vec3, t: number): vec3 {
@@ -280,12 +352,38 @@ export class CameraHero {
   private bagRot: quat
   private trail: TrailRibbon | null = null
   private trailPts: vec3[] = []
-  private thread: GlowPath | null = null
+  private thread: TrailRibbon | null = null
+  private threadPts: vec3[] = []
+  private threadCum: number[] = []
   private threadT = -1
   private pulse: SceneObject | null = null
   private pulseMat: Material | null = null
-  private tableRing: SceneObject | null = null
-  private tableRingMat: Material | null = null
+  // Pass 2: the table, physics, pose on the table, grabs, contact glow and hover disc.
+  private physics: HeroPhysics | null = null
+  private surf: TableSurface
+  private pose: HeroPose = "fly"
+  private poseT = 0
+  /** Footprint centre (world; y unused) and the lowest point's height above the table top (cm). */
+  private foot = vec3.zero()
+  private h = 0
+  private h0 = 0
+  private restGap = 0
+  private holdK = 0
+  private sEff = 0
+  private discK = 0
+  private firstRest = true
+  private drop = {t: 0, touched: false, touchT: -1, stillT: 0, bounce: 0, settle: -1, contact: null as vec3 | null}
+  private lastDrop: {bounce: number; settle: number; restGap: number; tiltDeg: number} | null = null
+  private lastPivot: vec3 | null = null
+  private speed = 0
+  private grabs: {slide: SceneObject; turn: SceneObject} | null = null
+  private grab: {kind: "slide" | "turn"; p0: vec3; usePlane: boolean; foot0: vec3; yaw0: number; angPrev: number; turned: number; accum: vec3} | null = null
+  private contactGlow: SceneObject | null = null
+  private contactGlowMat: Material | null = null
+  private disc: SceneObject | null = null
+  private discMat: Material | null = null
+  private retPos: vec3 | null = null
+  private retH = 0
   private brackets: SceneObject | null = null
   private bracketMat: Material | null = null
   private landed = false
@@ -325,9 +423,7 @@ export class CameraHero {
   private printMats: Material[] = []
   private printImage: BlurImage | null = null
   private flashT = -1
-  // Turning / subject drag
-  private turnStart: {p: vec3; yaw: number; right: vec3} | null = null
-  private turnAccum = vec3.zero()
+  // Subject drag
   private subjectDrag: {p: vec3; d: number; axis: vec3} | null = null
   private subjectAccum = vec3.zero()
   private landTime = -1
@@ -379,14 +475,28 @@ export class CameraHero {
     this.pStart = this.realCenter.sub(this.rStart.multiplyVec3(BODY_CENTER))
     const bag = this.ctx.bag()
     this.pMeet = this.clearOfHead(vec3.lerp(this.realCenter, bag, 0.5).add(new vec3(0, 30, 0)), 40)
-    const table = this.ctx.table()
-    this.pLand = table.add(new vec3(0, LIFT_CM - BODY_MIN_Y * SCALE, 0))
+    this.surf = this.ctx.surface()
+    const table = this.surf.center
     // Facing rule: the optical axis runs across the view (lens to the user's left), so the light
     // path later reads sideways, never toward the eye.
     const F = flatDir(table.sub(this.head0))
     const right = F.cross(vec3.up()).normalize()
     this.rLand = quat.lookAt(right.uniformScale(-1), vec3.up())
     this.yaw = 0
+    // The flight ends 20 cm above the table centre (footprint centre over it), then it drops.
+    this.foot = new vec3(table.x, table.y, table.z)
+    this.pose = "fly"
+    this.firstRest = true
+    this.sEff = 0
+    this.discK = 0
+    this.holdK = 0
+    this.grab = null
+    this.lastDrop = null
+    this.lastPivot = null
+    this.speed = 0
+    this.physics = new HeroPhysics(this.root, this.surf, {matter: this.ctx.matter, log: (m) => this.ctx.log(m)})
+    this.physics.onContact((p, imp) => this.onContact(p, imp))
+    this.pLand = this.pivotFor(this.foot, 0, DROP_CM)
     this.ctrl = this.flightControl()
     this.bagRot = quat.lookAt(vec3.up(), facing)
     this.ctx.sound("lift", this.realCenter)
@@ -394,11 +504,37 @@ export class CameraHero {
     this.ctx.rail.setMode("none", true)
     this.ctx.log("hero:launch")
     this.applyLaunch()
+    // Find the real table top now (World Query hit test, or the fallback); the flight's end and the
+    // table collider follow whatever the survey finds.
+    this.ctx.survey((s) => this.onSurface(s))
+  }
+
+  /** A survey finished: aim the flight at the table centre it found, and rebuild the collider. */
+  private onSurface(s: TableSurface): void {
+    if (this.state === "none") return
+    this.surf = s
+    if (this.physics) this.physics.setSurface(s)
+    this.ctx.log("hero:surface:" + s.method)
+    if (this.state === "launch") {
+      this.foot = new vec3(s.center.x, s.height, s.center.z)
+      this.pLand = this.pivotFor(this.foot, 0, DROP_CM)
+    } else if (this.pose === "rest" && !this.grab) {
+      this.foot = this.clampFoot(this.foot, this.rot())
+      this.startDrop()
+    }
   }
 
   /** "Put it back": reassemble, fly home, melt into the real camera. */
   putBack(): void {
     if (this.state !== "landed" && this.state !== "light") return
+    if (this.physics) {
+      // Whatever it was doing (settling, hovering, held), it is kinematic from here on.
+      if (this.pose === "drop") this.toRest(true)
+      this.physics.freeze()
+    }
+    this.grab = null
+    this.pose = "lift"
+    this.retH = this.h
     this.retFrom = {s: this.s, rot: this.replica.getTransform().getWorldRotation(), lightK: this.state === "light" ? 1 : 0}
     this.state = "returning"
     this.t = 0
@@ -424,8 +560,14 @@ export class CameraHero {
     this.state = "none"
     this.trail = null
     this.thread = null
+    this.threadPts = []
     this.pulse = null
-    this.tableRing = null
+    this.physics = null
+    this.grabs = null
+    this.grab = null
+    this.contactGlow = null
+    this.disc = null
+    this.pose = "fly"
     this.brackets = null
     this.subject = null
     this.raysSo = null
@@ -455,7 +597,7 @@ export class CameraHero {
     switch (this.state) {
       case "launch":
         this.applyLaunch()
-        if (this.t >= T_FLY1) this.land()
+        if (this.t >= T_FLY1) this.endFlight()
         break
       case "landed":
         this.updateLanded(dt)
@@ -469,12 +611,17 @@ export class CameraHero {
     }
     // updateReturn may have cleared the stage.
     if ((this.state as HeroState) === "none") return
+    this.syncGrabs()
+    this.updateGlowAndDisc(dt)
     this.updateThread(dt)
     this.updateTrail()
     this.updateBrackets()
     this.updateShell()
     this.updatePrints(dt)
     this.placeRail()
+    const piv = this.replica.getTransform().getWorldPosition()
+    if (this.lastPivot && dt > 0) this.speed = piv.distance(this.lastPivot) / dt
+    this.lastPivot = piv
   }
 
   // ---------------- Test hooks / read-only state ----------------
@@ -529,19 +676,55 @@ export class CameraHero {
     return this.state === "none" ? null : this.replica
   }
 
-  getInfo(): {state: HeroState; scale: number; position: vec3; up: vec3; lowestY: number; tableY: number; threadOk: boolean; landSound: vec3 | null} {
-    const tr = this.replica && this.state !== "none" ? this.replica.getTransform() : null
-    const table = this.ctx.table()
+  getInfo(): {
+    state: HeroState
+    pose: HeroPose
+    scale: number
+    position: vec3
+    up: vec3
+    lowestY: number
+    tableY: number
+    threadOk: boolean
+    landSound: vec3 | null
+    foot: vec3
+    tableCenter: vec3
+    tableRadius: number
+    footReach: number
+    speed: number
+    held: boolean
+    discShown: boolean
+    glowShown: boolean
+    lastDrop: {bounce: number; settle: number; restGap: number; tiltDeg: number} | null
+  } {
+    const live = !!this.replica && this.state !== "none"
+    const tr = live ? this.replica.getTransform() : null
+    const s = this.surf ?? this.ctx.surface()
+    const foot = tr ? tr.getWorldTransform().multiplyPoint(new vec3(FOOT_CENTER.x, BODY_MIN_Y, FOOT_CENTER.y)) : vec3.zero()
     return {
       state: this.state,
+      pose: this.pose,
       scale: tr ? tr.getWorldScale().x : 0,
       position: tr ? tr.getWorldPosition() : vec3.zero(),
       up: tr ? tr.up : vec3.up(),
       lowestY: tr ? this.lowestWorldY() : 0,
-      tableY: table.y,
+      tableY: s.height,
       threadOk: this.threadConnected(),
-      landSound: this.lastLandPos
+      landSound: this.lastLandPos,
+      foot,
+      tableCenter: s.center,
+      tableRadius: s.safeRadius,
+      footReach: tr ? footReach(foot, tr.getWorldRotation(), s.center) : 0,
+      speed: this.speed,
+      held: !!this.grab,
+      discShown: !!this.disc && this.disc.enabled && this.discK > 0.95,
+      glowShown: !!this.contactGlow && this.contactGlow.enabled,
+      lastDrop: this.lastDrop
     }
+  }
+
+  /** The table top in use for this launch (hit test or fallback). */
+  getSurface(): TableSurface {
+    return this.surf ?? this.ctx.surface()
   }
 
   /** Every named part: how far it moved from its assembled place, and whether its label shows. */
@@ -605,7 +788,7 @@ export class CameraHero {
     this.meshVisual(this.barrelSo, this.ctx.lensMesh, this.barrelMat)
 
     this.buildParts()
-    this.buildTurn()
+    this.buildGlowAndDisc()
   }
 
   private node(parent: SceneObject, name: string, localPos: vec3): SceneObject {
@@ -870,37 +1053,140 @@ export class CameraHero {
     }
   }
 
-  /** Grab the replica: it turns around the vertical axis only, never moves and never scales. */
-  private buildTurn(): void {
-    // Grab box centred on the assembled camera (body + lens), in replica-local cm.
-    const grab = this.node(this.replica, "HeroGrab", new vec3(-1.36, 1.1, 1.2))
-    const col = grab.createComponent("Physics.ColliderComponent") as ColliderComponent
-    const box = Shape.createBoxShape()
-    box.size = new vec3(14.5, 11.5, 18)
-    col.shape = box
-    col.debugDrawEnabled = false
-    const inter = grab.createComponent(Interactable.getTypeName()) as Interactable
-    inter.enableInstantDrag = true
-    inter.onDragStart.add((e) => {
-      if (this.state !== "landed" && this.state !== "light") return
-      const head = this.ctx.camPos()
-      const F = flatDir(this.replica.getTransform().getWorldPosition().sub(head))
-      this.turnAccum = vec3.zero()
-      this.turnStart = {p: e.interactor.planecastPoint ?? vec3.zero(), yaw: this.yaw, right: F.cross(vec3.up()).normalize()}
-    })
-    inter.onDragUpdate.add((e) => {
-      if (!this.turnStart) return
-      let p = e.interactor.planecastPoint
-      if (!p) {
-        this.turnAccum = this.turnAccum.add(e.dragVector ?? vec3.zero())
-        p = this.turnStart.p.add(this.turnAccum)
-      }
-      const dx = p.sub(this.turnStart.p).dot(this.turnStart.right)
-      // Like turning a lazy Susan by its near edge: moving the hand right turns the near side right.
-      this.yaw = this.turnStart.yaw + dx / 22
-    })
-    inter.onDragEnd.add(() => (this.turnStart = null))
+  /**
+   * Two grab handles (SIK Interactables): the body slides the replica across the table top, the
+   * lens swings it around its footprint centre (yaw only). They live on the stage root, not on the
+   * replica, with +Z pointing up: SIK's planecast plane (normal = the interactable's forward) is
+   * then the horizontal plane through the handle, and a handle holds still while it is dragged, so
+   * the drag point never feeds back through the replica's own motion.
+   */
+  private buildGrabs(): void {
+    const make = (name: string, kind: "slide" | "turn", size: vec3): SceneObject => {
+      const so = this.node(this.root, name, vec3.zero())
+      const col = so.createComponent("Physics.ColliderComponent") as ColliderComponent
+      const box = Shape.createBoxShape()
+      box.size = size
+      col.shape = box
+      col.debugDrawEnabled = false
+      const inter = so.createComponent(Interactable.getTypeName()) as Interactable
+      inter.enableInstantDrag = true
+      inter.onDragStart.add((e) => this.onGrabStart(kind, e.interactor.planecastPoint))
+      inter.onDragUpdate.add((e) => this.onGrabUpdate(e.interactor.planecastPoint, e.dragVector))
+      inter.onDragEnd.add(() => this.onGrabEnd())
+      return so
+    }
+    // Box axes in the handle's frame: x across the lens axis, y along it, z up.
+    const slide = make("HeroGrab", "slide", new vec3(BODY_BOX_SIZE.x, BODY_BOX_SIZE.z, BODY_BOX_SIZE.y).uniformScale(SCALE).add(new vec3(1.5, 1.5, 1.5)))
+    const d = LENS_RADIUS * 2 * SCALE + 1.5
+    const turn = make("HeroTurnGrab", "turn", new vec3(d, LENS_LENGTH * SCALE, d))
+    this.grabs = {slide, turn}
+    this.syncGrabs()
     this.ctx.log("hero:turnReady")
+  }
+
+  private canGrab(): boolean {
+    return (this.state === "landed" || this.state === "light") && this.pose !== "fly" && this.pose !== "lift"
+  }
+
+  /** Handles follow the assembled body and lens, except while one is being dragged. */
+  private syncGrabs(): void {
+    if (!this.grabs) return
+    const on = this.canGrab()
+    this.grabs.slide.enabled = on
+    this.grabs.turn.enabled = on
+    if (this.grab || !on) return
+    const tr = this.replica.getTransform()
+    const m = tr.getWorldTransform()
+    const q = quat.lookAt(vec3.up(), flatDir(tr.getWorldRotation().multiplyVec3(vec3.forward())))
+    const st = this.grabs.slide.getTransform()
+    st.setWorldPosition(m.multiplyPoint(BODY_BOX_CENTER))
+    st.setWorldRotation(q)
+    const tt = this.grabs.turn.getTransform()
+    tt.setWorldPosition(m.multiplyPoint(new vec3(0, 0, LENS_CENTER_Z)))
+    tt.setWorldRotation(q)
+  }
+
+  private onGrabStart(kind: "slide" | "turn", p: vec3 | null): void {
+    if (!this.canGrab() || this.grab || !this.physics) return
+    // Caught mid-settle: it stops where it is and is held.
+    if (this.pose === "drop") this.toRest(true)
+    const handle = kind === "slide" ? this.grabs.slide : this.grabs.turn
+    const p0 = p ?? handle.getTransform().getWorldPosition()
+    const rel = p0.sub(this.foot)
+    const ang = Math.atan2(rel.x, rel.z)
+    this.grab = {kind, p0, usePlane: !!p, foot0: this.unclampFoot(this.foot, this.rot()), yaw0: this.yaw, angPrev: ang, turned: 0, accum: vec3.zero()}
+    this.ctx.log("hero:grab")
+  }
+
+  private onGrabUpdate(p: vec3 | null, dv: vec3 | null): void {
+    const g = this.grab
+    if (!g) return
+    let q = g.usePlane ? p : null
+    if (!q) {
+      g.accum = g.accum.add(dv ?? vec3.zero())
+      q = g.p0.add(g.accum)
+    }
+    if (g.kind === "slide") {
+      // Only the hand's motion in the table plane counts; the clamp keeps the footprint on the top.
+      const d = q.sub(g.p0)
+      this.foot = this.clampFoot(g.foot0.add(new vec3(d.x, 0, d.z)), this.rot())
+    } else {
+      // Swing the lens around the footprint centre: the yaw follows the hand's angle around it.
+      const rel = q.sub(this.foot)
+      if (Math.sqrt(rel.x * rel.x + rel.z * rel.z) < 2) return
+      const ang = Math.atan2(rel.x, rel.z)
+      let da = ang - g.angPrev
+      while (da > Math.PI) da -= Math.PI * 2
+      while (da < -Math.PI) da += Math.PI * 2
+      g.angPrev = ang
+      g.turned += da
+      this.yaw = g.yaw0 + g.turned
+      this.foot = this.clampFoot(g.foot0, this.rot())
+    }
+  }
+
+  private onGrabEnd(): void {
+    if (!this.grab) return
+    this.grab = null
+    this.ctx.log("hero:release")
+    // On the table it drops the 1.5 cm under gravity and settles; hovering, it stays up.
+    if (this.pose === "rest") this.startDrop()
+  }
+
+  /**
+   * Keep the whole footprint on the table top: the footprint centre may go at most `maxFootDistance`
+   * from the table centre in any direction (less a small margin). The last 4 cm before that limit
+   * resist softly (exponential approach), so a drag far past the edge stops there, never beyond.
+   */
+  private clampFoot(target: vec3, rot: quat): vec3 {
+    const s = this.surf
+    const c = s.center
+    const rel = new vec3(target.x - c.x, 0, target.z - c.z)
+    const d = rel.length
+    if (d < 1e-4) return new vec3(target.x, s.height, target.z)
+    const u = rel.uniformScale(1 / d)
+    const tMax = Math.max(0, maxFootDistance(u, rot, s.safeRadius) - EDGE_MARGIN)
+    const knee = Math.max(0, tMax - EDGE_SOFT)
+    const w = tMax - knee
+    const dd = d <= knee ? d : w > 1e-4 ? knee + w * (1 - Math.exp(-(d - knee) / w)) : knee
+    return new vec3(c.x + u.x * dd, s.height, c.z + u.z * dd)
+  }
+
+  /** The hand position that `clampFoot` maps to `foot` (a grab that starts near the edge never jumps). */
+  private unclampFoot(foot: vec3, rot: quat): vec3 {
+    const s = this.surf
+    const c = s.center
+    const rel = new vec3(foot.x - c.x, 0, foot.z - c.z)
+    const dd = rel.length
+    if (dd < 1e-4) return foot
+    const u = rel.uniformScale(1 / dd)
+    const tMax = Math.max(0, maxFootDistance(u, rot, s.safeRadius) - EDGE_MARGIN)
+    const knee = Math.max(0, tMax - EDGE_SOFT)
+    const w = tMax - knee
+    if (dd <= knee || w <= 1e-4) return foot
+    const k = Math.min(0.999, (dd - knee) / w)
+    const d = knee - w * Math.log(1 - k)
+    return new vec3(c.x + u.x * d, s.height, c.z + u.z * d)
   }
 
   // =====================================================================================
@@ -912,7 +1198,7 @@ export class CameraHero {
   private clearOfHead(p: vec3, r: number): vec3 {
     const head = this.head0
     let away = new vec3(p.x - head.x, 0, p.z - head.z)
-    if (away.length < 1e-3) away = flatDir(this.ctx.table().sub(head))
+    if (away.length < 1e-3) away = flatDir(this.ctx.surface().center.sub(head))
     away = away.normalize()
     let q = p
     for (let i = 0; i < 8 && q.distance(head) < r; i++) q = q.add(away.uniformScale(r - q.distance(head) + 2))
@@ -1042,42 +1328,295 @@ export class CameraHero {
     tr.setLocalScale(vec3.one())
   }
 
-  private land(): void {
-    this.landedAt = getTime()
+  // =====================================================================================
+  // On the table (pass 2): drop, rest, held, hover
+  // =====================================================================================
+
+  /** Rotation for a yaw (only ever about the vertical axis). */
+  private rot(yaw: number = this.yaw): quat {
+    return quat.angleAxis(yaw, vec3.up()).multiply(this.rLand)
+  }
+
+  /** Replica pivot for footprint centre `foot` (x, z), `yaw`, and its lowest point `h` cm above the table top. */
+  private pivotFor(foot: vec3, yaw: number, h: number): vec3 {
+    const off = this.rot(yaw).multiplyVec3(new vec3(FOOT_CENTER.x * SCALE, BODY_MIN_Y * SCALE, FOOT_CENTER.y * SCALE))
+    return new vec3(foot.x, this.surf.height + h, foot.z).sub(off)
+  }
+
+  /** Kinematic: place the replica (and its physics proxy) from foot, yaw and height. */
+  private applyPose(): void {
+    const tr = this.replica.getTransform()
+    const r = this.rot()
+    const p = this.pivotFor(this.foot, this.yaw, this.h)
+    tr.setWorldPosition(p)
+    tr.setWorldRotation(r)
+    tr.setWorldScale(vec3.one().uniformScale(SCALE))
+    if (this.physics) this.physics.setReplicaPose(p, r)
+  }
+
+  /** The flight is over, 20 cm above the table centre: let go, and it drops onto the table. */
+  private endFlight(): void {
     this.state = "landed"
     this.landed = true
     this.landTime = 0
     this.t = 0
-    const tr = this.replica.getTransform()
-    tr.setWorldPosition(this.pLand)
-    tr.setWorldRotation(this.rLand)
-    tr.setWorldScale(vec3.one().uniformScale(SCALE))
-    const table = this.ctx.table()
-    this.lastLandPos = table
-    this.ctx.sound("land", table)
-    this.buildTableRing(table)
+    this.h = DROP_CM
+    this.applyPose()
     this.buildThread()
-    this.ctx.rail.setMode("apart")
-    this.ctx.rail.setApartValue(0)
-    this.ctx.log("hero:landed")
+    this.buildGrabs()
+    this.startDrop()
   }
 
-  private buildTableRing(table: vec3): void {
-    const so = this.node(this.root, "HeroTableRing", table.add(new vec3(0, 0.4, 0)))
-    this.tableRingMat = this.glowMat()
+  /** Dynamic from here: it falls under gravity, touches the table and settles. */
+  private startDrop(): void {
+    this.pose = "drop"
+    this.poseT = 0
+    this.drop = {t: 0, touched: false, touchT: -1, stillT: 0, bounce: 0, settle: -1, contact: null}
+    this.applyPose()
+    this.holdK = 0
+    this.physics.drop()
+    this.ctx.log("hero:drop")
+  }
+
+  /** First contact: the soft tap (and, on the first landing, the landing tone) from the contact point. */
+  private onContact(p: vec3, impulse: number): void {
+    if (this.pose !== "drop" || this.drop.touched) return
+    this.drop.touched = true
+    this.drop.touchT = this.drop.t
+    this.drop.contact = p
+    this.physics.settle()
+    this.ctx.sound("tap", p)
+    if (this.firstRest) {
+      this.ctx.sound("land", p)
+      this.lastLandPos = p
+    }
+    this.ctx.log("hero:touch")
+    void impulse
+  }
+
+  private updateDrop(dt: number): void {
+    const d = this.drop
+    d.t += dt
+    const pr = this.physics.replicaPose()
+    const tr = this.replica.getTransform()
+    tr.setWorldPosition(pr.pos)
+    tr.setWorldRotation(pr.rot)
+    tr.setWorldScale(vec3.one().uniformScale(SCALE))
+    const gap = this.lowestWorldY() - this.surf.height
+    this.h = gap
+    const v = this.physics.velocity().length
+    // No collision event (should not happen): count it as touching once it is down and slow.
+    if (!d.touched && d.t > 0.05 && gap < 0.05 && v < 5) this.onContact(new vec3(this.foot.x, this.surf.height, this.foot.z), 0)
+    if (d.touched) {
+      d.bounce = Math.max(d.bounce, gap)
+      const still = v < STILL_SPEED && this.physics.angularSpeed() < STILL_SPIN
+      if (!still) {
+        d.stillT = 0
+        d.settle = -1
+      } else {
+        if (d.settle < 0) d.settle = d.t - d.touchT
+        d.stillT += dt
+      }
+      if (d.stillT >= 0.05) this.toRest(false)
+    } else if (d.t > 1.5) {
+      this.toRest(false)
+    }
+  }
+
+  /**
+   * At rest (or caught mid-settle by a grab): kinematic again, exactly where the physics left it,
+   * keeping its yaw and footprint. Only a residual tilt (if any) is levelled out, and the gap to the
+   * table is kept between 0 and 2 mm (it is logged as found).
+   */
+  private toRest(early: boolean): void {
+    const pr = this.physics.replicaPose()
+    this.physics.freeze()
+    const tr = this.replica.getTransform()
+    tr.setWorldPosition(pr.pos)
+    tr.setWorldRotation(pr.rot)
+    tr.setWorldScale(vec3.one().uniformScale(SCALE))
+    const gap = this.lowestWorldY() - this.surf.height
+    const f = flatDir(pr.rot.multiplyVec3(vec3.forward()))
+    const f0 = flatDir(this.rLand.multiplyVec3(vec3.forward()))
+    const tiltDeg = Math.acos(Math.max(-1, Math.min(1, pr.rot.multiplyVec3(vec3.up()).y))) / DEG
+    this.yaw = Math.atan2(f.x, f.z) - Math.atan2(f0.x, f0.z)
+    const fw = pr.pos.add(pr.rot.multiplyVec3(new vec3(FOOT_CENTER.x * SCALE, BODY_MIN_Y * SCALE, FOOT_CENTER.y * SCALE)))
+    this.foot = new vec3(fw.x, this.surf.height, fw.z)
+    this.restGap = Math.max(0, Math.min(0.2, gap))
+    this.h = this.restGap
+    this.pose = "rest"
+    this.poseT = 0
+    this.holdK = 0
+    this.applyPose()
+    // Levelling out a residual tilt moves points by well under a millimetre; that is not motion.
+    this.lastPivot = this.replica.getTransform().getWorldPosition()
+    this.speed = 0
+    if (early) return
+    const d = this.drop
+    this.lastDrop = {bounce: d.bounce, settle: d.settle, restGap: gap, tiltDeg}
+    print(`Cutaway: hero rest: gap ${(gap * 10).toFixed(2)} mm, tilt ${tiltDeg.toFixed(3)}°, bounce ${(d.bounce * 10).toFixed(2)} mm, still ${d.settle.toFixed(3)} s after contact, drop ${d.t.toFixed(3)} s`)
+    this.ctx.log("hero:rest")
+    if (this.firstRest) {
+      this.firstRest = false
+      this.landedAt = getTime()
+      this.ctx.rail.setMode("apart")
+      this.ctx.rail.setApartValue(0)
+      this.ctx.log("hero:landed")
+    }
+  }
+
+  private startRise(): void {
+    this.pose = "rise"
+    this.poseT = 0
+    this.h0 = this.h
+    this.ctx.log("hero:rise")
+  }
+
+  /**
+   * Every frame on the table: rest (lifted 1.5 cm while held), rise to hover when "Take apart"
+   * leaves 0, hover with a slow bob, and once the parts are back together, come down and drop.
+   */
+  private updatePose(dt: number): void {
+    if (!this.physics) return
+    const wantHover = this.state === "light" || this.ctx.rail.getApartValue() > 0.001
+    this.poseT += dt
+    switch (this.pose) {
+      case "drop":
+        this.updateDrop(dt)
+        break
+      case "rest":
+        if (this.grab) this.holdK = Math.min(1, this.holdK + dt / HOLD_DUR)
+        this.h = this.restGap + HOLD_CM * easeInOutCubic(this.holdK)
+        if (wantHover) this.startRise()
+        this.applyPose()
+        break
+      case "rise":
+        this.h = this.h0 + (HOVER_CM - this.h0) * easeOutCubic(this.poseT / RISE_DUR)
+        if (this.poseT >= RISE_DUR) {
+          this.pose = "hover"
+          this.poseT = 0
+          this.ctx.log("hero:hover")
+        }
+        this.applyPose()
+        break
+      case "hover":
+        this.h = HOVER_CM + BOB_CM * Math.sin((2 * Math.PI * this.poseT) / BOB_PERIOD)
+        if (!wantHover && this.sEff <= 0.001) {
+          this.pose = "descend"
+          this.poseT = 0
+          this.h0 = this.h
+          this.ctx.log("hero:descend")
+        }
+        this.applyPose()
+        break
+      case "descend":
+        if (wantHover) {
+          this.startRise()
+          this.applyPose()
+          break
+        }
+        this.h = this.h0 + (HOLD_CM - this.h0) * easeInOutCubic(this.poseT / DESCEND_DUR)
+        this.applyPose()
+        if (this.poseT >= DESCEND_DUR) {
+          if (this.grab) {
+            // Held as it comes down: it stays lifted 1.5 cm until let go.
+            this.pose = "rest"
+            this.restGap = 0
+            this.holdK = 1
+          } else this.startDrop()
+        }
+        break
+    }
+    // The parts separate only once it hovers, and gather again before it comes down.
+    if (this.state === "light") this.sEff = 1
+    else {
+      const target = this.pose === "hover" ? this.ctx.rail.getApartValue() : 0
+      const step = APART_RATE * dt
+      this.sEff = Math.abs(target - this.sEff) <= step ? target : this.sEff + Math.sign(target - this.sEff) * step
+    }
+    // The disc fades in as it rises and out as it comes down.
+    const want = this.pose === "rise" || this.pose === "hover" ? 1 : 0
+    const ds = dt / 0.35
+    this.discK = Math.abs(want - this.discK) <= ds ? want : this.discK + Math.sign(want - this.discK) * ds
+  }
+
+  /** Contact glow hugging the footprint, and the hover disc; both 2 mm above the table top. */
+  private buildGlowAndDisc(): void {
+    // Footprint-local XY at 3x (x across, y = -along), laid flat by a -90° turn about X.
+    const outline = FOOTPRINT.map((p) => new vec2((p.x - FOOT_CENTER.x) * SCALE, -(p.y - FOOT_CENTER.y) * SCALE))
     const k = new MeshKit()
-    k.addRing(vec3.zero(), vec3.up(), 30, 0.5, ink(LIGHT, 0.55), 96)
-    k.addRing(vec3.zero(), vec3.up(), 27, 6, ink(LIGHT, 0.05), 96)
-    k.addRing(vec3.zero(), vec3.up(), 33, 6, ink(LIGHT, 0.03), 96)
-    spawnMesh(so, "Ring", k.build(), this.ctx.glowMat, undefined, this.tableRingMat)
-    this.tableRing = so
+    softOutline(k, outline, [0, 0.35, 3.2], [ink(LIGHT, 0.36), ink(LIGHT, 0.22), ink(LIGHT, 0)])
+    this.contactGlowMat = this.glowMat()
+    this.contactGlow = this.node(this.root, "HeroContactGlow", vec3.zero())
+    spawnMesh(this.contactGlow, "Glow", k.build(), this.ctx.glowMat, undefined, this.contactGlowMat)
+    this.contactGlow.enabled = false
+    // Hover disc: a thin warm-white ring, ~10% fill, as wide as the footprint is long.
+    const R = FOOT_SIZE.y / 2
+    const dk = new MeshKit()
+    dk.addFanXY(0, 0, R, 0, Math.PI * 2, ink(LIGHT, 0.1), ink(LIGHT, 0.1), 96)
+    dk.addArcXY(0, 0, R, 0.35, 0, Math.PI * 2, ink(LIGHT, 0.85), 128)
+    dk.addSoftRingXY(0, 0, R + 0.17, R + 2.2, ink(LIGHT, 0.14), ink(LIGHT, 0), 96)
+    this.discMat = this.glowMat()
+    this.disc = this.node(this.root, "HeroHoverDisc", vec3.zero())
+    spawnMesh(this.disc, "Disc", dk.build(), this.ctx.glowMat, undefined, this.discMat)
+    this.disc.enabled = false
   }
 
+  private updateGlowAndDisc(dt: number): void {
+    void dt
+    if (!this.contactGlow || !this.disc) return
+    const s = this.surf
+    const tr = this.replica.getTransform()
+    const fw = tr.getWorldTransform().multiplyPoint(new vec3(FOOT_CENTER.x, BODY_MIN_Y, FOOT_CENTER.y))
+    const yawRot = quat.lookAt(flatDir(tr.getWorldRotation().multiplyVec3(vec3.forward())), vec3.up())
+    const flat = yawRot.multiply(quat.angleAxis(-90 * DEG, vec3.right()))
+    const at = new vec3(fw.x, s.height + ON_TABLE, fw.z)
+    // Glow: full while it sits on the table, fading as it lifts off (gone by 3 cm).
+    const onTable = this.state === "landed" || this.state === "light" || this.state === "returning"
+    const g = onTable ? 1 - clamp01((fw.y - s.height - 0.2) / 3) : 0
+    this.contactGlow.enabled = g > 0.001
+    if (this.contactGlow.enabled) {
+      const gt = this.contactGlow.getTransform()
+      gt.setWorldPosition(at)
+      gt.setWorldRotation(flat)
+      setFade(this.contactGlowMat, g * this.globalFade)
+    }
+    const k = easeInOutCubic(this.discK)
+    this.disc.enabled = k > 0.001 && this.state !== "returning"
+    if (this.disc.enabled) {
+      // As wide as the footprint is long, but never past the table's edge.
+      const R = FOOT_SIZE.y / 2
+      const off = new vec3(fw.x - s.center.x, 0, fw.z - s.center.z).length
+      const r = Math.max(4, Math.min(R, s.safeRadius - off))
+      const dtr = this.disc.getTransform()
+      dtr.setWorldPosition(at)
+      dtr.setWorldRotation(flat)
+      dtr.setWorldScale(vec3.one().uniformScale(r / R))
+      setFade(this.discMat, k)
+    }
+  }
+
+  /** The thread: a line of light from the real camera, through the meeting point and along the flight arc to the replica as it is now. */
   private buildThread(): void {
-    const pts: vec3[] = []
-    for (let i = 0; i <= 6; i++) pts.push(vec3.lerp(this.realCenter, this.pMeet, i / 6))
+    this.thread = new TrailRibbon(this.root, "HeroThread", this.ctx.glowMat, THREAD_N, 0.7, ink(LIGHT, 0.9))
+    this.threadT = 0
+    this.updateThreadPts()
+    const ps = this.node(this.root, "HeroThreadPulse", this.threadPts[0])
+    this.pulseMat = this.glowMat()
+    const k = new MeshKit()
+    k.addSphere(vec3.zero(), 0.35, ink(LIGHT, 0.9), 6, 10)
+    k.addSphere(vec3.zero(), 1.1, ink(LIGHT, 0.12), 6, 10)
+    spawnMesh(ps, "Pulse", k.build(), this.ctx.glowMat, undefined, this.pulseMat)
+    this.pulse = ps
+  }
+
+  /** Recompute the thread so it follows the replica (slid, turned, hovering), resampled to THREAD_N points. */
+  private updateThreadPts(): void {
+    const raw: vec3[] = []
+    for (let i = 0; i <= 6; i++) raw.push(vec3.lerp(this.realCenter, this.pMeet, i / 6))
     const center = this.replicaCenter()
-    const at = (u: number) => bezier(this.pMeet, this.ctrl, this.pLand, u)
+    const end = this.replica.getTransform().getWorldPosition()
+    const at = (u: number) => bezier(this.pMeet, this.ctrl, end, u)
     let prevU = 0
     for (let i = 1; i <= 40; i++) {
       const u = i / 40
@@ -1091,22 +1630,33 @@ export class CameraHero {
           if (at(m).distance(center) < 24) hi = m
           else lo = m
         }
-        pts.push(at(lo))
+        raw.push(at(lo))
         break
       }
-      pts.push(p)
+      raw.push(p)
       prevU = u
     }
-    this.thread = new GlowPath(this.root, "HeroThread", this.ctx.glowMat, pts, {radius: 0.12, color: ink(LIGHT, 0.9), halo: 0.45, sides: 6, step: 3})
-    this.thread.setRange(0, 0)
-    this.threadT = 0
-    const ps = this.node(this.root, "HeroThreadPulse", pts[0])
-    this.pulseMat = this.glowMat()
-    const k = new MeshKit()
-    k.addSphere(vec3.zero(), 0.35, ink(LIGHT, 0.9), 6, 10)
-    k.addSphere(vec3.zero(), 1.1, ink(LIGHT, 0.12), 6, 10)
-    spawnMesh(ps, "Pulse", k.build(), this.ctx.glowMat, undefined, this.pulseMat)
-    this.pulse = ps
+    const cum = [0]
+    for (let i = 1; i < raw.length; i++) cum.push(cum[i - 1] + raw[i].distance(raw[i - 1]))
+    const L = cum[cum.length - 1]
+    const pts: vec3[] = []
+    let j = 1
+    for (let i = 0; i < THREAD_N; i++) {
+      const want = (L * i) / (THREAD_N - 1)
+      while (j < raw.length - 1 && cum[j] < want) j++
+      const seg = Math.max(1e-6, cum[j] - cum[j - 1])
+      pts.push(raw.length > 1 ? vec3.lerp(raw[j - 1], raw[j], clamp01((want - cum[j - 1]) / seg)) : raw[0])
+    }
+    this.threadPts = pts
+    this.threadCum = pts.map((_, i) => (L * i) / (THREAD_N - 1))
+  }
+
+  private threadPointAt(f: number): vec3 {
+    const n = this.threadPts.length
+    if (n === 0) return vec3.zero()
+    const x = clamp01(f) * (n - 1)
+    const i = Math.min(n - 2, Math.floor(x))
+    return vec3.lerp(this.threadPts[i], this.threadPts[i + 1], x - i)
   }
 
   private updateThread(dt: number): void {
@@ -1114,15 +1664,14 @@ export class CameraHero {
     this.threadT += dt
     let k = 1
     if (this.state === "returning") k = 1 - clamp01((this.t - (RET_END - 0.45)) / 0.4)
+    this.updateThreadPts()
     // The trail settles into the thread: it draws along the arc as the trail fades.
     const draw = easeOutCubic(this.threadT / 0.35)
-    this.thread.setRange(0, draw)
-    this.thread.setOpacity(0.3 * k)
-    if (this.tableRing) {
-      const g = easeOutCubic(this.landTime / 0.6)
-      this.tableRing.getTransform().setLocalScale(vec3.one().uniformScale(0.15 + 0.85 * g))
-      setFade(this.tableRingMat, (1 - 0.45 * g) * k)
-    }
+    const n = this.threadPts.length
+    const alphas = this.threadPts.map((_, i) => (i / (n - 1) <= draw ? 1 : 0))
+    const mid = this.threadPts[Math.floor(n / 2)]
+    this.thread.update(this.threadPts, this.ctx.camPos().sub(mid).normalize(), alphas)
+    setFade(this.thread.mat, 0.3 * k)
     this.landTime += dt
     if (this.pulse) {
       // A slow pulse travels toward the replica every 3.2 s.
@@ -1130,7 +1679,7 @@ export class CameraHero {
       const on = cyc <= 1 && draw >= 1
       this.pulse.enabled = on
       if (on) {
-        this.pulse.getTransform().setWorldPosition(this.thread.pointAt(easeInOutCubic(cyc)))
+        this.pulse.getTransform().setWorldPosition(this.threadPointAt(easeInOutCubic(cyc)))
         setFade(this.pulseMat, 0.8 * Math.sin(Math.PI * cyc) * k)
       }
     }
@@ -1167,8 +1716,8 @@ export class CameraHero {
     // Fill in from rim-only to the lifted textures over 400 ms.
     this.shellFill = easeOutCubic(this.t / T_FILL)
     this.shellRim = 0.9 + (0.3 - 0.9) * this.shellFill
-    this.applyYaw()
-    this.s = this.ctx.rail.getApartValue()
+    this.updatePose(dt)
+    this.s = this.sEff
     let lightK = 0
     if (this.exitT >= 0) {
       // Leaving the light path: the lens group slides back, the mirror drops, the light fades.
@@ -1205,13 +1754,6 @@ export class CameraHero {
     this.ctx.caption(null)
     this.captionKey = ""
     this.ctx.log("hero:lightOff")
-  }
-
-  private applyYaw(): void {
-    const tr = this.replica.getTransform()
-    tr.setWorldPosition(this.pLand)
-    tr.setWorldRotation(quat.angleAxis(this.yaw, vec3.up()).multiply(this.rLand))
-    tr.setWorldScale(vec3.one().uniformScale(SCALE))
   }
 
   /** Separate the parts for slider value `s`; `lightK` blends the barrel toward its focus position. */
@@ -1324,7 +1866,7 @@ export class CameraHero {
     this.lightT += dt
     this.shellFill = 1
     this.shellRim = 0.3
-    this.applyYaw()
+    this.updatePose(dt)
     this.s = 1
     if (this.live) {
       const v = this.ctx.rail.getFocusValue()
@@ -1765,7 +2307,10 @@ export class CameraHero {
       const lightK = from.lightK * (1 - clamp01(t / 0.25))
       if (this.mirrorPlate) this.mirrorPlate.getTransform().setLocalRotation(quat.angleAxis(-45 * DEG * this.mirrorUp * (1 - clamp01(t / 0.25)), vec3.right()))
       this.applyApart(s, lightK)
-      tr.setWorldRotation(from.rot)
+      // Whole again: it lifts 3 cm off the table (0.25 s), then flies home.
+      this.h = this.retH + PUTBACK_LIFT_CM * easeOutCubic((t - RET_ASSEMBLE) / (RET_FLY0 - RET_ASSEMBLE))
+      this.applyPose()
+      this.retPos = tr.getWorldPosition()
       this.fadeLightPath(dt)
       if (t >= RET_ASSEMBLE && !this.retFlags.click) {
         this.retFlags.click = true
@@ -1777,7 +2322,7 @@ export class CameraHero {
       this.destroyLightPath()
       this.applyApart(0, 0)
       const u = easeInOutCubic((t - RET_FLY0) / (RET_FLY1 - RET_FLY0))
-      tr.setWorldPosition(bezier(this.pLand, this.ctrl, this.pMeet, u))
+      tr.setWorldPosition(bezier(this.retPos ?? this.pLand, this.ctrl, this.pMeet, u))
       tr.setWorldRotation(quat.slerp(from.rot, this.rStart, u))
       tr.setWorldScale(vec3.one().uniformScale(SCALE + (1 - SCALE) * u))
       // Back to edges of light so it can melt into the real camera.
@@ -1880,7 +2425,7 @@ export class CameraHero {
 
   private placeRail(): void {
     if (this.state !== "landed" && this.state !== "light" && !(this.state === "returning" && this.ctx.rail.isVisible())) return
-    const c = this.replicaCenter()
+    const c = this.stageCenter()
     const head = this.ctx.camPos()
     const toUser = flatDir(head.sub(c))
     const right = toUser.uniformScale(-1).cross(vec3.up()).normalize()
@@ -1894,7 +2439,7 @@ export class CameraHero {
    * "Take apart" sits a row above "Focus".
    */
   private captionAnchor(raised: boolean): vec3 {
-    const c = this.replicaCenter()
+    const c = this.stageCenter()
     const head = this.ctx.camPos()
     const toUser = flatDir(head.sub(c))
     const right = toUser.uniformScale(-1).cross(vec3.up()).normalize()
@@ -1917,16 +2462,21 @@ export class CameraHero {
     return this.replica.getTransform().getWorldTransform().multiplyPoint(p.rest)
   }
 
-  /** Lowest point of the assembled replica (the body's underside), world Y. */
+  /** Lowest point of the replica's hull (body box corners and lens rim), world Y, in any pose. */
   private lowestWorldY(): number {
-    const tr = this.replica.getTransform()
-    return tr.getWorldPosition().y + BODY_MIN_Y * tr.getWorldScale().y
+    return hullLowestY(this.replica.getTransform().getWorldTransform())
+  }
+
+  /** Where the body's centre is when it sits on the table here: the rail and captions stay put while it hovers or bobs. */
+  private stageCenter(): vec3 {
+    if (this.state === "launch" || this.pose === "fly" || !this.surf) return this.replicaCenter()
+    return this.pivotFor(this.foot, this.yaw, this.restGap).add(this.rot().multiplyVec3(BODY_CENTER.uniformScale(SCALE)))
   }
 
   private threadConnected(): boolean {
-    if (!this.thread || this.state === "none") return false
-    const a = this.thread.pointAt(0)
-    const b = this.thread.pointAt(1)
+    if (!this.thread || this.state === "none" || this.threadPts.length < 2) return false
+    const a = this.threadPts[0]
+    const b = this.threadPts[this.threadPts.length - 1]
     return a.distance(this.realCenter) < 2 && b.distance(this.replicaCenter()) < 26
   }
 }

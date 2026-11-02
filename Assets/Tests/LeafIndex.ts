@@ -13,6 +13,10 @@ import {H3TurnScenario} from "./H3TurnScenario"
 import {H4LightPathScenario} from "./H4LightPathScenario"
 import {H5PhotoScenario} from "./H5PhotoScenario"
 import {H6PutBackResetScenario} from "./H6PutBackResetScenario"
+import {P1SurfaceScenario} from "./P1SurfaceScenario"
+import {P2LandingScenario} from "./P2LandingScenario"
+import {P3MoveScenario} from "./P3MoveScenario"
+import {P4HoverScenario} from "./P4HoverScenario"
 
 @component
 export class LeafIndex extends BaseScriptComponent {
@@ -30,6 +34,10 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "h4-hero-light-path", typename: H4LightPathScenario.getTypeName()},
     {id: "h5-hero-photo", typename: H5PhotoScenario.getTypeName()},
     {id: "h6-hero-put-back-and-reset", typename: H6PutBackResetScenario.getTypeName()},
+    {id: "p1-hero-surface", typename: P1SurfaceScenario.getTypeName()},
+    {id: "p2-hero-landing", typename: P2LandingScenario.getTypeName()},
+    {id: "p3-hero-move", typename: P3MoveScenario.getTypeName()},
+    {id: "p4-hero-hover", typename: P4HoverScenario.getTypeName()},
     {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer", step: "", untilPhase: "", extraMs: ""}}
   ]
 }

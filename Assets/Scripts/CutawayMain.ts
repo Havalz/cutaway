@@ -5,6 +5,7 @@ import {CutawayLabelsUI} from "./CutawayLabelsUI"
 import {CameraExplanation, ExplainContext, Explanation, LampExplanation, RecordPlayerExplanation} from "./CutawayExplanations"
 import {easeIn} from "./CutawayTween"
 import {CameraHero, HeroSound} from "./CutawayHero"
+import {TableSurface, TableSurveyor} from "./CutawayHeroSurface"
 import {CutawayHeroUI} from "./CutawayHeroUI"
 import {ENERGY} from "./CutawayStyle"
 
@@ -92,8 +93,16 @@ export class CutawayMain extends BaseScriptComponent {
   cordStartMarker: SceneObject
 
   @input
-  @hint("Camera hero stage: the centre of the top surface of the round coffee table in front of the sofa. The 3x replica lands 10 cm above it")
+  @hint("Camera hero stage: the centre of the top surface of the round coffee table in front of the sofa. The table is surveyed by World Query hit test around it at launch")
   tableMarker: SceneObject
+
+  @input
+  @hint("Fallback table top (if hit testing finds no table): its height, world Y in cm (measured in the preview: -144.4)")
+  tableTopHeight: number = -144.4
+
+  @input
+  @hint("Fallback table top: radius in cm, centred on the table marker (the oval top's inscribed circle: 45)")
+  tableRadius: number = 45
 
   @input
   @hint("Camera hero stage: the lens inside its bag next to the camera on the console. The replica's lens rises out of here")
@@ -136,6 +145,16 @@ export class CutawayMain extends BaseScriptComponent {
   @allowUndefined
   @hint("Spatial AudioComponent: soft landing tone from the table")
   heroLandAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent: soft contact tap where the replica touches the table")
+  heroTapAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Physics matter for the table and the replica: high friction, bounciness 0.05 (HeroMatter)")
+  heroMatter: Matter
 
   @input
   @allowUndefined
@@ -238,6 +257,8 @@ export class CutawayMain extends BaseScriptComponent {
   private chimeLog: {time: number; position: vec3}[] = []
   private soundLog: {name: string; time: number; position: vec3}[] = []
   private hero: CameraHero | null = null
+  private surveyor: TableSurveyor | null = null
+  private surface: TableSurface | null = null
 
   onAwake(): void {
     this.stations = [
@@ -279,7 +300,7 @@ export class CutawayMain extends BaseScriptComponent {
   // ---------------- Camera hero stage ----------------
 
   private heroAudios(): AudioComponent[] {
-    return [this.heroLiftAudio, this.heroBayonetAudio, this.heroFlightAudio, this.heroLandAudio, this.heroPartAudio, this.heroMirrorAudio, this.heroShutterAudio, this.heroPrintAudio].filter((a) => !!a)
+    return [this.heroLiftAudio, this.heroBayonetAudio, this.heroFlightAudio, this.heroLandAudio, this.heroTapAudio, this.heroPartAudio, this.heroMirrorAudio, this.heroShutterAudio, this.heroPrintAudio].filter((a) => !!a)
   }
 
   private heroAudio(s: HeroSound): AudioComponent | null {
@@ -288,6 +309,7 @@ export class CutawayMain extends BaseScriptComponent {
       bayonet: this.heroBayonetAudio,
       flight: this.heroFlightAudio,
       land: this.heroLandAudio,
+      tap: this.heroTapAudio,
       part: this.heroPartAudio,
       mirror: this.heroMirrorAudio,
       shutter: this.heroShutterAudio,
@@ -302,6 +324,9 @@ export class CutawayMain extends BaseScriptComponent {
       return
     }
     const camProvider = WorldCameraFinderProvider.getInstance()
+    // World Query needs its depth running before a launch asks for the table: start it now.
+    this.surveyor = new TableSurveyor((s) => print("Cutaway: " + s))
+    this.surface = this.fallbackSurface()
     this.hero = new CameraHero({
       parent: this.sceneObject,
       glowMat: this.glowMaterial,
@@ -314,7 +339,16 @@ export class CutawayMain extends BaseScriptComponent {
       camera: camProvider.getComponent(),
       realBounds: () => this.cameraUI.getBounds(),
       realFacing: this.cameraFacing,
-      table: () => this.pos(this.tableMarker),
+      surface: () => this.surface,
+      survey: (done) => {
+        const fb = this.fallbackSurface()
+        this.surface = fb
+        this.surveyor.survey(this.pos(this.tableMarker), fb, (s) => {
+          this.surface = s
+          done(s)
+        })
+      },
+      matter: this.heroMatter ?? null,
       bag: () => this.pos(this.lensBagMarker),
       sound: (s, p) => {
         const a = this.heroAudio(s)
@@ -332,6 +366,13 @@ export class CutawayMain extends BaseScriptComponent {
     this.heroUI.onPhoto.add(() => this.hero.photo())
     this.heroUI.onPinch.add((p) => this.playAt("tick", this.tickAudio, p))
     this.cameraUI.onCloserPressed.add(() => this.launchHero())
+  }
+
+  /** The fallback table top: the inspector's height and radius at the table marker. */
+  private fallbackSurface(): TableSurface {
+    const m = this.pos(this.tableMarker)
+    const center = new vec3(m.x, this.tableTopHeight, m.z)
+    return {method: "fallback", height: this.tableTopHeight, center, radius: this.tableRadius, safeRadius: this.tableRadius, kept: 0, offCenter: 0, offHeight: this.tableTopHeight - m.y, note: ""}
   }
 
   /** "Bring it closer" (the camera's pill or its second question): launch the 3x replica. */
@@ -575,6 +616,7 @@ export class CutawayMain extends BaseScriptComponent {
         if (r.collapseT >= r.collapseDur) this.endRunning()
       }
     }
+    if (this.surveyor) this.surveyor.update()
     if (this.hero) this.hero.update(dt)
     this.updateCloser()
     this.updateGaze()

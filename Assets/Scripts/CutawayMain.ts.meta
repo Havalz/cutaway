@@ -44,10 +44,12 @@
     heroFlightAudio: false
     heroLandAudio: false
     heroLiftAudio: false
+    heroMatter: false
     heroMirrorAudio: false
     heroPartAudio: false
     heroPrintAudio: false
     heroShutterAudio: false
+    heroTapAudio: false
     heroUI: false
     labelsUI: false
     lampBaseMarker: false
@@ -67,6 +69,8 @@
     shelfY: false
     speakerMarker: false
     tableMarker: false
+    tableRadius: false
+    tableTopHeight: false
     tickAudio: false
   ScriptTypesHidden:
     {}
@@ -90,6 +94,8 @@
       lampBaseMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
       cordStartMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
       tableMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      tableTopHeight: -144.399994
+      tableRadius: !<float> 45.000000
       lensBagMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
       heroUI: !<MappingBased.AssignableType_6> 00000000-0000-0000-0000-000000000000
       replicaBodyMesh: !<reference.RenderMesh> 00000000-0000-0000-0000-000000000000
@@ -99,6 +105,8 @@
       heroBayonetAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       heroFlightAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       heroLandAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
+      heroTapAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
+      heroMatter: !<reference.Matter> 00000000-0000-0000-0000-000000000000
       heroPartAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       heroMirrorAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       heroShutterAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
@@ -138,7 +146,9 @@
     - '// @input SceneObject lampMarker {"hint":"Lamp marker (the shade / bulb)"}'
     - '// @input SceneObject lampBaseMarker {"hint":"Lamp base marker (bottom of the pole)"}'
     - '// @input SceneObject cordStartMarker {"hint":"Where the lamp cord starts (wall outlet)"}'
-    - '// @input SceneObject tableMarker {"hint":"Camera hero stage: the centre of the top surface of the round coffee table in front of the sofa. The 3x replica lands 10 cm above it"}'
+    - '// @input SceneObject tableMarker {"hint":"Camera hero stage: the centre of the top surface of the round coffee table in front of the sofa. The table is surveyed by World Query hit test around it at launch"}'
+    - '// @input float tableTopHeight = -144.4 {"hint":"Fallback table top (if hit testing finds no table): its height, world Y in cm (measured in the preview: -144.4)"}'
+    - "// @input float tableRadius = 45 {\"hint\":\"Fallback table top: radius in cm, centred on the table marker (the oval top's inscribed circle: 45)\"}"
     - "// @input SceneObject lensBagMarker {\"hint\":\"Camera hero stage: the lens inside its bag next to the camera on the console. The replica's lens rises out of here\"}"
     - '// @ui {"widget":"group_end"}'
     - '// @ui {"widget":"group_start", "label":"Camera hero stage (Bring it closer)"}'
@@ -150,6 +160,8 @@
     - '// @input Component.AudioComponent heroBayonetAudio {"hint":"Spatial AudioComponent: bayonet click where the lens mounts"}'
     - '// @input Component.AudioComponent heroFlightAudio {"hint":"Spatial AudioComponent: soft air sweep that follows the replica in flight"}'
     - '// @input Component.AudioComponent heroLandAudio {"hint":"Spatial AudioComponent: soft landing tone from the table"}'
+    - '// @input Component.AudioComponent heroTapAudio {"hint":"Spatial AudioComponent: soft contact tap where the replica touches the table"}'
+    - '// @input Asset.Matter heroMatter {"hint":"Physics matter for the table and the replica: high friction, bounciness 0.05 (HeroMatter)"}'
     - '// @input Component.AudioComponent heroPartAudio {"hint":"Spatial AudioComponent: one soft click per part as it frees itself"}'
     - '// @input Component.AudioComponent heroMirrorAudio {"hint":"Spatial AudioComponent: mirror lift (MirrorClick.wav)"}'
     - '// @input Component.AudioComponent heroShutterAudio {"hint":"Spatial AudioComponent: two-part shutter sound"}'
