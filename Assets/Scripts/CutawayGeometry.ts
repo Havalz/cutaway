@@ -60,10 +60,192 @@ function scaleColor(c: vec4, k: number): vec4 {
   return new vec4(c.x * k, c.y * k, c.z * k, c.w * k)
 }
 
+/** Halo width (× line width) for lines drawn as light: energy content. */
+export const LIGHT_GLOW = 2.4
+/** Halo width (× line width) for faint structure lines (shells, bodies, sockets). */
+export const STRUCT_GLOW = 1.3
+
+/**
+ * Cross-section of a line drawn as light: a hot (slightly whiter) centre, the core edges, then a
+ * soft halo that falls off to nothing. `c` = core half-width, `h` = halo width beyond the core.
+ */
+interface ProfileStop {
+  o: number
+  k: number
+  hot: number
+}
+function lightProfile(c: number, h: number): ProfileStop[] {
+  return [
+    {o: -(c + h), k: 0, hot: 0},
+    {o: -(c + 0.32 * h), k: 0.3, hot: 0},
+    {o: -c, k: 0.82, hot: 0},
+    {o: 0, k: 1, hot: 0.42},
+    {o: c, k: 0.82, hot: 0},
+    {o: c + 0.32 * h, k: 0.3, hot: 0},
+    {o: c + h, k: 0, hot: 0}
+  ]
+}
+
+/** `c` scaled by `k`, its hue pulled `hot` of the way toward white of the same strength (c.w). */
+export function lightColor(c: vec4, k: number, hot: number = 0): vec4 {
+  const w = c.w
+  return new vec4((c.x + (w - c.x) * hot) * k, (c.y + (w - c.y) * hot) * k, (c.z + (w - c.z) * hot) * k, w * k)
+}
+
+/** Unit offset directions for a polyline in XY (mitred at the joints, so the strip stays continuous). */
+function polySides(pts: vec2[]): vec3[] {
+  const n = pts.length
+  const closed = n > 2 && pts[0].distance(pts[n - 1]) < 1e-6
+  const segN = (a: vec2, b: vec2): vec2 | null => {
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const L = Math.sqrt(dx * dx + dy * dy)
+    return L > 1e-9 ? new vec2(-dy / L, dx / L) : null
+  }
+  const out: vec3[] = []
+  let last = new vec2(0, 1)
+  for (let i = 0; i < n; i++) {
+    let n1 = i > 0 ? segN(pts[i - 1], pts[i]) : closed ? segN(pts[n - 2], pts[0]) : null
+    let n2 = i < n - 1 ? segN(pts[i], pts[i + 1]) : closed ? segN(pts[0], pts[1]) : null
+    if (!n1) n1 = n2
+    if (!n2) n2 = n1
+    if (!n1 || !n2) {
+      out.push(new vec3(last.x, last.y, 0))
+      continue
+    }
+    const sx = n1.x + n2.x
+    const sy = n1.y + n2.y
+    const sl = Math.sqrt(sx * sx + sy * sy)
+    const m = sl > 1e-6 ? new vec2(sx / sl, sy / sl) : n2
+    const miter = 1 / Math.max(0.5, m.x * n1.x + m.y * n1.y)
+    last = m
+    out.push(new vec3(m.x * miter, m.y * miter, 0))
+  }
+  return out
+}
+
+/** Unit offset directions that turn a 3D polyline's flat side toward `eye` (local space). */
+function facingSides(pts: vec3[], eye: vec3 | null, facing: vec3 | null): {side: vec3[]; normal: vec3[]} {
+  const side: vec3[] = []
+  const normal: vec3[] = []
+  let prev = vec3.up()
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[Math.max(0, i - 1)]
+    const b = pts[Math.min(pts.length - 1, i + 1)]
+    const t = b.sub(a)
+    const v = facing ? facing : eye ? eye.sub(pts[i]) : vec3.forward()
+    let s = t.cross(v)
+    s = s.length > 1e-6 ? s.normalize() : prev
+    if (s.dot(prev) < 0 && i > 0) s = s.uniformScale(-1)
+    prev = s
+    side.push(s)
+    normal.push(v.length > 1e-6 ? v.normalize() : vec3.forward())
+  }
+  return {side, normal}
+}
+
 export class MeshKit {
   private data: number[] = []
   private indices: number[] = []
   private count = 0
+
+  /**
+   * @param glow 0 draws crisp lines (UI). Above 0, lines, arcs, polylines, rings and tubes are drawn
+   *             as light: hot core and a soft halo `glow` × the line width wide.
+   * @param eye  local-space viewer position: with glow on, tubes become flat ribbons facing it.
+   */
+  constructor(
+    private glow: number = 0,
+    private eye: vec3 | null = null
+  ) {}
+
+  /** A strip through `pts` with the light profile across it (`side[i]` = unit offset at pts[i]). */
+  private lightStrip(pts: vec3[], side: vec3[], normal: vec3 | vec3[], c: number, h: number, color: vec4): void {
+    const prof = lightProfile(c, h)
+    const P = prof.length
+    const base = this.count
+    for (let i = 0; i < pts.length; i++) {
+      const nrm = Array.isArray(normal) ? normal[i] : normal
+      for (const q of prof) this.vert(pts[i].add(side[i].uniformScale(q.o)), nrm, lightColor(color, q.k, q.hot))
+    }
+    for (let i = 0; i < pts.length - 1; i++) {
+      for (let k = 0; k < P - 1; k++) {
+        const a = base + i * P + k
+        const b = a + P
+        this.tri(a, b, b + 1)
+        this.tri(a, b + 1, a + 1)
+      }
+    }
+  }
+
+  /** Flat ribbon along a 3D polyline that faces the kit's eye, drawn as light. */
+  addRibbon(points: vec3[], radius: number, color: vec4, step: number = 4, glow: number = this.glow): void {
+    const pts = resample(points, step)
+    const f = facingSides(pts, this.eye, null)
+    this.lightStrip(pts, f.side, f.normal, radius, radius * Math.max(0.6, glow), color)
+  }
+
+  /**
+   * A travelling head: a hot, almost white core with a soft bloom in its colour (XY plane).
+   * Bright enough to read as the leading edge of light, small enough to stay precise.
+   */
+  addSparkXY(cx: number, cy: number, r: number, color: vec4, seg: number = 20): void {
+    const n = new vec3(0, 0, 1)
+    const zero = new vec4(0, 0, 0, 0)
+    const ring = (r0: number, r1: number, c0: vec4, c1: vec4) => {
+      const base = this.count
+      for (let s = 0; s <= seg; s++) {
+        const a = (s / seg) * Math.PI * 2
+        this.vert(new vec3(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0, 0), n, c0)
+        this.vert(new vec3(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1, 0), n, c1)
+      }
+      for (let s = 0; s < seg; s++) {
+        const i0 = base + s * 2
+        this.tri(i0, i0 + 1, i0 + 3)
+        this.tri(i0, i0 + 3, i0 + 2)
+      }
+    }
+    const c0 = this.vert(new vec3(cx, cy, 0), n, lightColor(color, 1.25, 0.75))
+    const base = this.count
+    for (let s = 0; s <= seg; s++) {
+      const a = (s / seg) * Math.PI * 2
+      this.vert(new vec3(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 0), n, lightColor(color, 0.9, 0.3))
+    }
+    for (let s = 0; s < seg; s++) this.tri(c0, base + s, base + s + 1)
+    ring(r, r * 2.6, lightColor(color, 0.9, 0.3), lightColor(color, 0.22))
+    ring(r * 2.6, r * 6, lightColor(color, 0.22), zero)
+  }
+
+  /** A comet streak from a (tail, dark) to b (head, hot), drawn as light (XY plane). */
+  addCometXY(ax: number, ay: number, bx: number, by: number, width: number, color: vec4, halo: number = width * LIGHT_GLOW): void {
+    const dx = bx - ax
+    const dy = by - ay
+    const len = Math.sqrt(dx * dx + dy * dy)
+    if (len < 1e-6) return
+    const side = new vec3(-dy / len, dx / len, 0)
+    const n = new vec3(0, 0, 1)
+    const prof = lightProfile(width / 2, halo)
+    const P = prof.length
+    const rows = [
+      {u: 0, k: 0},
+      {u: 0.55, k: 0.3},
+      {u: 0.88, k: 0.75},
+      {u: 1, k: 1.15}
+    ]
+    const base = this.count
+    for (const r of rows) {
+      const p = new vec3(ax + dx * r.u, ay + dy * r.u, 0)
+      for (const q of prof) this.vert(p.add(side.uniformScale(q.o)), n, lightColor(color, q.k * r.k, q.hot + (r.u > 0.9 ? 0.25 : 0)))
+    }
+    for (let i = 0; i < rows.length - 1; i++) {
+      for (let k = 0; k < P - 1; k++) {
+        const a = base + i * P + k
+        const b = a + P
+        this.tri(a, b, b + 1)
+        this.tri(a, b + 1, a + 1)
+      }
+    }
+  }
 
   vert(p: vec3, n: vec3, c: vec4): number {
     this.data.push(p.x, p.y, p.z, n.x, n.y, n.z, c.x, c.y, c.z, c.w)
@@ -75,6 +257,10 @@ export class MeshKit {
   }
 
   addTube(points: vec3[], radius: number, color: vec4, sides: number = 6, step: number = 4): void {
+    if (this.glow > 0 && this.eye) {
+      this.addRibbon(points, radius, color, step)
+      return
+    }
     const pts = resample(points, step)
     const frames = pathFrames(pts)
     const base = this.count
@@ -131,6 +317,18 @@ export class MeshKit {
 
   addRing(center: vec3, normal: vec3, r: number, width: number, color: vec4, seg: number = 48): void {
     const {u, v} = perpBasis(normal)
+    if (this.glow > 0) {
+      const pts: vec3[] = []
+      const side: vec3[] = []
+      for (let s = 0; s <= seg; s++) {
+        const a = (s / seg) * Math.PI * 2
+        const dir = u.uniformScale(Math.cos(a)).add(v.uniformScale(Math.sin(a)))
+        pts.push(center.add(dir.uniformScale(r)))
+        side.push(dir)
+      }
+      this.lightStrip(pts, side, normal, width / 2, width * this.glow, color)
+      return
+    }
     const base = this.count
     for (let s = 0; s < seg; s++) {
       const a = (s / seg) * Math.PI * 2
@@ -197,6 +395,18 @@ export class MeshKit {
   /** Arc of a ring from angle a0 to a1 (radians, CCW from +X). */
   addArcXY(cx: number, cy: number, r: number, width: number, a0: number, a1: number, color: vec4, seg: number = 24): void {
     const n = new vec3(0, 0, 1)
+    if (this.glow > 0) {
+      const pts: vec3[] = []
+      const side: vec3[] = []
+      for (let s = 0; s <= seg; s++) {
+        const a = a0 + ((a1 - a0) * s) / seg
+        const d = new vec3(Math.cos(a), Math.sin(a), 0)
+        pts.push(new vec3(cx, cy, 0).add(d.uniformScale(r)))
+        side.push(d)
+      }
+      this.lightStrip(pts, side, n, width / 2, width * this.glow, color)
+      return
+    }
     const base = this.count
     for (let s = 0; s <= seg; s++) {
       const a = a0 + ((a1 - a0) * s) / seg
@@ -264,6 +474,11 @@ export class MeshKit {
     const px = -dy / len
     const py = dx / len
     const n = new vec3(0, 0, 1)
+    if (this.glow > 0) {
+      const sd = new vec3(px, py, 0)
+      this.lightStrip([new vec3(ax, ay, 0), new vec3(bx, by, 0)], [sd, sd], n, width / 2, halo > 0 ? halo : width * this.glow, color)
+      return
+    }
     const quad = (o0: number, o1: number, c0: vec4, c1: vec4) => {
       const i = this.vert(new vec3(ax + px * o0, ay + py * o0, 0), n, c0)
       const j = this.vert(new vec3(bx + px * o0, by + py * o0, 0), n, c0)
@@ -284,6 +499,17 @@ export class MeshKit {
 
   /** Polyline in XY as a flat strip of constant width. */
   addPolylineXY(pts: vec2[], width: number, color: vec4): void {
+    if (this.glow > 0 && pts.length > 1) {
+      this.lightStrip(
+        pts.map((p) => new vec3(p.x, p.y, 0)),
+        polySides(pts),
+        new vec3(0, 0, 1),
+        width / 2,
+        width * this.glow,
+        color
+      )
+      return
+    }
     for (let i = 1; i < pts.length; i++) this.addLineXY(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y, width, color)
   }
 
@@ -326,15 +552,25 @@ export function setFade(mat: Material, k: number, alphaOnly: boolean = false): v
 }
 
 export interface GlowOpts {
+  /** Core half-width. */
   radius: number
   color: vec4
+  /** Outer edge of the soft glow (from the centre line). Default 4 × radius. */
   halo?: number
+  /** Kept for older callers; the light profile sets the halo's falloff. */
   haloAlpha?: number
   sides?: number
   step?: number
+  /** Local-space viewer position: the path is a flat ribbon of light turned toward it. */
+  eye?: vec3
+  /** Local-space direction to the viewer (for paths inside a plane that already faces the viewer). */
+  facing?: vec3
 }
 
-/** A glowing tube along a path; `setRange` reveals any arc-length window of it. */
+/**
+ * A line of light along a path (hot core, soft falloff) turned toward the viewer; `setRange`
+ * reveals any arc-length window of it. Without `eye` / `facing` it falls back to a plain tube.
+ */
 export class GlowPath {
   readonly so: SceneObject
   readonly mat: Material
@@ -348,41 +584,66 @@ export class GlowPath {
   private shownB = -1
 
   constructor(parent: SceneObject, name: string, material: Material, localPoints: vec3[], opts: GlowOpts) {
-    const sides = opts.sides ?? 6
     this.pts = resample(localPoints, opts.step ?? 3)
     for (let i = 1; i < this.pts.length; i++) this.cum.push(this.cum[i - 1] + this.pts[i].distance(this.pts[i - 1]))
     this.length = this.cum[this.cum.length - 1]
-    const frames = pathFrames(this.pts)
-    const layers: {r: number; c: vec4}[] = [{r: opts.radius, c: opts.color}]
-    if (opts.halo && opts.halo > 0) layers.push({r: opts.halo, c: scaleColor(opts.color, opts.haloAlpha ?? 0.22)})
-
     const data: number[] = []
-    const ringBase: number[] = []
-    let count = 0
-    for (const layer of layers) {
-      ringBase.push(count)
+    let ring = 0
+    const outer = opts.halo && opts.halo > opts.radius ? opts.halo : opts.radius * 4
+    if (opts.eye || opts.facing) {
+      // Flat light ribbon: one row of profile vertices per sample point.
+      const f = facingSides(this.pts, opts.eye ?? null, opts.facing ?? null)
+      const prof = lightProfile(opts.radius, outer - opts.radius)
+      ring = prof.length
       for (let i = 0; i < this.pts.length; i++) {
-        for (let k = 0; k < sides; k++) {
-          const ang = (k / sides) * Math.PI * 2
-          const dir = frames[i].n.uniformScale(Math.cos(ang)).add(frames[i].b.uniformScale(Math.sin(ang)))
-          const p = this.pts[i].add(dir.uniformScale(layer.r))
-          data.push(p.x, p.y, p.z, dir.x, dir.y, dir.z, layer.c.x, layer.c.y, layer.c.z, layer.c.w)
-          count++
+        for (const q of prof) {
+          const p = this.pts[i].add(f.side[i].uniformScale(q.o))
+          const c = lightColor(opts.color, q.k, q.hot)
+          const nn = f.normal[i]
+          data.push(p.x, p.y, p.z, nn.x, nn.y, nn.z, c.x, c.y, c.z, c.w)
         }
       }
-    }
-    for (let i = 0; i < this.pts.length - 1; i++) {
-      const block: number[] = []
-      for (const base of ringBase) {
-        for (let k = 0; k < sides; k++) {
-          const a = base + i * sides + k
-          const b = base + i * sides + ((k + 1) % sides)
-          const c = base + (i + 1) * sides + k
-          const d = base + (i + 1) * sides + ((k + 1) % sides)
-          block.push(a, b, c, b, d, c)
+      for (let i = 0; i < this.pts.length - 1; i++) {
+        const block: number[] = []
+        for (let k = 0; k < ring - 1; k++) {
+          const a = i * ring + k
+          const b = a + ring
+          block.push(a, b, b + 1, a, b + 1, a + 1)
+        }
+        this.blocks.push(block)
+      }
+    } else {
+      const sides = opts.sides ?? 6
+      const frames = pathFrames(this.pts)
+      const layers: {r: number; c: vec4}[] = [{r: opts.radius, c: opts.color}]
+      if (opts.halo && opts.halo > 0) layers.push({r: opts.halo, c: scaleColor(opts.color, opts.haloAlpha ?? 0.22)})
+      const ringBase: number[] = []
+      let count = 0
+      for (const layer of layers) {
+        ringBase.push(count)
+        for (let i = 0; i < this.pts.length; i++) {
+          for (let k = 0; k < sides; k++) {
+            const ang = (k / sides) * Math.PI * 2
+            const dir = frames[i].n.uniformScale(Math.cos(ang)).add(frames[i].b.uniformScale(Math.sin(ang)))
+            const p = this.pts[i].add(dir.uniformScale(layer.r))
+            data.push(p.x, p.y, p.z, dir.x, dir.y, dir.z, layer.c.x, layer.c.y, layer.c.z, layer.c.w)
+            count++
+          }
         }
       }
-      this.blocks.push(block)
+      for (let i = 0; i < this.pts.length - 1; i++) {
+        const block: number[] = []
+        for (const base of ringBase) {
+          for (let k = 0; k < sides; k++) {
+            const a = base + i * sides + k
+            const b = base + i * sides + ((k + 1) % sides)
+            const c = base + (i + 1) * sides + k
+            const d = base + (i + 1) * sides + ((k + 1) % sides)
+            block.push(a, b, c, b, d, c)
+          }
+        }
+        this.blocks.push(block)
+      }
     }
 
     this.mb = new MeshBuilder(LAYOUT)
@@ -444,30 +705,39 @@ export class GlowPath {
   }
 }
 
-/** Flat ribbon in the local XY plane whose sample points are rewritten each frame. */
+/** Flat line of light in the local XY plane whose sample points are rewritten each frame. */
 export class DynamicRibbon {
   readonly so: SceneObject
   readonly mat: Material
   private mb: MeshBuilder
+  private prof: ProfileStop[]
+  private cols: vec4[]
 
   constructor(
     parent: SceneObject,
     name: string,
     material: Material,
     private count: number,
-    private width: number,
-    private color: vec4
+    width: number,
+    color: vec4,
+    glow: number = LIGHT_GLOW
   ) {
+    this.prof = lightProfile(width / 2, width * glow)
+    this.cols = this.prof.map((q) => lightColor(color, q.k, q.hot))
+    const P = this.prof.length
     this.mb = new MeshBuilder(LAYOUT)
     this.mb.topology = MeshTopology.Triangles
     this.mb.indexType = MeshIndexType.UInt16
     const data: number[] = []
-    for (let i = 0; i < count * 2; i++) data.push(0, 0, 0, 0, 0, 1, color.x, color.y, color.z, color.w)
+    for (let i = 0; i < count; i++) for (const c of this.cols) data.push(0, 0, 0, 0, 0, 1, c.x, c.y, c.z, c.w)
     this.mb.appendVerticesInterleaved(data)
     const idx: number[] = []
     for (let i = 0; i < count - 1; i++) {
-      const a = i * 2
-      idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3)
+      for (let k = 0; k < P - 1; k++) {
+        const a = i * P + k
+        const b = a + P
+        idx.push(a, b, b + 1, a, b + 1, a + 1)
+      }
     }
     this.mb.appendIndices(idx)
     this.mb.updateMesh()
@@ -480,7 +750,7 @@ export class DynamicRibbon {
   }
 
   update(pointAt: (i: number) => vec3): void {
-    const c = this.color
+    const P = this.prof.length
     const pts: vec3[] = []
     for (let i = 0; i < this.count; i++) pts.push(pointAt(i))
     for (let i = 0; i < this.count; i++) {
@@ -488,25 +758,35 @@ export class DynamicRibbon {
       const b = pts[Math.min(this.count - 1, i + 1)]
       const t = b.sub(a)
       let perp = new vec3(-t.y, t.x, 0)
-      perp = perp.length > 1e-6 ? perp.normalize().uniformScale(this.width / 2) : new vec3(0, this.width / 2, 0)
-      const p0 = pts[i].add(perp)
-      const p1 = pts[i].sub(perp)
-      this.mb.setVertexInterleaved(i * 2, [p0.x, p0.y, p0.z, 0, 0, 1, c.x, c.y, c.z, c.w])
-      this.mb.setVertexInterleaved(i * 2 + 1, [p1.x, p1.y, p1.z, 0, 0, 1, c.x, c.y, c.z, c.w])
+      perp = perp.length > 1e-6 ? perp.normalize() : new vec3(0, 1, 0)
+      for (let k = 0; k < P; k++) {
+        const p = pts[i].add(perp.uniformScale(this.prof[k].o))
+        const c = this.cols[k]
+        this.mb.setVertexInterleaved(i * P + k, [p.x, p.y, p.z, 0, 0, 1, c.x, c.y, c.z, c.w])
+      }
     }
     this.mb.updateMesh()
   }
 }
 
+/** Cross-section of a trail: hot centre, soft edges (offsets × half-width). */
+const TRAIL_PROFILE = [
+  {o: -1, k: 0, hot: 0},
+  {o: -0.42, k: 0.5, hot: 0},
+  {o: 0, k: 1, hot: 0.4},
+  {o: 0.42, k: 0.5, hot: 0},
+  {o: 1, k: 0, hot: 0}
+]
 /**
- * A ribbon through 3D points that always turns its flat side to the viewer. Points are rewritten
- * every frame (a waveform travelling along the line of light). Root-local coordinates.
+ * A ribbon of light through 3D points that always turns its flat side to the viewer (hot centre,
+ * soft edges). Points are rewritten every frame (a waveform travelling along the line of light).
  */
 export class TrailRibbon {
   readonly so: SceneObject
   readonly mat: Material
   private mb: MeshBuilder
   private rmv: RenderMeshVisual
+  private cols: vec4[]
 
   constructor(
     parent: SceneObject,
@@ -514,18 +794,23 @@ export class TrailRibbon {
     material: Material,
     private count: number,
     private width: number,
-    private color: vec4
+    color: vec4
   ) {
+    const P = TRAIL_PROFILE.length
+    this.cols = TRAIL_PROFILE.map((q) => lightColor(color, q.k, q.hot))
     this.mb = new MeshBuilder(LAYOUT)
     this.mb.topology = MeshTopology.Triangles
     this.mb.indexType = MeshIndexType.UInt16
     const data: number[] = []
-    for (let i = 0; i < count * 2; i++) data.push(0, 0, 0, 0, 0, 1, color.x, color.y, color.z, color.w)
+    for (let i = 0; i < count * P; i++) data.push(0, 0, 0, 0, 0, 1, 0, 0, 0, 0)
     this.mb.appendVerticesInterleaved(data)
     const idx: number[] = []
     for (let i = 0; i < count - 1; i++) {
-      const a = i * 2
-      idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3)
+      for (let k = 0; k < P - 1; k++) {
+        const a = i * P + k
+        const b = a + P
+        idx.push(a, b, b + 1, a, b + 1, a + 1)
+      }
     }
     this.mb.appendIndices(idx)
     this.mb.updateMesh()
@@ -539,7 +824,7 @@ export class TrailRibbon {
 
   /** `pts` in parent-local space; `toViewer` is the direction to the camera; `alphas` taper the ends. */
   update(pts: vec3[], toViewer: vec3, alphas?: number[]): void {
-    const c = this.color
+    const P = TRAIL_PROFILE.length
     const n = pts.length
     for (let i = 0; i < this.count; i++) {
       const p = pts[Math.min(i, n - 1)]
@@ -548,10 +833,11 @@ export class TrailRibbon {
       let side = b.sub(a).cross(toViewer)
       side = side.length > 1e-6 ? side.normalize().uniformScale(this.width / 2) : new vec3(0, this.width / 2, 0)
       const k = alphas ? alphas[Math.min(i, alphas.length - 1)] : 1
-      const p0 = p.add(side)
-      const p1 = p.sub(side)
-      this.mb.setVertexInterleaved(i * 2, [p0.x, p0.y, p0.z, 0, 0, 1, c.x * k, c.y * k, c.z * k, c.w * k])
-      this.mb.setVertexInterleaved(i * 2 + 1, [p1.x, p1.y, p1.z, 0, 0, 1, c.x * k, c.y * k, c.z * k, c.w * k])
+      for (let j = 0; j < P; j++) {
+        const q = p.add(side.uniformScale(TRAIL_PROFILE[j].o))
+        const c = this.cols[j]
+        this.mb.setVertexInterleaved(i * P + j, [q.x, q.y, q.z, 0, 0, 1, c.x * k, c.y * k, c.z * k, c.w * k])
+      }
     }
     this.mb.updateMesh()
   }
@@ -573,7 +859,7 @@ export class UnitLine {
   constructor(parent: SceneObject, name: string, material: Material, width: number, color: vec4, halo: number = 0, shared?: Material, shape?: MeshKit) {
     let kit = shape
     if (!kit) {
-      kit = new MeshKit()
+      kit = new MeshKit(LIGHT_GLOW)
       kit.addLineXY(0, 0, 1, 0, width, color, halo)
     }
     const s = spawnMesh(parent, name, kit.build(), material, undefined, shared)

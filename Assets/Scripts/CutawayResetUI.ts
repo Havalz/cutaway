@@ -1,23 +1,16 @@
 import {Button} from "SpectaclesUIKit.lspkg/Scripts/Components/Button/Button"
 import Event from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import WorldCameraFinderProvider from "SpectaclesInteractionKit.lspkg/Providers/CameraProvider/WorldCameraFinderProvider"
+import {CapsuleGlow} from "./CutawayStationUI"
+import {applyType, setTextAlpha} from "./CutawayStyle"
 import {Pop} from "./CutawayTween"
-
-const FONT_SIZE_SCALE = 1.0
-type TextRole = "Button" | "Body" | "Caption"
-const TYPE_SCALE: Record<TextRole, {size: number; weight: number}> = {
-  Button: {size: 39, weight: 500},
-  Body: {size: 39, weight: 500},
-  Caption: {size: 38, weight: 500}
-}
-function applyTextRole(t: Text, role: TextRole): void {
-  t.size = TYPE_SCALE[role].size * FONT_SIZE_SCALE
-  ;(t as Text & {weight?: number}).weight = TYPE_SCALE[role].weight
-}
 
 /**
  * The "Reset" pill: floats low and slightly to the left of the user (body-locked on yaw),
  * so it is in view when looking down and out of the way when looking at the room.
+ * Styled like the chips: a hairline capsule of light with a faint fill and 85% white text,
+ * brightening when aimed at and pressing to 97%. Built at the chips' 110 cm design scale and
+ * scaled with distance, so its type and stroke match the chips exactly.
  */
 @component
 export class CutawayResetUI extends BaseScriptComponent {
@@ -50,28 +43,40 @@ export class CutawayResetUI extends BaseScriptComponent {
   deadzoneDeg: number = 40
   @ui.group_end
 
-  @ui.group_start("Style")
+  @ui.group_start("Style (matches the chips)")
   @input
   @hint("Pill label")
   label: string = "Reset"
 
   @input
-  @hint("UIKit style for the pill")
-  @widget(
-    new ComboBoxWidget([
-      new ComboBoxItem("PrimaryNeutral", "PrimaryNeutral"),
-      new ComboBoxItem("Primary", "Primary"),
-      new ComboBoxItem("Secondary", "Secondary"),
-      new ComboBoxItem("Special", "Special")
-    ])
-  )
-  style: string = "PrimaryNeutral"
+  @hint("Additive glow material for the outline (the same one the chips use)")
+  glowMaterial: Material
+
+  @input
+  @hint("Pill width at the design scale (cm); its height matches the chips")
+  @widget(new SliderWidget(6, 16, 0.5))
+  pillWidth: number = 9
+
+  @input
+  @hint("Pill height at the design scale (cm) — the chips' row height")
+  @widget(new SliderWidget(2.4, 5, 0.1))
+  pillHeight: number = 3.2
+
+  @input
+  @hint("Distance (cm) at which the pill is shown 1:1, as for the chips")
+  @widget(new SliderWidget(60, 200, 5))
+  designDistance: number = 110
   @ui.group_end
 
   readonly onResetPressed = new Event<void>()
+  /** Fired on every pinch of the pill (world position of the pill). */
+  readonly onPinch = new Event<vec3>()
 
   private holder: SceneObject
   private pop: Pop
+  private glow: CapsuleGlow | null = null
+  private btn: Button
+  private visualMasked = false
   private camTransform: Transform | null = null
   private placed = false
   private anchorDir: vec3 = new vec3(0, 0, -1)
@@ -84,8 +89,16 @@ export class CutawayResetUI extends BaseScriptComponent {
     const so = global.scene.createSceneObject("ResetPill")
     so.setParent(this.holder)
     const btn = so.createComponent(Button.getTypeName()) as Button
-    btn.setVariant({theme: "SnapOS2", shape: "Capsule", style: this.style})
-    btn.size = new vec3(8, 2.8, 1)
+    // Ghost: no fill of its own; its visual is masked and the outline is drawn with light instead.
+    btn.setVariant({theme: "SnapOS2", shape: "Capsule", style: "Ghost"})
+    btn.size = new vec3(this.pillWidth, this.pillHeight, 1)
+    this.btn = btn
+
+    if (this.glowMaterial) {
+      this.glow = new CapsuleGlow(so, "ResetGlow", this.glowMaterial, this.pillHeight)
+      this.glow.setShape(this.pillWidth, this.pillHeight)
+      this.glow.setOpacity(1)
+    }
 
     const labelSo = global.scene.createSceneObject("ButtonLabel")
     labelSo.setParent(so)
@@ -93,20 +106,34 @@ export class CutawayResetUI extends BaseScriptComponent {
     const t = labelSo.createComponent("Component.Text") as Text
     t.text = this.label
     t.depthTest = true
-    applyTextRole(t, "Button")
+    applyType(t, "ui")
+    setTextAlpha(t, 1)
     t.horizontalAlignment = HorizontalAlignment.Center
     t.verticalAlignment = VerticalAlignment.Center
     t.horizontalOverflow = HorizontalOverflow.Overflow
     t.verticalOverflow = VerticalOverflow.Overflow
-    t.layoutRect = Rect.create(-3.7, 3.7, -1.2, 1.2)
+    const hw = this.pillWidth / 2 - 0.3
+    t.layoutRect = Rect.create(-hw, hw, -1.2, 1.2)
 
-    this.pop = new Pop(this.holder, vec3.one(), true)
-    btn.onTriggerDown.add(() => this.pop.setPressed(true))
+    this.pop = new Pop(this.holder, vec3.one(), true, {
+      onAmount: (a) => {
+        if (this.glow) this.glow.setOpacity(a)
+        setTextAlpha(t, a)
+      }
+    })
+    btn.onTriggerDown.add(() => {
+      this.pop.setPressed(true)
+      this.onPinch.invoke(so.getTransform().getWorldPosition())
+    })
     btn.onTriggerUp.add(() => {
       this.pop.setPressed(false)
       this.onResetPressed.invoke()
     })
-    btn.onHoverExit.add(() => this.pop.setPressed(false))
+    btn.onHoverEnter.add(() => this.glow && this.glow.setHover(true))
+    btn.onHoverExit.add(() => {
+      this.pop.setPressed(false)
+      if (this.glow) this.glow.setHover(false)
+    })
 
     this.createEvent("OnStartEvent").bind(() => {
       this.camTransform = WorldCameraFinderProvider.getInstance().getTransform()
@@ -114,9 +141,19 @@ export class CutawayResetUI extends BaseScriptComponent {
     this.createEvent("UpdateEvent").bind(() => this.onUpdate())
   }
 
+  /** Masks the UIKit button's own visual once UIKit has created it. */
+  private maskVisual(): void {
+    const v = this.btn.visual
+    if (!v || !v.renderMeshVisual) return
+    v.renderMeshVisual.mainPass.colorMask = new vec4b(false, false, false, false)
+    this.visualMasked = true
+  }
+
   private onUpdate(): void {
     const dt = getDeltaTime()
+    if (!this.visualMasked) this.maskVisual()
     this.pop.update(dt)
+    if (this.glow) this.glow.update(dt)
     if (!this.camTransform) return
     const camPos = this.camTransform.getWorldPosition()
     const look = this.camTransform.forward.uniformScale(-1)
@@ -143,5 +180,8 @@ export class CutawayResetUI extends BaseScriptComponent {
     tr.setWorldPosition(p)
     const toCam = camPos.sub(p)
     if (toCam.length > 1e-3) tr.setWorldRotation(quat.lookAt(toCam.normalize(), vec3.up()))
+    // Same angular size as the chips: design scale at 110 cm, scaled with distance.
+    const s = Math.min(6, Math.max(0.3, toCam.length / this.designDistance))
+    this.pop.setBaseScale(vec3.one().uniformScale(s))
   }
 }

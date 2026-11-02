@@ -17,9 +17,10 @@ export interface StationVisual {
 
 /**
  * A capsule drawn with light: a hairline outline plus a faint fill. Its width changes by moving
- * the two end caps and scaling the straight middle, so only transforms animate.
+ * the two end caps and scaling the straight middle, so only transforms animate. Shared by the
+ * chips, questions, Stop and the Reset pill so every pill reads the same.
  */
-class CapsuleGlow {
+export class CapsuleGlow {
   readonly root: SceneObject
   readonly mat: Material
   private left: SceneObject

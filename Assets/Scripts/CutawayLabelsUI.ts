@@ -13,6 +13,14 @@ interface Label {
   dot: SceneObject | null
   leaderLen: number
   drawT: number
+  /** Caption with a coloured key word: the text with `{A}` where the key word's alpha goes. */
+  rich: string | null
+  richA: string
+}
+
+function alphaHex(a: number): string {
+  const n = Math.max(0, Math.min(255, Math.round(a * 255)))
+  return (n < 16 ? "0" : "") + n.toString(16).toUpperCase()
 }
 
 /**
@@ -117,7 +125,11 @@ export class CutawayLabelsUI extends BaseScriptComponent {
       this.captions.push(c)
     }
     c.text.enableRichText = true
-    c.text.text = text
+    // The key word's colour tag (#RRGGBB) gets an alpha byte that follows the caption's fade, so
+    // the coloured word fades in and out with the white words around it.
+    c.rich = /<color=#[0-9A-Fa-f]{6}>/.test(text) ? text.replace(/<color=(#[0-9A-Fa-f]{6})>/g, "<color=$1{A}>") : null
+    c.richA = ""
+    c.text.text = c.rich ? c.rich.split("{A}").join("00") : text
     const tr = c.so.getTransform()
     tr.setWorldPosition(topCenter)
     tr.setLocalScale(vec3.one().uniformScale(this.scaleAt(topCenter)))
@@ -146,10 +158,10 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     return out
   }
 
-  /** The caption currently showing (for tests / tools), or null. */
+  /** The caption currently showing, as plain words (for tests / tools), or null. */
   captionText(): string | null {
     const c = this.captions.find((x) => x.fader.isShown)
-    return c ? c.text.text : null
+    return c ? c.text.text.replace(/<[^>]*>/g, "") : null
   }
 
   // ---------------- internals ----------------
@@ -167,7 +179,7 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     t.verticalOverflow = VerticalOverflow.Overflow
     t.layoutRect = Rect.create(-this.maxWidth / 2, this.maxWidth / 2, -3, 3)
     so.enabled = false
-    return {so, text: t, fader: new Fader(false), leader: null, leaderMat: null, dot: null, leaderLen: 0, drawT: 0}
+    return {so, text: t, fader: new Fader(false), leader: null, leaderMat: null, dot: null, leaderLen: 0, drawT: 0, rich: null, richA: ""}
   }
 
   private clearCallout(label: Label): void {
@@ -222,6 +234,13 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     if (!l.so.enabled) return
     const a = l.fader.update(dt)
     setTextAlpha(l.text, a)
+    if (l.rich) {
+      const h = alphaHex(a)
+      if (h !== l.richA) {
+        l.richA = h
+        l.text.text = l.rich.split("{A}").join(h)
+      }
+    }
     this.face(l.so)
     if (l.leader && l.leaderMat) {
       // The leader draws out from the part (250 ms), then the words fade in.

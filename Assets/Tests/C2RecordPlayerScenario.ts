@@ -6,7 +6,8 @@ import {angleDeg, cleanStart, expectOrder, getMain, isEnabled, press, startGuara
 /**
  * Done criterion 2: pinching the "Record player" chip shows its question; pinching the
  * guaranteed question plays bubble at the needle → line of light to the speaker → cone moves →
- * chime from the speaker. From the start spot (≥3 m away) record player and speaker are both in view.
+ * warm tone from the speaker. From the start spot (≥3 m away) record player and speaker are both in view.
+ * Sound: a tick on each pinch, the scan sweep on the chip, the needle-drop crackle at the stylus.
  */
 @component
 export class C2RecordPlayerScenario extends Scenario {
@@ -23,16 +24,25 @@ export class C2RecordPlayerScenario extends Scenario {
     expect(flatDist).toBeGreaterThan(300)
     expect(angleDeg(rp.sub(cam), sp.sub(cam)) < 20).toBe(true)
 
+    const s0 = main.getSoundLog().length
+    const sounds = (name: string) => main.getSoundLog().slice(s0).filter((s) => s.name === name)
     await startGuaranteedQuestion(main, "recordPlayer")
     const v = main.getStationVisual("recordPlayer")
     expect(v.chip).toBe(false)
     expect(v.questions[0]).toBe(true)
     expect(v.stop).toBe(true)
+    // A soft tick on every pinch (chip, question), and the chip pinch plays the scan sweep.
+    expect(sounds("tick").length >= 2).toBe(true)
+    expect(sounds("scan").length).toBe(1)
 
-    // 1. Magnify bubble opens at the needle (beat 2; beat 1 is the ghost shell, ~3.4 s).
+    // 1. Magnify bubble opens at the needle (beat 2; beat 1 is the ghost shell, ~3.4 s),
+    //    with the needle-drop crackle played from the stylus.
     await waitForPhase(main, "bubble", 5000)
     await sleep(500)
     expect(isEnabled("MagnifyBubble")).toBe(true)
+    const crackle = sounds("crackle")
+    expect(crackle.length).toBe(1)
+    expect(crackle[0].position.distance(main.getMarkerPosition("needle")) < 5).toBe(true)
 
     // 2. Line of light along the shelf (beat 4, ~6.8 s after the bubble).
     await waitForPhase(main, "line", 9000)
@@ -46,6 +56,8 @@ export class C2RecordPlayerScenario extends Scenario {
     expect(chimes.length > 0).toBe(true)
     const chimePos = chimes[chimes.length - 1].position
     expect(chimePos.distance(sp) < 15).toBe(true)
+    // The warm tone (it replaced the chime) is the speaker's sound.
+    expect(sounds("tone").length).toBe(1)
     const audioSo = findSceneObjectByName("ChimeSpeaker")
     const audio = audioSo.getComponent("Component.AudioComponent") as AudioComponent
     expect(audio.isPlaying()).toBe(true)

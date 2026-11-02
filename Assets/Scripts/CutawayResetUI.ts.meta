@@ -29,12 +29,15 @@
   PackagePolicy: CanBeUnpacked
   ScriptInputsHidden:
     deadzoneDeg: false
+    designDistance: false
     downCm: false
     followSpeed: false
     forwardCm: false
+    glowMaterial: false
     label: false
     leftCm: false
-    style: false
+    pillHeight: false
+    pillWidth: false
   ScriptTypesHidden:
     {}
   ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
@@ -50,7 +53,10 @@
       followSpeed: !<float> 5.000000
       deadzoneDeg: !<float> 40.000000
       label: Reset
-      style: PrimaryNeutral
+      glowMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
+      pillWidth: !<float> 9.000000
+      pillHeight: 3.200000
+      designDistance: !<float> 110.000000
   ScriptTypes:
     -
       {}
@@ -64,7 +70,10 @@
     - '// @input float followSpeed = 5 {"hint":"How quickly the pill catches up when the user turns (1/s)", "widget":"slider", "min":1, "max":15, "step":0.5}'
     - '// @input float deadzoneDeg = 40 {"hint":"The pill stays put until the head turns this far (deg) away from it, so glancing toward it never pushes it away", "widget":"slider", "min":10, "max":90, "step":1}'
     - '// @ui {"widget":"group_end"}'
-    - '// @ui {"widget":"group_start", "label":"Style"}'
+    - '// @ui {"widget":"group_start", "label":"Style (matches the chips)"}'
     - '// @input string label = "Reset" {"hint":"Pill label"}'
-    - '// @input string style = "PrimaryNeutral" {"hint":"UIKit style for the pill", "widget":"combobox", "values":[{"label":"PrimaryNeutral", "value":"PrimaryNeutral"}, {"label":"Primary", "value":"Primary"}, {"label":"Secondary", "value":"Secondary"}, {"label":"Special", "value":"Special"}]}'
+    - '// @input Asset.Material glowMaterial {"hint":"Additive glow material for the outline (the same one the chips use)"}'
+    - '// @input float pillWidth = 9 {"hint":"Pill width at the design scale (cm); its height matches the chips", "widget":"slider", "min":6, "max":16, "step":0.5}'
+    - "// @input float pillHeight = 3.2 {\"hint\":\"Pill height at the design scale (cm) — the chips' row height\", \"widget\":\"slider\", \"min\":2.4, \"max\":5, \"step\":0.1}"
+    - '// @input float designDistance = 110 {"hint":"Distance (cm) at which the pill is shown 1:1, as for the chips", "widget":"slider", "min":60, "max":200, "step":5}'
     - '// @ui {"widget":"group_end"}'

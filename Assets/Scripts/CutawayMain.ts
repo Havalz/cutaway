@@ -99,7 +99,7 @@ export class CutawayMain extends BaseScriptComponent {
   modelMaterial: Material
 
   @input
-  @hint("Spatial AudioComponent placed at the speaker, holding the chime")
+  @hint("Spatial AudioComponent placed at the speaker: the short warm tone as the waves leave it")
   chimeAudio: AudioComponent
 
   @input
@@ -128,6 +128,21 @@ export class CutawayMain extends BaseScriptComponent {
   @allowUndefined
   @hint("Spatial AudioComponent at the lamp: soft rising power-up tone as the light comes on")
   powerUpAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent at the stylus: the needle-drop crackle")
+  crackleAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent for the soft tick on every pinch (moved to the pinched control)")
+  tickAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent for the scan sweep (moved to the scanned object)")
+  scanAudio: AudioComponent
   @ui.group_end
 
   @ui.group_start("Looking")
@@ -152,6 +167,7 @@ export class CutawayMain extends BaseScriptComponent {
   private static readonly LINE_UP_DEG = 4
   private phaseLog: string[] = []
   private chimeLog: {time: number; position: vec3}[] = []
+  private soundLog: {name: string; time: number; position: vec3}[] = []
 
   onAwake(): void {
     this.stations = [
@@ -159,7 +175,7 @@ export class CutawayMain extends BaseScriptComponent {
       {key: "camera", ui: this.cameraUI, target: this.cameraMarker, mode: "rest", explained: false, armed: true},
       {key: "lamp", ui: this.lampUI, target: this.lampMarker, mode: "rest", explained: false, armed: true}
     ]
-    for (const a of [this.chimeAudio, this.clickAudio, this.powerUpAudio]) {
+    for (const a of [this.chimeAudio, this.clickAudio, this.powerUpAudio, this.crackleAudio, this.tickAudio, this.scanAudio]) {
       if (!a) continue
       try {
         a.playbackMode = Audio.PlaybackMode.LowLatency
@@ -179,9 +195,13 @@ export class CutawayMain extends BaseScriptComponent {
       s.ui.onQuestionPressed.add((q) => this.onQuestion(i, q))
       s.ui.onStopPressed.add(() => this.onStop(i))
       s.ui.onDotPressed.add(() => this.onDot(i))
+      // Sound comes from where the event happens: the pinched control, the scanned object.
+      s.ui.onPinch.add((p) => this.playAt("tick", this.tickAudio, p))
+      s.ui.onScan.add((c) => this.playAt("scan", this.scanAudio, c))
       this.setMode(i, "rest")
     })
     this.resetUI.onResetPressed.add(() => this.resetAll())
+    this.resetUI.onPinch.add((p) => this.playAt("tick", this.tickAudio, p))
     print("Cutaway ready: 3 stations")
   }
 
@@ -290,6 +310,7 @@ export class CutawayMain extends BaseScriptComponent {
       playChime: () => this.playChime(),
       playClick: () => this.playClick(),
       playPowerUp: () => this.playPowerUp(),
+      playCrackle: () => this.playAt("crackle", this.crackleAudio, this.pos(this.needleMarker)),
       coneOverride: this.coneModel ?? null,
       caption: (text) => this.labelsUI.setCaption(text, text ? s.ui.getCaptionAnchor() : undefined),
       bounds: s.ui.getBounds(),
@@ -347,8 +368,20 @@ export class CutawayMain extends BaseScriptComponent {
     }
     if (this.chimeAudio.isPlaying()) this.chimeAudio.stop(false)
     this.chimeAudio.play(1)
-    this.chimeLog.push({time: getTime(), position: this.chimeAudio.getSceneObject().getTransform().getWorldPosition()})
+    const p = this.chimeAudio.getSceneObject().getTransform().getWorldPosition()
+    this.chimeLog.push({time: getTime(), position: p})
+    this.soundLog.push({name: "tone", time: getTime(), position: p})
     this.log("chime")
+  }
+
+  /** Play a one-shot spatial sound from `p` (its AudioComponent is moved there first). */
+  private playAt(name: string, audio: AudioComponent, p: vec3): void {
+    if (!audio) return
+    const so = audio.getSceneObject()
+    so.getTransform().setWorldPosition(p)
+    if (audio.isPlaying()) audio.stop(false)
+    audio.play(1)
+    this.soundLog.push({name, time: getTime(), position: p})
   }
 
   private playClick(): void {
@@ -500,6 +533,11 @@ export class CutawayMain extends BaseScriptComponent {
 
   getChimeLog(): {time: number; position: vec3}[] {
     return this.chimeLog.slice()
+  }
+
+  /** Every one-shot sound played (tick, scan, crackle, tone), with where it came from. */
+  getSoundLog(): {name: string; time: number; position: vec3}[] {
+    return this.soundLog.slice()
   }
 
   getMarkerPosition(name: "recordPlayer" | "needle" | "speaker" | "camera" | "lamp"): vec3 {

@@ -24,6 +24,24 @@ export const TEXT_ALPHA = 0.85
 export const STROKE_ALPHA = 0.5
 export const FILL_ALPHA = 0.06
 
+function hex2(v: number): string {
+  const n = Math.max(0, Math.min(255, Math.round(v * 255)))
+  return (n < 16 ? "0" : "") + n.toString(16).toUpperCase()
+}
+
+/** "#RRGGBB" for a colour (Text rich-text colour tags). */
+export function hexOf(c: vec4): string {
+  return "#" + hex2(c.x) + hex2(c.y) + hex2(c.z)
+}
+
+/**
+ * A caption whose one key word (marked *like this*) takes its energy colour. Text renders it with
+ * enableRichText (`<color=#RRGGBB>word</color>`); every other word stays white.
+ */
+export function keyWord(text: string, color: vec4): string {
+  return text.replace(/\*([^*]+)\*/, (_m: string, w: string) => "<color=" + hexOf(color) + ">" + w + "</color>")
+}
+
 /** Additive "ink": color scaled by k (additive blending ignores alpha, so scale rgb too). */
 export function ink(c: vec4, k: number): vec4 {
   return new vec4(c.x * k, c.y * k, c.z * k, c.w * k)

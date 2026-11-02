@@ -108,3 +108,6 @@ This part is for you, after CLAD finishes.
 5. **Label what you know.** Write "logic proven" next to anything the tests and preview show working, and "feel unproven" next to anything only real glasses could tell you (comfort over time, real hand tracking, real recognition).
 6. **Fix with design notes, not code.** Tell your agent what to change in design terms, for example: "Move the step card 15 cm lower and next to the pan. Make the Next button twice as big. Re-run the tests." If a fix takes under a minute, like nudging a panel, do it yourself in the scene.
 7. **Submit.** Record a video under 3 minutes of your Lens in the preview, public on YouTube. Make your repo public with your Lens Studio project and this `devpost/` folder. Details are on the hackathon site: https://learn-specs.devpost.com/resources
+
+## Stage 2: Bring it closer (added after the first build)
+The camera gets a hands-on second stage: a 3x copy of the DSLR flies from the real camera to the round coffee table, comes apart with a slider, and lets the user focus a live, computed light path and take a photo. The full spec and its done criteria (H1–H7) are in `camera-hero.md`. The record player and the lamp may get the same stage later; they are out of scope for now.

@@ -6,13 +6,14 @@
  * Every effect object lives under `ctx.root`, whose world position is the object's dot anchor,
  * so CutawayMain can collapse the whole explanation into that dot by scaling the root to zero.
  *
- * Explanations told in beats (the record player) show one caption per beat; only the current
- * beat is bright and earlier beats dim to 30% as context.
+ * Explanations are told in beats with one caption each; only the current beat is bright and
+ * earlier lines and paths dim to 30% as context. A magnify bubble exits fully when its beat ends.
+ * Lines are drawn as light (hot core, soft falloff); travelling heads carry a brighter spark.
  */
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
-import {DynamicRibbon, GlowPath, MeshKit, setFade, spawnMesh, Spawned, TrailRibbon, UnitLine} from "./CutawayGeometry"
-import {ENERGY, ink, UI_WHITE, wave} from "./CutawayStyle"
-import {clamp01, easeInOutCubic, easeOutCubic, faceToward, Pop} from "./CutawayTween"
+import {DynamicRibbon, GlowPath, LIGHT_GLOW, MeshKit, setFade, spawnMesh, Spawned, STRUCT_GLOW, TrailRibbon, UnitLine} from "./CutawayGeometry"
+import {ENERGY, ink, keyWord, UI_WHITE, wave} from "./CutawayStyle"
+import {clamp01, easeIn, easeInOutCubic, easeOutCubic, faceToward, Pop} from "./CutawayTween"
 
 export interface ExplainContext {
   root: SceneObject
@@ -26,6 +27,8 @@ export interface ExplainContext {
   playClick?: () => void
   /** Soft rising power-up tone, played from the lamp as its light comes on. */
   playPowerUp?: () => void
+  /** Needle-drop crackle, played at the stylus. */
+  playCrackle?: () => void
   coneOverride?: SceneObject | null
   /** Show this beat's caption under the question (null hides it). */
   caption: (text: string | null) => void
@@ -117,9 +120,9 @@ export abstract class Explanation {
   // ---------------- Beats ----------------
 
   /**
-   * Declare the beats: start times and one caption each (nine words or fewer). Each beat start
-   * logs "beatN", clears the previous beat's labels and swaps the caption; the caption clears
-   * at `end`.
+   * Declare the beats: start times and one caption each (nine words or fewer; the key word marked
+   * with `keyWord` takes its energy colour). Each beat start logs "beatN", clears the previous
+   * beat's labels and swaps the caption; the caption clears at `end`.
    */
   protected beats(starts: number[], captions: (string | null)[], end: number): void {
     this.beatStarts = starts.slice()
@@ -198,15 +201,49 @@ export abstract class Explanation {
     return p
   }
 
-  /** Glow path from world points (converted to root-local). */
+  /** Line of light along world points (converted to root-local), turned toward the viewer. */
   protected path(name: string, worldPts: vec3[], radius: number, color: vec4, halo: number = radius * 3): GlowPath {
-    return new GlowPath(this.ctx.root, name, this.ctx.glowMat, worldPts.map((p) => this.L(p)), {radius, color, halo, haloAlpha: 0.22, sides: 6, step: 3})
+    return new GlowPath(this.ctx.root, name, this.ctx.glowMat, worldPts.map((p) => this.L(p)), {radius, color, halo, step: 3, eye: this.L(this.ctx.camPos())})
+  }
+
+  /** A kit whose lines are drawn as light (`glow` = halo width × line width; 0 = a crisp UI line). */
+  protected kit(glow: number = LIGHT_GLOW, eye: vec3 | null = null): MeshKit {
+    return new MeshKit(glow, eye)
+  }
+
+  /** The viewer's position in `parent`'s local space (for flat ribbons that face the viewer). */
+  protected eyeIn(parent: SceneObject): vec3 {
+    return parent.getTransform().getInvertedWorldTransform().multiplyPoint(this.ctx.camPos())
+  }
+
+  /**
+   * A travelling head: a hot core with a soft bloom, flat in the parent's XY plane. `billboard`
+   * keeps it turned to the viewer (for heads that travel through 3D rather than in a facing plane).
+   * Starts disabled; the caller moves it and turns it on while the light travels.
+   */
+  protected spark(parent: SceneObject, name: string, r: number, color: vec4, beat: number, alpha: () => number = () => 1, billboard: boolean = false): SceneObject {
+    const so = global.scene.createSceneObject(name)
+    so.setParent(parent)
+    const k = new MeshKit()
+    k.addSparkXY(0, 0, r, color)
+    const m = this.flat(so, name + "Mesh", k)
+    this.inkBeat(m.mat, beat, alpha)
+    so.enabled = false
+    if (billboard) {
+      const cam = this.ctx.camPos()
+      this.tick(() => {
+        if (so.enabled) so.getTransform().setWorldRotation(faceToward(cam.sub(so.getTransform().getWorldPosition())))
+      })
+    }
+    return so
   }
 
   /**
    * Magnify bubble: thin double rim and a faint inner glow (rim radius 12 bubble units, the face
    * scaled by `S`), always facing the viewer. It grows out of `spot` to `target` (world) in 300 ms
    * from `at`, then a hairline leader runs from `spot` to the rim. Contents go under `face`.
+   * At `until` (when its last beat ends) it exits fully: it shrinks back into `spot` (220 ms,
+   * ease-in) and switches off, so at most one bubble is ever on screen.
    */
   protected magnifyBubble(
     name: string,
@@ -214,7 +251,8 @@ export abstract class Explanation {
     target: vec3,
     S: number,
     beat: number,
-    at: number
+    at: number,
+    until: number = Number.POSITIVE_INFINITY
   ): {face: SceneObject; open: () => number; R: number; toWorld: (x: number, y: number) => vec3} {
     const R = 12
     const cam = this.ctx.camPos()
@@ -222,7 +260,8 @@ export abstract class Explanation {
     const face = this.node(name + "Face", vec3.zero(), bubble)
     face.getTransform().setLocalScale(vec3.one().uniformScale(S))
     bubble.getTransform().setLocalScale(vec3.one().uniformScale(1e-4))
-    const open = () => easeOutCubic((this.t - at) / 0.3)
+    const exit = () => 1 - easeIn((this.t - until) / 0.22)
+    const open = () => easeOutCubic((this.t - at) / 0.3) * exit()
     const fk = new MeshKit()
     fk.addArcXY(0, 0, R, 0.2, 0, Math.PI * 2, ink(UI_WHITE, 0.85), 96)
     fk.addArcXY(0, 0, R - 0.55, 0.1, 0, Math.PI * 2, ink(UI_WHITE, 0.4), 96)
@@ -233,12 +272,19 @@ export abstract class Explanation {
     const hair = this.hairAt(spot)
     const rimPt = target.add(spot.sub(target).normalize().uniformScale(R * S))
     const leader = this.path(name + "Leader", [spot, rimPt], hair * 0.6, ink(UI_WHITE, 0.5), hair * 1.5)
-    const leaderIn = () => easeOutCubic((this.t - at - 0.3) / 0.25)
+    const leaderIn = () => easeOutCubic((this.t - at - 0.3) / 0.25) * exit()
     this.inkBeat(leader.mat, beat, leaderIn)
     this.tick(() => {
+      if (this.t >= until + 0.25) {
+        if (bubble.enabled) {
+          bubble.enabled = false
+          leader.setRange(0, 0)
+        }
+        return
+      }
       const k = open()
       const lk = leaderIn()
-      if (lk > 0) leader.setRange(0, lk)
+      if (this.t > at + 0.3) leader.setRange(0, lk > 0.01 ? lk : 0)
       const tr = bubble.getTransform()
       tr.setLocalScale(vec3.one().uniformScale(Math.max(1e-4, k)))
       tr.setLocalPosition(this.L(vec3.lerp(spot, target, k)))
@@ -263,12 +309,12 @@ export abstract class Explanation {
     const ax = X.uniformScale(h.x)
     const ay = Y.uniformScale(h.y)
     const az = Z.uniformScale(h.z)
-    const edges = new MeshKit()
+    const edges = this.kit(STRUCT_GLOW, this.eyeIn(shell))
     edges.addBoxEdges(vec3.zero(), ax, ay, az, r, ink(UI_WHITE, 0.2))
     const e = this.glow(shell, "ShellEdges", edges)
     this.inkBeat(e.mat, beat, this.ramp(at + 0.15, 0.3))
     const corners = this.node("ShellCorners", vec3.zero(), shell)
-    const ck = new MeshKit()
+    const ck = this.kit(STRUCT_GLOW, this.eyeIn(corners))
     const arm = (v: number) => Math.max(1.2, v * 0.3)
     const c = ink(UI_WHITE, 0.6)
     for (const sx of [-1, 1])
@@ -319,11 +365,11 @@ export class RecordPlayerExplanation extends Explanation {
     this.beats(
       B,
       [
-        "The groove is the sound, carved as a wiggle.",
-        "The needle rides the wiggle and shakes.",
-        "A magnet and coil turn shaking into signal.",
-        "The signal is boosted and sent to the speaker.",
-        "The cone pushes air. That's what you hear."
+        keyWord("The groove is the sound, carved as a *wiggle*.", AMBER),
+        keyWord("The needle rides the wiggle and *shakes*.", AMBER),
+        keyWord("A magnet and coil turn shaking into *signal*.", SIGNAL),
+        keyWord("The *signal* is boosted and sent to the speaker.", SIGNAL),
+        keyWord("The cone pushes *air*. That's what you hear.", AMBER)
       ],
       END
     )
@@ -340,7 +386,7 @@ export class RecordPlayerExplanation extends Explanation {
     const spin = this.node("Platter", P)
     const disc = this.node("PlatterDisc", vec3.zero(), spin)
     const tilt = quat.angleAxis(-Math.PI / 2, vec3.right())
-    const pk = new MeshKit()
+    const pk = this.kit()
     pk.addArcXY(0, 0, Rp, hair * 2, 0, Math.PI * 2, ink(UI_WHITE, 0.32), 96)
     pk.addArcXY(0, 0, Rp, hair * 2.6, 0, 0.75, ink(UI_WHITE, 0.95), 16)
     pk.addArcXY(0, 0, 4, hair * 1.6, 0, Math.PI * 2, ink(UI_WHITE, 0.22), 40)
@@ -348,7 +394,7 @@ export class RecordPlayerExplanation extends Explanation {
     const pm = this.glow(disc, "PlatterRing", pk)
     this.inkBeat(pm.mat, 0, this.ramp(B[0] + 0.25))
     // The groove: one turn of the spiral, its wiggle exaggerated so it reads from the room.
-    const gk = new MeshKit()
+    const gk = this.kit()
     const gpts: vec2[] = []
     for (let i = 0; i <= 240; i++) {
       const th = (i / 240) * Math.PI * 2
@@ -362,6 +408,79 @@ export class RecordPlayerExplanation extends Explanation {
     this.tick((t) => disc.getTransform().setLocalRotation(tilt.multiply(quat.angleAxis(-RPM * t, vec3.forward()))))
     const grooveFront = P.add(toUser.uniformScale(Rg)).add(up.uniformScale(0.3))
     this.cue(B[0] + 0.9, () => this.label("groove", "Groove", grooveFront.add(right.uniformScale(-(Rp + 10))).add(toUser.uniformScale(4)), grooveFront))
+
+    // X-ray window on the cartridge, as on the camera and the lamp: a section through the
+    // cartridge facing the viewer, at real scale (x = the viewer's right, y = up, cm from the
+    // stylus tip). It grows out of the dot; beat 2's bubble then shows the same parts large.
+    const cart = this.node("CartridgeSection", needle)
+    const cartT = cart.getTransform()
+    cartT.setWorldRotation(faceToward(cam.sub(needle)))
+    const cartWorld = (x: number, y: number) => cartT.getWorldTransform().multiplyPoint(new vec3(x, y, 0))
+    const XC = new vec3(0.35, 1.45, 0)
+    const RX = 4.6
+    const cartDot = cartT.getInvertedWorldTransform().multiplyPoint(this.origin)
+    const xwin = this.node("XrayWindow", XC, cart)
+    xwin.getTransform().setLocalScale(vec3.one().uniformScale(1e-4))
+    const xOpen = () => easeOutCubic(phase(this.t, B[0] + 0.55, B[0] + 0.9))
+    this.tick(() => {
+      const k = xOpen()
+      xwin.getTransform().setLocalPosition(vec3.lerp(cartDot, XC, k))
+      xwin.getTransform().setLocalScale(vec3.one().uniformScale(Math.max(1e-4, k)))
+    })
+    this.cue(B[0] + 0.55, () => ctx.log("cutaway"))
+    const xrk = new MeshKit()
+    xrk.addArcXY(0, 0, RX, hair * 1.1, 0, Math.PI * 2, ink(UI_WHITE, 0.6), 96)
+    xrk.addFanXY(0, 0, RX * 0.72, 0, Math.PI * 2, ink(UI_WHITE, 0.02), ink(UI_WHITE, 0.03), 48)
+    xrk.addSoftRingXY(0, 0, RX * 0.72, RX - hair, ink(UI_WHITE, 0.03), ink(UI_WHITE, 0.09), 64)
+    const xrim = this.flat(xwin, "XrayRim", xrk)
+    this.inkBeat(xrim.mat, 0, xOpen)
+    // Parts, in window coordinates: the body and headshell (structure), the cantilever and stylus
+    // (motion, amber), the magnet on the cantilever (amber) between its two coils (signal, cyan).
+    const xp = (x: number, y: number) => new vec2(x - XC.x, y - XC.y)
+    const xPartsIn = () => xOpen() * easeOutCubic((this.t - B[0] - 0.8) / 0.3)
+    const LWc = hair * 0.85
+    const cbx0 = -1.25
+    const cbx1 = 1.6
+    const cby0 = 0.75
+    const cby1 = 2.35
+    const xsk = this.kit(STRUCT_GLOW)
+    xsk.addPolylineXY([xp(cbx0, cby0), xp(cbx1, cby0), xp(cbx1, cby1), xp(cbx0, cby1), xp(cbx0, cby0)], LWc, ink(UI_WHITE, 0.5))
+    xsk.addPolylineXY([xp(cbx0 - 0.2, cby1 + 0.45), xp(3.9, cby1 + 0.85)], LWc * 0.8, ink(UI_WHITE, 0.35))
+    const hs0 = xp(cbx0 + 0.3, cby1)
+    const hs1 = xp(cbx0 + 0.3, cby1 + 0.5)
+    xsk.addLineXY(hs0.x, hs0.y, hs1.x, hs1.y, LWc * 0.8, ink(UI_WHITE, 0.35))
+    const xStruct = this.flat(xwin, "CartridgeBody", xsk)
+    this.inkBeat(xStruct.mat, 0, xPartsIn)
+    const xak = this.kit(1.6)
+    const cTip = xp(0, 0)
+    const cTop = xp(0.55, 1.15)
+    xak.addLineXY(cTip.x, cTip.y, cTop.x, cTop.y, LWc, ink(AMBER, 0.95))
+    const mg = xp(0.55, 1.35)
+    xak.addPolylineXY([new vec2(mg.x - 0.32, mg.y - 0.22), new vec2(mg.x + 0.32, mg.y - 0.22), new vec2(mg.x + 0.32, mg.y + 0.22), new vec2(mg.x - 0.32, mg.y + 0.22), new vec2(mg.x - 0.32, mg.y - 0.22)], LWc * 0.8, ink(AMBER, 0.95))
+    xak.addSparkXY(cTip.x, cTip.y, hair * 0.5, ink(AMBER, 1))
+    const xAmber = this.flat(xwin, "CartridgeStylus", xak)
+    this.inkBeat(xAmber.mat, 0, xPartsIn)
+    const xck = this.kit(1.4)
+    for (const ox of [-0.05, 1.15]) {
+      const loop: vec2[] = []
+      for (let j = 0; j <= 20; j++) {
+        const a = (j / 20) * Math.PI * 2
+        loop.push(xp(ox + 0.17 * Math.cos(a), 1.35 + 0.42 * Math.sin(a)))
+      }
+      xck.addPolylineXY(loop, LWc * 0.75, ink(SIGNAL, 0.9))
+    }
+    const xCoil = this.flat(xwin, "CartridgeCoils", xck)
+    this.inkBeat(xCoil.mat, 0, xPartsIn)
+    const xOutside = (ax: number, ay: number, dx: number, dy: number, margin: number) => {
+      const d = new vec2(dx, dy).normalize()
+      const px = ax - XC.x
+      const py = ay - XC.y
+      const b = px * d.x + py * d.y
+      const c = px * px + py * py - (RX + margin) * (RX + margin)
+      const t = -b + Math.sqrt(Math.max(0, b * b - c))
+      return cartWorld(ax + d.x * t, ay + d.y * t)
+    }
+    this.cue(B[0] + 1.3, () => this.label("cartridge", "Cartridge", xOutside(cbx1, cby0, 0.8, -0.6, 1.5), cartWorld(cbx1, cby0)))
 
     // ---------------- Beat 2: magnify bubble at the stylus ----------------
     const R = 12
@@ -399,14 +518,14 @@ export class RecordPlayerExplanation extends Explanation {
     this.inkBeat(nextGroove.mat, 1, bubbleOpen)
     const TIP_X = -5
     const tip = this.node("StylusTip", vec3.zero(), face)
-    const tk = new MeshKit()
-    tk.addFanXY(0, 0, 0.45, 0, Math.PI * 2, ink(AMBER, 1), ink(AMBER, 0.7), 20)
+    const tk = this.kit(1.5)
+    tk.addSparkXY(0, 0, 0.34, ink(AMBER, 1))
     tk.addArcXY(0, 0, 0.85, 0.1, 0, Math.PI * 2, ink(AMBER, 0.6), 28)
     const tm = this.glow(tip, "TipMesh", tk)
     // The tip and cantilever drive beat 3's magnet, so they stay bright through beat 3.
     this.inkBeat(tm.mat, 2, bubbleOpen)
     // Cantilever: a thin rod drawn as two edge lines and a faint core.
-    const rodKit = new MeshKit()
+    const rodKit = this.kit(1.6)
     rodKit.addLineXY(0, 0.17, 1, 0.17, 0.08, ink(AMBER, 0.9))
     rodKit.addLineXY(0, -0.17, 1, -0.17, 0.08, ink(AMBER, 0.9))
     rodKit.addRectXY(0, -0.13, 1, 0.13, ink(AMBER, 0.14))
@@ -420,7 +539,7 @@ export class RecordPlayerExplanation extends Explanation {
     // Beat 3's cartridge internals (built now; they fade in at beat 3).
     const internals = this.ramp(B[2] + 0.1, 0.35)
     const magnet = this.node("Magnet", MAG, face)
-    const mk = new MeshKit()
+    const mk = this.kit(STRUCT_GLOW)
     mk.addRectXY(-MW, -MH, MW, MH, ink(AMBER, 0.14))
     mk.addLineXY(-MW, -MH, MW, -MH, 0.14, ink(AMBER, 0.95))
     mk.addLineXY(MW, -MH, MW, MH, 0.14, ink(AMBER, 0.95))
@@ -435,13 +554,22 @@ export class RecordPlayerExplanation extends Explanation {
       ctx.log("bubble")
       bubble.enabled = true
       bubbleSpring.show(true)
+      // The needle drops into the groove: a soft crackle from the stylus.
+      if (ctx.playCrackle) ctx.playCrackle()
+      ctx.log("crackle")
     })
+    // The bubble belongs to beats 2–3 (stylus, then the cartridge inside it). When beat 3 ends it
+    // exits fully, shrinking back into the stylus; only lines and paths stay as dimmed context.
+    this.cue(B[3], () => bubbleSpring.show(false))
     this.cue(B[1] + 0.35, () => {
       // Hairline from the bubble's rim to the exact spot it magnifies.
       const leaderTo = bubbleTarget.add(bubbleTarget.sub(needle).normalize().uniformScale(-RS))
       const lp = this.path("BubbleLeaderLine", [needle, leaderTo], hair * 0.6, ink(UI_WHITE, 0.5), hair * 1.5)
-      this.inkBeat(lp.mat, 2, () => clamp01((this.t - B[1] - 0.35) / 0.25))
-      this.tick((t) => lp.setRange(0, easeOutCubic((t - B[1] - 0.35) / 0.25)))
+      this.inkBeat(lp.mat, 2, () => clamp01((this.t - B[1] - 0.35) / 0.25) * bubbleOpen())
+      this.tick((t) => {
+        const k = Math.min(easeOutCubic((t - B[1] - 0.35) / 0.25), bubble.enabled ? bubbleOpen() : 0)
+        lp.setRange(0, k > 0.01 ? k : 0)
+      })
     })
     const faceLocal = (x: number, y: number) => face.getTransform().getWorldTransform().multiplyPoint(new vec3(x, y, 0))
     // Below the bubble: the left side would sit on the tonearm, the top on the caption.
@@ -476,7 +604,7 @@ export class RecordPlayerExplanation extends Explanation {
     // ---------------- Beat 3: inside the cartridge, a magnet and coil ----------------
     // Cartridge outline around magnet and coil; the cantilever enters through its floor and the
     // signal leaves through its right wall.
-    const body = new MeshKit()
+    const body = this.kit(STRUCT_GLOW)
     const bx0 = -5.4
     const bx1 = 4.6
     const by0 = -0.9
@@ -488,7 +616,7 @@ export class RecordPlayerExplanation extends Explanation {
     body.addLineXY(bx0, by1, bx0, by0, 0.1, bodyInk)
     const bm = this.glow(face, "CartridgeBody", body)
     this.inkBeat(bm.mat, 2, internals)
-    const coil = new MeshKit()
+    const coil = this.kit(1.2)
     const COIL_X0 = -0.6
     const COIL_DX = 0.85
     const COIL_N = 6
@@ -555,6 +683,8 @@ export class RecordPlayerExplanation extends Explanation {
     const packetA = () => (this.t < ARRIVE ? 1 : 1 - clamp01((this.t - ARRIVE) / 0.45))
     this.inkBeat(core.mat, 3, packetA)
     this.inkBeat(halo.mat, 3, packetA)
+    // The packet's leading edge: a bright spark that carries the signal to the speaker.
+    const packetHead = this.spark(ctx.root, "SignalHead", lineHair * 1.7, ink(SIGNAL, 1), 3, packetA, true)
     this.cue(B[3], () => {
       ctx.log("line")
       this.unlabel("magnet")
@@ -592,11 +722,15 @@ export class RecordPlayerExplanation extends Explanation {
         const env = Math.pow(Math.sin(Math.PI * u), 0.7)
         const inside = sRaw >= 0 && sRaw <= Ltot ? 1 : 0
         pts.push(base.add(n.uniformScale(2.4 * boost * env * wave(k * (head - sRaw)))))
-        alphas.push(inside * env)
+        // Brightest at the leading edge, fading along the tail (a comet, not a dashed line).
+        alphas.push(inside * clamp01(u / 0.05) * (0.3 + 0.7 * Math.pow(1 - u, 1.3)))
       }
       const view = toViewerL(line.pointAt(0.5))
       core.update(pts, view, alphas)
       halo.update(pts, view, alphas)
+      const hf = head / Ltot
+      packetHead.enabled = hf > 0 && hf < 1 && t < ARRIVE + 0.45
+      if (packetHead.enabled) packetHead.getTransform().setLocalPosition(line.pointAt(hf).add(toViewerL(line.pointAt(hf)).uniformScale(0.3)))
     })
 
     // ---------------- Beat 5: the cone pushes air, rings spread into the room ----------------
@@ -614,13 +748,13 @@ export class RecordPlayerExplanation extends Explanation {
       shape.getTransform().setLocalRotation(quat.lookAt(axis, up))
       const RC = 5.6
       const DC = 1.7
-      const ck = new MeshKit()
+      const ck = this.kit()
       ck.addArcXY(0, 0, RC, coneHair * 2, 0, Math.PI * 2, ink(AMBER, 0.95), 64)
       ck.addSoftRingXY(0, 0, RC, RC + 1.6, ink(AMBER, 0.28), ZERO, 64)
       ck.addArcXY(0, 0, DC, coneHair * 1.8, 0, Math.PI * 2, ink(AMBER, 0.9), 32)
       ck.addFanXY(0, 0, DC, 0, Math.PI * 2, ink(AMBER, 0.12), ink(AMBER, 0.12), 24)
       const conemesh = this.glow(shape, "ConeRims", ck)
-      const pk2 = new MeshKit()
+      const pk2 = this.kit(1.4, this.eyeIn(shape))
       pk2.addRing(new vec3(0, 0, -0.9), vec3.forward(), 3.7, coneHair * 1.2, ink(AMBER, 0.35), 48)
       for (let i = 0; i < 8; i++) {
         const a = (i / 8) * Math.PI * 2
@@ -637,7 +771,7 @@ export class RecordPlayerExplanation extends Explanation {
     const rings: Spawned[] = []
     const RING_T = 1 / 3.4
     for (let i = 0; i < 6; i++) {
-      const kit = new MeshKit()
+      const kit = this.kit(2.0)
       kit.addRing(vec3.zero(), axis, 1, 0.035, ink(AMBER, 0.9), 72)
       const r = this.glow(ctx.root, "SoundRing" + i, kit)
       r.so.enabled = false
@@ -731,10 +865,10 @@ export class CameraExplanation extends Explanation {
       B,
       [
         null,
-        "Light from the scene enters the lens.",
-        "The lens bends the light so the rays cross.",
-        "On the sensor, the image lands upside down.",
-        "Each pixel turns light into signal."
+        keyWord("*Light* from the scene enters the lens.", LIGHT),
+        keyWord("The lens bends the *light* so the rays cross.", LIGHT),
+        keyWord("On the sensor, the *image* lands upside down.", LIGHT),
+        keyWord("Each pixel turns light into *signal*.", SIGNAL)
       ],
       END
     )
@@ -801,7 +935,7 @@ export class CameraExplanation extends Explanation {
 
     // Context (faint): lens barrel, focusing screen and pentaprism (the viewfinder path).
     const faint = ink(UI_WHITE, 0.45)
-    const ck = new MeshKit()
+    const ck = this.kit(STRUCT_GLOW)
     poly(ck, [[xMount, -barrelR], [xFront, -barrelR], [xFront, barrelR], [xMount, barrelR]], LWF, faint)
     seg(ck, xMount, -barrelR - Y(0.4), xMount, barrelR + Y(0.4), LWF, faint)
     seg(ck, X(-0.4), Y(2.05), X(4.5), Y(2.05), LWF, faint)
@@ -811,7 +945,7 @@ export class CameraExplanation extends Explanation {
 
     // Lens elements (they handle light: warm white).
     const lensInk = ink(LIGHT, 0.8)
-    const lensKit = new MeshKit()
+    const lensKit = this.kit(STRUCT_GLOW)
     const lensEl = (cx: number, h: number, tc: number, te: number) => {
       const N = 14
       const L: number[][] = []
@@ -836,7 +970,7 @@ export class CameraExplanation extends Explanation {
 
     // Mirror: hinged at its top-back edge, down at 45° (it sends light up to the viewfinder).
     const mirror = this.node("Mirror", new vec3(wx(hinge.x), wy(hinge.y), 0.02), win)
-    const mk = new MeshKit()
+    const mk = this.kit(STRUCT_GLOW)
     mk.addLineXY(0, 0, mirrorLen, 0, LW * 1.3, ink(LIGHT, 0.95))
     mk.addLineXY(0, -0.18, mirrorLen, -0.18, LWF, ink(LIGHT, 0.35))
     const mirrorMesh = this.flat(mirror, "MirrorMesh", mk)
@@ -850,7 +984,7 @@ export class CameraExplanation extends Explanation {
     const COLS = 3
     const dv = new vec3(X(-1.1), Y(0.65), 0)
     const cell = (x: number, y: number, d: number) => new vec3(x + dv.x * d, y + dv.y * d, 0)
-    const sk = new MeshKit()
+    const sk = this.kit(0.8)
     const sensorInk = ink(LIGHT, 0.55)
     for (let r = 0; r <= ROWS; r++) {
       const y = -sensorH + (2 * sensorH * r) / ROWS
@@ -890,7 +1024,7 @@ export class CameraExplanation extends Explanation {
     const imgTip = -mag * yTip
     const imgBase = -mag * yBase
     const subject = this.node("SubjectArrow", new vec3(xObj, yBase, 0), sec)
-    const ak = new MeshKit()
+    const ak = this.kit()
     const AH = yTip - yBase
     ak.addLineXY(0, 0, 0, AH, LW * 1.4, ink(LIGHT, 1), hair * 2.5, ink(LIGHT, 0.18))
     ak.addLineXY(0, AH, -0.95, AH - 1.4, LW * 1.4, ink(LIGHT, 1))
@@ -916,7 +1050,8 @@ export class CameraExplanation extends Explanation {
     const yScreen = Y(4.4)
     const FLIP = B[3] + 0.35
     const rays: {pin: GlowPath; pout: GlowPath; pb: GlowPath; pf: GlowPath; hitF: number; head: SceneObject; st: number}[] = []
-    const rayOpts = (c: vec4) => ({radius: hair * 0.55, color: c, halo: hair * 2.2, haloAlpha: 0.16, sides: 5, step: 0.6})
+    const secEye = this.eyeIn(sec)
+    const rayOpts = (c: vec4) => ({radius: hair * 0.55, color: c, halo: hair * 2.4, step: 0.6, eye: secEye})
     const bounceA = () => 1 - clamp01((this.t - FLIP) / 0.15)
     let ri = 0
     for (const [ySrc, yImg] of [[yTip, imgTip], [yBase, imgBase]]) {
@@ -941,13 +1076,8 @@ export class CameraExplanation extends Explanation {
         this.inkBeat(pout.mat, 2, () => (this.t < FLIP + 0.15 ? 1 : 0))
         this.inkBeat(pb.mat, 2, bounceA)
         this.inkBeat(pf.mat, 3)
-        const hk = new MeshKit()
-        hk.addFanXY(0, 0, hair * 2.2, 0, Math.PI * 2, ink(LIGHT, 1), ink(LIGHT, 0.7), 16)
-        hk.addSoftRingXY(0, 0, hair * 2.2, hair * 6, ink(LIGHT, 0.3), ZERO, 20)
-        const head = this.flat(sec, "RayHead" + ri, hk)
-        head.so.enabled = false
-        this.inkBeat(head.mat, 4)
-        rays.push({pin, pout, pb, pf, hitF, head: head.so, st: ri * 0.07})
+        const head = this.spark(sec, "RayHead" + ri, hair * 1.5, ink(LIGHT, 1), 4)
+        rays.push({pin, pout, pb, pf, hitF, head, st: ri * 0.07})
         ri++
       }
     }
@@ -989,7 +1119,7 @@ export class CameraExplanation extends Explanation {
       }
     })
     const image = this.node("SensorImage", vec3.zero(), sec)
-    const ik = new MeshKit()
+    const ik = this.kit()
     const xi = xSensor + 0.05
     ik.addLineXY(xi, imgBase, xi, imgTip, LW * 1.7, ink(LIGHT, 1), hair * 2.5, ink(LIGHT, 0.25))
     ik.addLineXY(xi, imgTip, xi - 0.5, imgTip + 0.65, LW * 1.6, ink(LIGHT, 1))
@@ -1037,8 +1167,16 @@ export class CameraExplanation extends Explanation {
     // upside down (beat 4), then the pixels under it flash cyan (beat 5).
     const SB = Math.min(2.2, Math.max(1, cam.distance(center) / 220))
     const sensorSpot = toWorld(xSensor, (imgTip + imgBase) / 2)
-    const bubTarget = toWorld(winC.x - RW - 3 - 12 * SB, winC.y - 3).add(n.uniformScale(2))
-    const bub = this.magnifyBubble("SensorBubble", sensorSpot, bubTarget, SB, 4, B[3])
+    // It sits on the open side: below the window and a little toward the camera's back. Beside the
+    // camera it would cover the speaker; on the lens side, the rays and the subject.
+    const v = center.sub(cam).normalize()
+    const vR = v.cross(up).normalize()
+    const vU = vR.cross(v).normalize()
+    const wc = toWorld(winC.x, winC.y)
+    const BUB_DIR = new vec2(-0.42, -0.91)
+    const bubD = RW + 2.5 + 12 * SB
+    const bubTarget = wc.add(vR.uniformScale(BUB_DIR.x * bubD)).add(vU.uniformScale(BUB_DIR.y * bubD)).add(n.uniformScale(2))
+    const bub = this.magnifyBubble("SensorBubble", sensorSpot, bubTarget, SB, 4, B[3], END)
     this.cue(B[3], () => ctx.log("sensorBubble"))
     const bf = bub.face
     const BR = bub.R
@@ -1051,7 +1189,7 @@ export class CameraExplanation extends Explanation {
     const bdv = new vec2(-6.4, 3.4)
     const gp = (y: number, d: number) => new vec2(3.2 + bdv.x * d, y + bdv.y * d)
     const rowAt = (r: number) => by0 + ((by1 - by0) * r) / BROWS
-    const bgk = new MeshKit()
+    const bgk = this.kit(1.0)
     for (let r = 0; r <= BROWS; r++) {
       const a = gp(rowAt(r), 0)
       const b = gp(rowAt(r), 1)
@@ -1067,7 +1205,7 @@ export class CameraExplanation extends Explanation {
     // Light from the lens arrives from the right and converges on the image's tip and base.
     const bTip = gp(-6.0, 0.5)
     const bBase = gp(3.6, 0.5)
-    const bubRays: {p: GlowPath; st: number}[] = []
+    const bubRays: {p: GlowPath; st: number; hd: SceneObject}[] = []
     for (const deg of [-14, 0, 14]) {
       const a = (deg * Math.PI) / 180
       const src = new vec3(Math.cos(a) * 10.9, Math.sin(a) * 10.9, 0.02)
@@ -1076,23 +1214,25 @@ export class CameraExplanation extends Explanation {
         const p = new GlowPath(bf, "BubbleRay" + i, ctx.glowMat, [src, new vec3(dst.x, dst.y, 0.02)], {
           radius: 0.07,
           color: ink(LIGHT, 0.85),
-          halo: 0.32,
-          haloAlpha: 0.16,
-          sides: 5,
-          step: 0.5
+          halo: 0.34,
+          step: 0.5,
+          facing: new vec3(0, 0, 1)
         })
         this.inkBeat(p.mat, 3)
-        bubRays.push({p, st: i * 0.05})
+        const hd = this.spark(bf, "BubbleRayHead" + i, 0.2, ink(LIGHT, 1), 3)
+        bubRays.push({p, st: i * 0.05, hd})
       }
     }
     this.tick((t) => {
       for (const r of bubRays) {
         const k = easeInOutCubic(phase(t, FLIP + 0.15 + r.st, FLIP + 0.5 + r.st))
         if (k > 0) r.p.setRange(0, k)
+        r.hd.enabled = k > 0 && k < 1
+        if (r.hd.enabled) r.hd.getTransform().setLocalPosition(r.p.pointAt(k).add(new vec3(0, 0, 0.04)))
       }
     })
     // The image: the same arrow, pointing down, drawn on the sensor's face.
-    const bik = new MeshKit()
+    const bik = this.kit()
     const wingL = new vec2(bTip.x + bdv.x * 0.16, bTip.y + 1.7 + bdv.y * 0.16)
     const wingR = new vec2(bTip.x - bdv.x * 0.16, bTip.y + 1.7 - bdv.y * 0.16)
     bik.addLineXY(bBase.x, bBase.y, bTip.x, bTip.y, 0.3, ink(LIGHT, 1), 0.5, ink(LIGHT, 0.25))
@@ -1126,23 +1266,29 @@ export class CameraExplanation extends Explanation {
       bRow++
     }
     this.cue(B[3] + 0.9, () => {
-      const a = gp(by0, 0)
-      this.label("bubbleSensor", "Sensor", bub.toWorld(-4, -BR - 3.5), bub.toWorld(a.x, a.y))
+      const a = gp(by0, 1)
+      this.label("bubbleSensor", "Sensor", bub.toWorld(-BR - 3, -6), bub.toWorld(a.x, a.y))
     })
     this.cue(PIX + 0.6, () => {
-      const a = gp(rowAt(3) + bRowH / 2, 0.5)
-      this.label("pixels", "Pixels", bub.toWorld(-4, -BR - 3.5), bub.toWorld(a.x, a.y))
+      const a = gp(rowAt(1) + bRowH / 2, 0.7)
+      this.label("pixels", "Pixels", bub.toWorld(-BR - 3, -6), bub.toWorld(a.x, a.y))
     })
 
-    // Text and controls: the question (with the caption under it) above the window, Stop below.
-    const v = center.sub(cam).normalize()
-    const vR = v.cross(up).normalize()
-    const vU = vR.cross(v).normalize()
+    // Text and controls: the question (with the caption under it) above the window; Stop under
+    // the window, nudged right just enough to clear the bubble.
     const ui = ctx.uiScale
-    const wc = toWorld(winC.x, winC.y)
-    const overBody = vR.uniformScale(center.sub(wc).dot(vR))
-    this.captionHint = wc.add(overBody).add(vU.uniformScale(RW + 0.8 * ui + 1.3 * ui + 0.9 * ui + 1.6 * ui))
-    this.stopHint = wc.add(overBody).add(vU.uniformScale(-(RW + 3.1 * ui))).add(v.uniformScale(-2))
+    const overX = center.sub(wc).dot(vR)
+    this.captionHint = wc.add(vR.uniformScale(overX)).add(vU.uniformScale(RW + 0.8 * ui + 1.3 * ui + 0.9 * ui + 1.6 * ui))
+    const stopY = -(RW + 3.1 * ui)
+    const stopHalfW = 3.25 * ui + 1
+    const stopHalfH = 1.3 * ui
+    const bubR = 12 * SB
+    const bcx = BUB_DIR.x * bubD
+    const bcy = BUB_DIR.y * bubD
+    const dyMin = Math.max(0, Math.abs(stopY - bcy) - stopHalfH)
+    const chord = dyMin < bubR ? Math.sqrt(bubR * bubR - dyMin * dyMin) : -bubR
+    const stopX = Math.max(overX, bcx + chord + stopHalfW)
+    this.stopHint = wc.add(vR.uniformScale(stopX)).add(vU.uniformScale(stopY)).add(v.uniformScale(-2))
 
     this.cue(END, () => {
       ctx.log("done")
@@ -1181,7 +1327,13 @@ export class LampExplanation extends Explanation {
 
     this.beats(
       B,
-      [null, "Electric energy flows up the cord.", "A tiny chip turns electricity into light.", "The paper scatters it into a soft glow.", null],
+      [
+        null,
+        keyWord("Electric *energy* flows up the cord.", SIGNAL),
+        keyWord("A tiny chip turns electricity into *light*.", LIGHT),
+        keyWord("The paper scatters it into a soft *glow*.", LIGHT),
+        null
+      ],
       END
     )
 
@@ -1235,7 +1387,7 @@ export class LampExplanation extends Explanation {
     const bulb = this.node("Bulb", new vec3(-winC.x, -winC.y, 0.01), win)
     const pl = (k: MeshKit, pts: number[][], w: number, c: vec4) => k.addPolylineXY(pts.map((p) => new vec2(p[0], p[1])), w, c)
     const structure = ink(UI_WHITE, 0.45)
-    const bk = new MeshKit()
+    const bk = this.kit(STRUCT_GLOW)
     pl(bk, [[-2.4, 0], [-1.35, -3], [1.35, -3], [2.4, 0]], LWF, structure)
     pl(bk, [[-1.35, -3], [-1.35, -5.5], [-0.6, -6.2], [0.6, -6.2], [1.35, -5.5], [1.35, -3]], LWF, structure)
     bk.addLineXY(-1.35, -4.3, 1.35, -4.0, LWF * 0.8, ink(UI_WHITE, 0.3))
@@ -1247,7 +1399,7 @@ export class LampExplanation extends Explanation {
     const GC = new vec3(0, 2.6, 0)
     const GR = Math.sqrt(2.4 * 2.4 + 2.6 * 2.6)
     const ga = Math.atan2(-2.6, 2.4)
-    const gk = new MeshKit()
+    const gk = this.kit(1.6)
     gk.addArcXY(GC.x, GC.y, GR, LW, ga, Math.PI - ga, ink(LIGHT, 0.75), 48)
     const globe = this.flat(bulb, "Globe", gk)
     this.inkBeat(globe.mat, 3, partsIn(0.07))
@@ -1267,7 +1419,7 @@ export class LampExplanation extends Explanation {
     })
     const outletNode = this.node("Outlet", outlet)
     outletNode.getTransform().setWorldRotation(quat.lookAt(flat(cam.sub(outlet)), up))
-    const ok = new MeshKit()
+    const ok = this.kit(STRUCT_GLOW)
     ok.addArcXY(0, 0, 1.6, LWF, 0, Math.PI * 2, structure, 32)
     for (const x of [-0.55, 0.55]) ok.addFanXY(x, 0, 0.25, 0, Math.PI * 2, structure, structure, 8)
     const outletMark = this.flat(outletNode, "OutletMark", ok)
@@ -1301,7 +1453,7 @@ export class LampExplanation extends Explanation {
     const NPTS = 20
     const charged = this.path("CordCharged", cordPts, hair * 0.7, ink(SIGNAL, 0.5), hair * 2.2)
     this.inkBeat(charged.mat, 2)
-    const pulses: {node: SceneObject; core: TrailRibbon; halo: TrailRibbon}[] = []
+    const pulses: {node: SceneObject; core: TrailRibbon; halo: TrailRibbon; head: SceneObject; ha: {a: number}}[] = []
     for (let i = 0; i < NPULSE; i++) {
       const node = this.node("Current" + i, vec3.zero(), ctx.root)
       const core = new TrailRibbon(node, "PulseCore", ctx.glowMat, NPTS, hair * 2.4, ink(SIGNAL, 1))
@@ -1309,7 +1461,9 @@ export class LampExplanation extends Explanation {
       this.inkBeat(core.mat, 2)
       this.inkBeat(halo.mat, 2)
       node.enabled = false
-      pulses.push({node, core, halo})
+      const ha = {a: 0}
+      const head = this.spark(ctx.root, "CurrentHead" + i, hair * 1.5, ink(SIGNAL, 1), 2, () => ha.a, true)
+      pulses.push({node, core, halo, head, ha})
     }
     this.cue(B[1], () => ctx.log("cord"))
     this.cue(FLOW, () => ctx.log("flow"))
@@ -1323,6 +1477,11 @@ export class LampExplanation extends Explanation {
         const head = raw < 0 ? -1 : raw % CYC
         const on = head >= 0 && head - LP < Ltot
         p.node.enabled = on
+        p.head.enabled = on && head < Ltot
+        if (p.head.enabled) {
+          p.ha.a = clamp01(head / 6) * clamp01((Ltot - head) / 6)
+          p.head.getTransform().setLocalPosition(cord.pointAt(head / Ltot))
+        }
         if (!on) continue
         const mid = cord.pointAt(clamp01((head - LP / 2) / Ltot))
         p.node.getTransform().setLocalPosition(mid)
@@ -1334,8 +1493,9 @@ export class LampExplanation extends Explanation {
           const s = Math.max(0, Math.min(Ltot, sRaw))
           pts.push(cord.pointAt(s / Ltot).sub(mid))
           const inside = sRaw >= 0 && sRaw <= Ltot ? 1 : 0
-          // Fades in leaving the outlet, and is taken in by the socket at the top.
-          alphas.push(inside * Math.pow(Math.sin(Math.PI * u), 0.8) * clamp01(s / 6) * clamp01((Ltot - s) / 6))
+          // Brightest at its head, fading along the tail; fades in leaving the outlet and is taken
+          // in by the socket at the top.
+          alphas.push(inside * clamp01(u / 0.08) * Math.pow(1 - u, 1.2) * clamp01(s / 6) * clamp01((Ltot - s) / 6))
         }
         const view = cam.sub(this.origin.add(mid)).normalize()
         p.core.update(pts, view, alphas)
@@ -1350,12 +1510,12 @@ export class LampExplanation extends Explanation {
     const RS = 12 * S
     const chipW = toWorld(0, 0.35)
     const bubTarget = dot.add(side.uniformScale(RM + RS + 6)).add(up.uniformScale(RS * 0.3)).add(n.uniformScale(4))
-    const bub = this.magnifyBubble("ChipBubble", chipW, bubTarget, S, 2, B[2])
+    const bub = this.magnifyBubble("ChipBubble", chipW, bubTarget, S, 2, B[2], B[3])
     this.cue(B[2], () => ctx.log("bubble"))
     const face = bub.face
     const bubIn = (d: number) => () => bub.open() * easeOutCubic((this.t - B[2] - 0.2 - d) / 0.3)
     // The board and the chip on it (about 6x).
-    const ck = new MeshKit()
+    const ck = this.kit(STRUCT_GLOW)
     ck.addLineXY(-10.2, -3, 10.2, -3, 0.16, ink(UI_WHITE, 0.45))
     ck.addPolylineXY([new vec2(-2.7, -3), new vec2(-2.7, -0.6), new vec2(2.7, -0.6), new vec2(2.7, -3)], 0.18, ink(UI_WHITE, 0.85))
     ck.addRectXY(-2.6, -2.95, 2.6, -0.65, ink(UI_WHITE, 0.05))
@@ -1366,7 +1526,7 @@ export class LampExplanation extends Explanation {
       [new vec2(-10, -4.6), new vec2(-3.4, -4.6), new vec2(-2.0, -3.05)],
       [new vec2(10, -4.6), new vec2(3.4, -4.6), new vec2(2.0, -3.05)]
     ]
-    const tk = new MeshKit()
+    const tk = this.kit(STRUCT_GLOW)
     for (const tr of traces) tk.addPolylineXY(tr, 0.12, ink(SIGNAL, 0.4))
     const traceMesh = this.glow(face, "Traces", tk)
     this.inkBeat(traceMesh.mat, 2, bubIn(0.05))
@@ -1389,7 +1549,9 @@ export class LampExplanation extends Explanation {
     const sparks: {line: UnitLine; tr: vec2[]; off: number; a: number}[] = []
     for (const tr of traces) {
       for (let k = 0; k < 2; k++) {
-        const line = new UnitLine(face, "ChipCurrent", ctx.glowMat, 0.36, ink(SIGNAL, 1), 0.45)
+        const streak = this.kit()
+        streak.addCometXY(0, 0, 1, 0, 0.3, ink(SIGNAL, 1), 0.5)
+        const line = new UnitLine(face, "ChipCurrent", ctx.glowMat, 0.36, ink(SIGNAL, 1), 0.45, undefined, streak)
         const sp = {line, tr, off: k * 0.5, a: 0}
         this.inkBeat(line.mat, 2, () => sp.a)
         sparks.push(sp)
@@ -1414,12 +1576,12 @@ export class LampExplanation extends Explanation {
     this.cue(IN, () => ctx.log("chip"))
     // Light out: the top of the chip glows warm and packets of light leave it upward.
     const LIGHT_ON = B[2] + 0.9
-    const dk = new MeshKit()
-    dk.addFanXY(0, -0.6, 5.2, 0, Math.PI, ink(LIGHT, 0.32), ZERO, 32)
+    const dk = this.kit()
+    dk.addFanXY(0, -0.6, 5.2, 0, Math.PI, ink(LIGHT, 0.18), ZERO, 32)
     dk.addLineXY(-2.7, -0.6, 2.7, -0.6, 0.26, ink(LIGHT, 1), 0.5, ink(LIGHT, 0.3))
     const dieGlow = this.glow(face, "ChipLight", dk)
     this.inkBeat(dieGlow.mat, 2, this.ramp(LIGHT_ON, 0.3))
-    const chipRays: {p: GlowPath; off: number}[] = []
+    const chipRays: {p: GlowPath; off: number; hd: SceneObject}[] = []
     for (let i = 0; i < 7; i++) {
       const ang = ((90 + (i - 3) * 17) * Math.PI) / 180
       const x0 = -2.1 + 0.7 * i
@@ -1433,19 +1595,21 @@ export class LampExplanation extends Explanation {
       const p = new GlowPath(face, "ChipRay" + i, ctx.glowMat, [new vec3(p0.x, p0.y, 0.03), new vec3(p1.x, p1.y, 0.03)], {
         radius: 0.09,
         color: ink(LIGHT, 0.95),
-        halo: 0.38,
-        haloAlpha: 0.18,
-        sides: 5,
-        step: 0.5
+        halo: 0.4,
+        step: 0.5,
+        facing: new vec3(0, 0, 1)
       })
       this.inkBeat(p.mat, 2)
-      chipRays.push({p, off: ((i * 3) % 7) / 7})
+      const hd = this.spark(face, "ChipRayHead" + i, 0.22, ink(LIGHT, 1), 2)
+      chipRays.push({p, off: ((i * 3) % 7) / 7, hd})
     }
     this.tick((t) => {
       if (t < LIGHT_ON) return
       for (const r of chipRays) {
         const h = ((t - LIGHT_ON) * 1.3 + r.off) % 1.4
         r.p.setRange(Math.max(0, h - 0.4), Math.min(1, h))
+        r.hd.enabled = h > 0.02 && h < 1
+        if (r.hd.enabled) r.hd.getTransform().setLocalPosition(r.p.pointAt(h).add(new vec3(0, 0, 0.02)))
       }
     })
     // At real size the chip lights up inside the bulb, and stays on.
@@ -1463,7 +1627,8 @@ export class LampExplanation extends Explanation {
 
     // ---------------- Beat 4: light hits the paper and scatters into a soft glow ----------------
     const RAYS = B[3] + 0.2
-    const rayOpts = (c: vec4) => ({radius: hair * 0.55, color: c, halo: hair * 2.2, haloAlpha: 0.16, sides: 5, step: 0.6})
+    const secEye = this.eyeIn(sec)
+    const rayOpts = (c: vec4) => ({radius: hair * 0.55, color: c, halo: hair * 2.4, step: 0.6, eye: secEye})
     const rays: {p: GlowPath; head: SceneObject; spot: SceneObject; burst: SceneObject; st: number; dur: number}[] = []
     const rayDegs = [-35, -10, 15, 40, 65, 115, 140, 165, 190, 215]
     rayDegs.forEach((deg, i) => {
@@ -1481,24 +1646,19 @@ export class LampExplanation extends Explanation {
       const dur = 0.25 + p0.distance(hit) / 110
       // The light is diffuse once it has scattered: the rays fade out as the glow settles.
       this.inkBeat(p.mat, 3, () => 1 - clamp01((this.t - B[4]) / 0.5))
-      const hk = new MeshKit()
-      hk.addFanXY(0, 0, hair * 2.2, 0, Math.PI * 2, ink(LIGHT, 1), ink(LIGHT, 0.7), 16)
-      hk.addSoftRingXY(0, 0, hair * 2.2, hair * 6, ink(LIGHT, 0.3), ZERO, 20)
-      const head = this.flat(sec, "LightHead" + i, hk)
-      head.so.enabled = false
-      this.inkBeat(head.mat, 3)
+      const head = {so: this.spark(sec, "LightHead" + i, hair * 1.5, ink(LIGHT, 1), 3)}
       // Where it hits the paper: a soft spot that spreads, and a few short scattered rays.
       const tHit = RAYS + st + dur
       const spot = this.node("Scatter" + i, new vec3(hit.x, hit.y, 0.04), sec)
       const sk = new MeshKit()
-      sk.addFanXY(0, 0, 1, 0, Math.PI * 2, ink(LIGHT, 0.5), ZERO, 20)
+      sk.addFanXY(0, 0, 1, 0, Math.PI * 2, ink(LIGHT, 0.3), ZERO, 20)
       const spotMesh = this.flat(spot, "ScatterSpot", sk)
       this.inkBeat(spotMesh.mat, 3, () => {
         const tt = this.t - tHit
-        return tt < 0 ? 0 : clamp01(tt / 0.08) * (0.35 + 0.65 * Math.exp(-tt / 0.5))
+        return tt < 0 ? 0 : clamp01(tt / 0.08) * (0.35 + 0.65 * Math.exp(-tt / 0.5)) * (1 - clamp01((this.t - B[4]) / 0.5))
       })
       const burst = this.node("ScatterRays" + i, new vec3(hit.x, hit.y, 0.04), sec)
-      const sbk = new MeshKit()
+      const sbk = this.kit()
       for (let k = 0; k < 5; k++) {
         const ba2 = a + Math.PI + ((k - 2) * 0.62) + (k % 2 === 0 ? 0 : Math.PI)
         sbk.addLineXY(0, 0, Math.cos(ba2), Math.sin(ba2), hair * 0.35, ink(LIGHT, 0.7), hair * 0.6, ink(LIGHT, 0.15))
@@ -1527,7 +1687,7 @@ export class LampExplanation extends Explanation {
     // paper's outline lit. It spreads up and down from the bulb as the rays land.
     const GLOW = B[3] + 0.5
     const glowNode = this.node("ColumnGlow", new vec3(0, GC.y, -0.05), sec)
-    const ck2 = new MeshKit()
+    const ck2 = this.kit(STRUCT_GLOW)
     const nz = new vec3(0, 0, 1)
     const lv = (y: number) => 0.12 * (0.45 + 0.55 * Math.exp(-Math.pow((y - GC.y) / 38, 2)))
     const STEP = 2

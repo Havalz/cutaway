@@ -36,6 +36,7 @@
     clickAudio: false
     coneModel: false
     cordStartMarker: false
+    crackleAudio: false
     gazeEnterDeg: false
     gazeExitDeg: false
     glowMaterial: false
@@ -49,8 +50,10 @@
     recordPlayerMarker: false
     recordPlayerUI: false
     resetUI: false
+    scanAudio: false
     shelfY: false
     speakerMarker: false
+    tickAudio: false
   ScriptTypesHidden:
     {}
   ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
@@ -81,6 +84,9 @@
       cameraBodySize: !<Vec3> {x: 11.500000, y: 11.300000, z: 14.700000}
       clickAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       powerUpAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
+      crackleAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
+      tickAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
+      scanAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       gazeEnterDeg: !<float> 12.000000
       gazeExitDeg: !<float> 24.000000
   ScriptTypes:
@@ -108,13 +114,16 @@
     - '// @ui {"widget":"group_start", "label":"Effects"}'
     - '// @input Asset.Material glowMaterial {"hint":"Additive glow material (lines of light, rays, rings)"}'
     - '// @input Asset.Material modelMaterial {"hint":"Solid model material (cone, lens, stylus, shell panels)"}'
-    - '// @input Component.AudioComponent chimeAudio {"hint":"Spatial AudioComponent placed at the speaker, holding the chime"}'
+    - '// @input Component.AudioComponent chimeAudio {"hint":"Spatial AudioComponent placed at the speaker: the short warm tone as the waves leave it"}'
     - '// @input SceneObject coneModel {"hint":"Optional: your own speaker-cone model (pinned at the speaker marker). Leave empty to use the built-in cone"}'
     - '// @input float shelfY = -144 {"hint":"Height (world Y, cm) of the shelf the line of light runs along"}'
     - "// @input vec3 cameraFacing = {0.94,0,-0.34} {\"hint\":\"Direction the real camera's lens points (into the room, horizontal)\"}"
     - "// @input vec3 cameraBodySize = {11.5,11.3,14.7} {\"hint\":\"Real DSLR body (cm): x = depth along the lens axis, y = height, z = width. Centred on the camera station's bounds centre\"}"
     - '// @input Component.AudioComponent clickAudio {"hint":"Spatial AudioComponent at the camera body: mirror flip and shutter click"}'
     - '// @input Component.AudioComponent powerUpAudio {"hint":"Spatial AudioComponent at the lamp: soft rising power-up tone as the light comes on"}'
+    - '// @input Component.AudioComponent crackleAudio {"hint":"Spatial AudioComponent at the stylus: the needle-drop crackle"}'
+    - '// @input Component.AudioComponent tickAudio {"hint":"Spatial AudioComponent for the soft tick on every pinch (moved to the pinched control)"}'
+    - '// @input Component.AudioComponent scanAudio {"hint":"Spatial AudioComponent for the scan sweep (moved to the scanned object)"}'
     - '// @ui {"widget":"group_end"}'
     - '// @ui {"widget":"group_start", "label":"Looking"}'
     - "// @input float gazeEnterDeg = 12 {\"hint\":\"An object counts as 'looked at' when it is within this angle of the view center (degrees)\", \"widget\":\"slider\", \"min\":4, \"max\":30, \"step\":1}"

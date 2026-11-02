@@ -539,7 +539,7 @@
   Enabled: true
   Layers: 1
   LocalTransform: !<TransformEntity>
-    Position: {x: -234.199997, y: -79.500000, z: -469.700012}
+    Position: {x: -232.000000, y: -79.500000, z: -470.299988}
     Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false
@@ -562,6 +562,23 @@
     []
   Components:
     - !<own> d365778f-0a2f-4f6a-b373-a9899719c3bf
+- !<AudioComponent/1d1ac4cd-1458-4046-ac27-af5586f5ac76>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> 1ec67ddd-4211-4be3-ab6d-bcf6281b4e3d
+  EnableAutoplayLoop: false
+  Volume: 0.600000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<RenderMeshVisual/1f969daa-5809-4500-b314-98d91ccba131>
   PrefabRemaps:
     []
@@ -597,6 +614,21 @@
     []
   Components:
     - !<own> e1031f7e-3474-489f-a529-282f7192f812
+- !<SceneObject/22ca3186-3bb5-4431-8837-25c0c0e69e7a>
+  PrefabRemaps:
+    []
+  Name: LampPowerUp
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 2f092ccd-f45f-4aa6-902f-124777517814
 - !<SceneObject/23018601-1041-4785-a20e-9ad5ab722f95>
   PrefabRemaps:
     []
@@ -642,6 +674,21 @@
     []
   Components:
     []
+- !<SceneObject/25a61e62-fac3-43c1-bd4b-07438193f47f>
+  PrefabRemaps:
+    []
+  Name: PinchTick
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 744f8ada-3799-49f4-a365-ee5d6f5d3cc5
 - !<SceneObject/264571d0-f879-411b-8deb-ff6d9921317f>
   PrefabRemaps:
     []
@@ -657,6 +704,21 @@
     - !<own> d9071294-12e8-425f-98f1-bf308a02639e
   Components:
     []
+- !<SceneObject/26aa38ad-6b63-4aa9-944c-1349e4160568>
+  PrefabRemaps:
+    []
+  Name: CameraClick
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 1.450000, y: 2.150000, z: 4.890000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> d82ccb31-db1e-48d9-9fdd-b85665cf5b58
 - !<ScriptComponent/275aeb4d-77ac-4b1b-811e-907652542110>
   PrefabRemaps:
     []
@@ -759,6 +821,23 @@
     - !<own> a7da4af4-3d84-4acd-a31e-920a56b4c5c8
   Components:
     []
+- !<AudioComponent/2f092ccd-f45f-4aa6-902f-124777517814>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> a3669871-09be-44d1-b4aa-450c6d80d3b7
+  EnableAutoplayLoop: false
+  Volume: 0.600000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<RenderMeshVisual/335c5f8b-2917-49e8-8af5-220696e9bc09>
   PrefabRemaps:
     []
@@ -852,12 +931,12 @@
   Enabled: true
   Layers: 1
   LocalTransform: !<TransformEntity>
-    Position: {x: -234.199997, y: -80.000000, z: -469.700012}
+    Position: {x: -232.000000, y: -80.000000, z: -470.299988}
     Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false
   Children:
-    []
+    - !<own> 22ca3186-3bb5-4431-8837-25c0c0e69e7a
   Components:
     []
 - !<SceneObject/3a794764-c758-4d72-9d89-bf3ed978113f>
@@ -890,6 +969,21 @@
     - !<own> 54130007-65c1-48d3-b9df-0866d8112e01
   Components:
     []
+- !<SceneObject/3c147350-aa69-4b0c-bba7-c7eb884cf642>
+  PrefabRemaps:
+    []
+  Name: NeedleCrackle
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 1d1ac4cd-1458-4046-ac27-af5586f5ac76
 - !<SceneObject/3de2c7ea-1525-465a-9056-68565a4014a7>
   PrefabRemaps:
     []
@@ -1002,7 +1096,7 @@
   Enabled: true
   Layers: 1
   LocalTransform: !<TransformEntity>
-    Position: {x: -234.199997, y: -180.500000, z: -469.700012}
+    Position: {x: -232.000000, y: -180.500000, z: -470.299988}
     Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false
@@ -1484,7 +1578,7 @@
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false
   Children:
-    []
+    - !<own> 26aa38ad-6b63-4aa9-944c-1349e4160568
   Components:
     []
 - !<ScriptComponent/7365e106-07d5-4eca-a7e5-74442a1f1d18>
@@ -1500,7 +1594,9 @@
     followSpeed: true
     deadzoneDeg: true
     label: true
-    style: true
+    pillWidth: true
+    pillHeight: true
+    designDistance: true
   ScriptTypesDefault:
     {}
   ScriptInputs:
@@ -1511,10 +1607,30 @@
       followSpeed: !<float> 5.000000
       deadzoneDeg: !<float> 40.000000
       label: Reset
-      style: PrimaryNeutral
+      glowMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
+      pillWidth: !<float> 9.000000
+      pillHeight: 3.200000
+      designDistance: !<float> 110.000000
   ScriptTypes:
     "":
       {}
+- !<AudioComponent/744f8ada-3799-49f4-a365-ee5d6f5d3cc5>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> 65b6f326-b450-4dd8-89f7-9b21c351cdb2
+  EnableAutoplayLoop: false
+  Volume: 0.350000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<SceneObject/74d13517-1dbf-42e6-b536-27afc4909c65>
   PrefabRemaps:
     []
@@ -1873,8 +1989,8 @@
       questions: !<string[]>
         - "How does it make light?"
       dotMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
-      boundsCenter: !<Vec3> {x: 0.000000, y: -42.000000, z: 0.000000}
-      boundsSize: !<Vec3> {x: 30.000000, y: 119.000000, z: 30.000000}
+      boundsCenter: !<Vec3> {x: 0.000000, y: -17.500000, z: 0.000000}
+      boundsSize: !<Vec3> {x: 30.000000, y: 170.000000, z: 30.000000}
       stopOffset: !<Vec3> {x: 0.000000, y: -92.000000, z: 40.000000}
       designDistance: !<float> 110.000000
       minScale: 0.300000
@@ -2071,7 +2187,7 @@
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false
   Children:
-    []
+    - !<own> 3c147350-aa69-4b0c-bba7-c7eb884cf642
   Components:
     []
 - !<SceneObject/a7526b33-fca3-4f28-8e32-b0e9aa13c4b4>
@@ -2149,6 +2265,21 @@
     - !<own> f6687ab7-52ac-408d-a892-8a9559125450
   Components:
     []
+- !<SceneObject/ae24a046-02db-4e5d-a8ea-a60fd276ca4c>
+  PrefabRemaps:
+    []
+  Name: ScanSweep
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> b302f3a5-ca80-4723-9014-a15c4cdc23e9
 - !<SceneObject/b22d97e6-4c06-4135-af29-d26adb2b9d86>
   PrefabRemaps:
     []
@@ -2164,6 +2295,23 @@
     - !<own> 3de2c7ea-1525-465a-9056-68565a4014a7
   Components:
     []
+- !<AudioComponent/b302f3a5-ca80-4723-9014-a15c4cdc23e9>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> 80bbfc82-1d32-42fb-8c9e-63a91ee7687c
+  EnableAutoplayLoop: false
+  Volume: 0.450000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<SceneObject/b463be13-dddb-4b36-a3dd-c344bd3d8ef5>
   PrefabRemaps:
     []
@@ -2511,8 +2659,8 @@
       questions: !<string[]>
         - "How does it take a picture?"
       dotMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
-      boundsCenter: !<Vec3> {x: -0.500000, y: -8.000000, z: -1.500000}
-      boundsSize: !<Vec3> {x: 18.200001, y: 10.400000, z: 14.300000}
+      boundsCenter: !<Vec3> {x: 0.950000, y: -5.850000, z: 3.400000}
+      boundsSize: !<Vec3> {x: 15.800000, y: 11.300000, z: 17.799999}
       stopOffset: !<Vec3> {x: -10.800000, y: -12.700000, z: -9.800000}
       designDistance: !<float> 110.000000
       minScale: 0.300000
@@ -2576,6 +2724,23 @@
     - !<own> bbcbfc17-8d65-4333-bce1-6f7239f690b8
   Components:
     []
+- !<AudioComponent/d82ccb31-db1e-48d9-9fdd-b85665cf5b58>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> c4717f45-21af-4d5b-ab6d-8364c47ec1a8
+  EnableAutoplayLoop: false
+  Volume: 0.700000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<SceneObject/d9071294-12e8-425f-98f1-bf308a02639e>
   PrefabRemaps:
     []
@@ -2808,7 +2973,7 @@
   ScriptInputsDefault:
     coneModel: true
     shelfY: true
-    cameraLabelSide: true
+    cameraBodySize: true
     gazeEnterDeg: true
     gazeExitDeg: true
   ScriptTypesDefault:
@@ -2832,8 +2997,13 @@
       chimeAudio: !<reference.AudioComponent> f36c4c48-d97d-4cc0-a43f-e50994519674
       coneModel: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
       shelfY: !<float> -144.000000
-      cameraFacing: !<Vec3> {x: -0.300000, y: 0.000000, z: -0.950000}
-      cameraLabelSide: !<Vec3> {x: -1.000000, y: 0.000000, z: 0.000000}
+      cameraFacing: !<Vec3> {x: 0.940000, y: 0.000000, z: -0.340000}
+      cameraBodySize: !<Vec3> {x: 11.500000, y: 11.300000, z: 14.700000}
+      clickAudio: !<reference.AudioComponent> d82ccb31-db1e-48d9-9fdd-b85665cf5b58
+      powerUpAudio: !<reference.AudioComponent> 2f092ccd-f45f-4aa6-902f-124777517814
+      crackleAudio: !<reference.AudioComponent> 1d1ac4cd-1458-4046-ac27-af5586f5ac76
+      tickAudio: !<reference.AudioComponent> 744f8ada-3799-49f4-a365-ee5d6f5d3cc5
+      scanAudio: !<reference.AudioComponent> b302f3a5-ca80-4723-9014-a15c4cdc23e9
       gazeEnterDeg: !<float> 12.000000
       gazeExitDeg: !<float> 24.000000
   ScriptTypes:
@@ -2886,6 +3056,8 @@
     - !<own> ca3d9101-41c6-40f0-86ac-e54bd954f2d5
     - !<own> 5ed21ed2-32f2-4fc9-8cf3-0e1f7de3243d
     - !<own> dd9eb017-3a69-4647-b9a7-43aebf6ce018
+    - !<own> 25a61e62-fac3-43c1-bd4b-07438193f47f
+    - !<own> ae24a046-02db-4e5d-a8ea-a60fd276ca4c
   Components:
     []
 - !<SceneObject/f36287fd-ed56-442d-ba20-78f9ef6f3502>
@@ -2909,9 +3081,9 @@
     []
   Name: Audio
   Enabled: true
-  AudioTrack: !<reference> b01c7244-8dfc-4c60-983c-e5d5c5776b81
+  AudioTrack: !<reference> 93bc1c77-9dca-41f6-ba29-e3ca09f258ee
   EnableAutoplayLoop: false
-  Volume: 0.900000
+  Volume: 0.800000
   EnableMixToSnap: false
   RecordVolume: 1.000000
   EnableSpatialAudio: true
