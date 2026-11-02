@@ -99,6 +99,7 @@ export function expectOrder(main: CutawayMain, phases: string[]): void {
 export async function cleanStart(main: CutawayMain): Promise<void> {
   interactor = new DefaultLeafInteractor()
   main.holdExplanation = false
+  main.setHeadOverride(null)
   main.resetAll()
   main.lookAway()
   await sleep(SETTLE_MS)

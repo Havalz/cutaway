@@ -147,6 +147,9 @@ export class CutawayMain extends BaseScriptComponent {
   private camTransform: Transform | null = null
   private focused = -1
   private gazeOverride: vec3 | null = null
+  private headOverride: vec3 | null = null
+  /** Dots closer together than this (as seen from the head, degrees) count as lined up. */
+  private static readonly LINE_UP_DEG = 4
   private phaseLog: string[] = []
   private chimeLog: {time: number; position: vec3}[] = []
 
@@ -389,18 +392,26 @@ export class CutawayMain extends BaseScriptComponent {
     if (!this.camTransform || this.running) return
     const cam = this.camPos()
     const dir = this.gazeDir()
-    const angles = this.stations.map((s) => this.angleDeg(dir, this.pos(s.target).sub(cam)))
+    const toT = this.stations.map((s) => this.pos(s.target).sub(cam))
+    const angles = toT.map((d) => this.angleDeg(dir, d))
     this.stations.forEach((s, i) => {
       if (!s.armed && angles[i] > this.gazeExitDeg) s.armed = true
     })
+    // Two dots that line up in the gaze (one in front of the other, e.g. the camera in front of
+    // the record player from the sofa): the nearer one wins. Otherwise the one nearest the view centre.
+    const lined = (a: number, b: number) => this.angleDeg(toT[a], toT[b]) < CutawayMain.LINE_UP_DEG
+    const nearer = (a: number, b: number) => toT[a].length < toT[b].length
     let best = -1
-    for (let i = 0; i < angles.length; i++) if (best < 0 || angles[i] < angles[best]) best = i
+    for (let i = 0; i < angles.length; i++) {
+      if (angles[i] >= this.gazeEnterDeg) continue
+      if (best < 0 || (lined(i, best) ? nearer(i, best) : angles[i] < angles[best])) best = i
+    }
     let f = this.focused
     const exitFor = (i: number) => (this.stations[i].mode === "questions" ? this.gazeExitDeg * 1.6 : this.gazeExitDeg)
     if (f >= 0 && angles[f] < exitFor(f)) {
-      if (best !== f && angles[best] < this.gazeEnterDeg && angles[best] < angles[f] - 2) f = best
+      if (best >= 0 && best !== f && (lined(best, f) ? nearer(best, f) : angles[best] < angles[f] - 2)) f = best
     } else {
-      f = angles[best] < this.gazeEnterDeg ? best : -1
+      f = best
     }
     this.focused = f
     this.stations.forEach((s, i) => {
@@ -423,6 +434,7 @@ export class CutawayMain extends BaseScriptComponent {
   }
 
   private camPos(): vec3 {
+    if (this.headOverride) return this.headOverride
     return this.camTransform ? this.camTransform.getWorldPosition() : vec3.zero()
   }
 
@@ -447,6 +459,11 @@ export class CutawayMain extends BaseScriptComponent {
   /** Test hook: pretend the user is looking along `dir` (world). Pass null to use the real head pose. */
   setGazeOverride(dir: vec3 | null): void {
     this.gazeOverride = dir
+  }
+
+  /** Test hook: pretend the head is at `p` (world) for gaze. Pass null to use the real head pose. */
+  setHeadOverride(p: vec3 | null): void {
+    this.headOverride = p
   }
 
   /** Test hook: look straight at a station's marker. */

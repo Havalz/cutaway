@@ -12,7 +12,7 @@
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
 import {DynamicRibbon, GlowPath, MeshKit, setFade, spawnMesh, Spawned, TrailRibbon, UnitLine} from "./CutawayGeometry"
 import {ENERGY, ink, UI_WHITE, wave} from "./CutawayStyle"
-import {clamp01, easeInOut, easeInOutCubic, easeOutCubic, faceToward, Pop} from "./CutawayTween"
+import {clamp01, easeInOutCubic, easeOutCubic, faceToward, Pop} from "./CutawayTween"
 
 export interface ExplainContext {
   root: SceneObject
@@ -35,14 +35,7 @@ export interface ExplainContext {
   uiScale: number
 }
 
-const CYAN = new vec4(0.55, 0.9, 1.0, 1)
-const WARM = new vec4(1.0, 0.8, 0.45, 1)
-const WHITE = new vec4(0.92, 0.96, 1.0, 1)
 const ZERO = new vec4(0, 0, 0, 0)
-
-function rgba(c: vec4, k: number): vec4 {
-  return new vec4(c.x * k, c.y * k, c.z * k, c.w * k)
-}
 
 function flat(v: vec3): vec3 {
   const f = new vec3(v.x, 0, v.z)
@@ -210,13 +203,49 @@ export abstract class Explanation {
     return new GlowPath(this.ctx.root, name, this.ctx.glowMat, worldPts.map((p) => this.L(p)), {radius, color, halo, haloAlpha: 0.22, sides: 6, step: 3})
   }
 
-  protected headSphere(name: string, r: number, color: vec4): SceneObject {
-    const kit = new MeshKit()
-    kit.addSphere(vec3.zero(), r, color, 6, 10)
-    kit.addSphere(vec3.zero(), r * 2.2, rgba(color, 0.18), 6, 10)
-    const s = this.glow(this.ctx.root, name, kit)
-    s.so.enabled = false
-    return s.so
+  /**
+   * Magnify bubble: thin double rim and a faint inner glow (rim radius 12 bubble units, the face
+   * scaled by `S`), always facing the viewer. It grows out of `spot` to `target` (world) in 300 ms
+   * from `at`, then a hairline leader runs from `spot` to the rim. Contents go under `face`.
+   */
+  protected magnifyBubble(
+    name: string,
+    spot: vec3,
+    target: vec3,
+    S: number,
+    beat: number,
+    at: number
+  ): {face: SceneObject; open: () => number; R: number; toWorld: (x: number, y: number) => vec3} {
+    const R = 12
+    const cam = this.ctx.camPos()
+    const bubble = this.node(name, spot)
+    const face = this.node(name + "Face", vec3.zero(), bubble)
+    face.getTransform().setLocalScale(vec3.one().uniformScale(S))
+    bubble.getTransform().setLocalScale(vec3.one().uniformScale(1e-4))
+    const open = () => easeOutCubic((this.t - at) / 0.3)
+    const fk = new MeshKit()
+    fk.addArcXY(0, 0, R, 0.2, 0, Math.PI * 2, ink(UI_WHITE, 0.85), 96)
+    fk.addArcXY(0, 0, R - 0.55, 0.1, 0, Math.PI * 2, ink(UI_WHITE, 0.4), 96)
+    fk.addFanXY(0, 0, 8, 0, Math.PI * 2, ink(UI_WHITE, 0.02), ink(UI_WHITE, 0.03), 48)
+    fk.addSoftRingXY(0, 0, 8, R - 0.6, ink(UI_WHITE, 0.03), ink(UI_WHITE, 0.1), 64)
+    const frame = this.glow(face, name + "Frame", fk)
+    this.inkBeat(frame.mat, beat, open)
+    const hair = this.hairAt(spot)
+    const rimPt = target.add(spot.sub(target).normalize().uniformScale(R * S))
+    const leader = this.path(name + "Leader", [spot, rimPt], hair * 0.6, ink(UI_WHITE, 0.5), hair * 1.5)
+    const leaderIn = () => easeOutCubic((this.t - at - 0.3) / 0.25)
+    this.inkBeat(leader.mat, beat, leaderIn)
+    this.tick(() => {
+      const k = open()
+      const lk = leaderIn()
+      if (lk > 0) leader.setRange(0, lk)
+      const tr = bubble.getTransform()
+      tr.setLocalScale(vec3.one().uniformScale(Math.max(1e-4, k)))
+      tr.setLocalPosition(this.L(vec3.lerp(spot, target, k)))
+      face.getTransform().setWorldRotation(faceToward(cam.sub(tr.getWorldPosition())))
+    })
+    const toWorld = (x: number, y: number) => face.getTransform().getWorldTransform().multiplyPoint(new vec3(x, y, 0))
+    return {face, open, R, toWorld}
   }
 
   /**
@@ -1002,6 +1031,109 @@ export class CameraExplanation extends Explanation {
     }
     this.cue(PIX, () => ctx.log("pixels"))
 
+    // ---------------- Beats 4–5 up close: a magnify bubble on the sensor ----------------
+    // At real size the image and the pixels are a few pixels across from the room. A bubble left
+    // of the camera (clear of the rays and the subject) shows the sensor large: the arrow lands
+    // upside down (beat 4), then the pixels under it flash cyan (beat 5).
+    const SB = Math.min(2.2, Math.max(1, cam.distance(center) / 220))
+    const sensorSpot = toWorld(xSensor, (imgTip + imgBase) / 2)
+    const bubTarget = toWorld(winC.x - RW - 3 - 12 * SB, winC.y - 3).add(n.uniformScale(2))
+    const bub = this.magnifyBubble("SensorBubble", sensorSpot, bubTarget, SB, 4, B[3])
+    this.cue(B[3], () => ctx.log("sensorBubble"))
+    const bf = bub.face
+    const BR = bub.R
+    const bubIn = () => bub.open() * easeOutCubic((this.t - B[3] - 0.2) / 0.3)
+    // The sensor at an angle, as in the section: rows x columns, its front edge on the right.
+    const BROWS = 7
+    const BCOLS = 5
+    const by0 = -8.2
+    const by1 = 6.2
+    const bdv = new vec2(-6.4, 3.4)
+    const gp = (y: number, d: number) => new vec2(3.2 + bdv.x * d, y + bdv.y * d)
+    const rowAt = (r: number) => by0 + ((by1 - by0) * r) / BROWS
+    const bgk = new MeshKit()
+    for (let r = 0; r <= BROWS; r++) {
+      const a = gp(rowAt(r), 0)
+      const b = gp(rowAt(r), 1)
+      bgk.addLineXY(a.x, a.y, b.x, b.y, 0.13, ink(LIGHT, 0.45))
+    }
+    for (let c = 0; c <= BCOLS; c++) {
+      const a = gp(by0, c / BCOLS)
+      const b = gp(by1, c / BCOLS)
+      bgk.addLineXY(a.x, a.y, b.x, b.y, c === 0 ? 0.2 : 0.13, ink(LIGHT, c === 0 ? 0.8 : 0.45))
+    }
+    const bGrid = this.glow(bf, "BubbleSensor", bgk)
+    this.inkBeat(bGrid.mat, 4, bubIn)
+    // Light from the lens arrives from the right and converges on the image's tip and base.
+    const bTip = gp(-6.0, 0.5)
+    const bBase = gp(3.6, 0.5)
+    const bubRays: {p: GlowPath; st: number}[] = []
+    for (const deg of [-14, 0, 14]) {
+      const a = (deg * Math.PI) / 180
+      const src = new vec3(Math.cos(a) * 10.9, Math.sin(a) * 10.9, 0.02)
+      for (const dst of [bTip, bBase]) {
+        const i = bubRays.length
+        const p = new GlowPath(bf, "BubbleRay" + i, ctx.glowMat, [src, new vec3(dst.x, dst.y, 0.02)], {
+          radius: 0.07,
+          color: ink(LIGHT, 0.85),
+          halo: 0.32,
+          haloAlpha: 0.16,
+          sides: 5,
+          step: 0.5
+        })
+        this.inkBeat(p.mat, 3)
+        bubRays.push({p, st: i * 0.05})
+      }
+    }
+    this.tick((t) => {
+      for (const r of bubRays) {
+        const k = easeInOutCubic(phase(t, FLIP + 0.15 + r.st, FLIP + 0.5 + r.st))
+        if (k > 0) r.p.setRange(0, k)
+      }
+    })
+    // The image: the same arrow, pointing down, drawn on the sensor's face.
+    const bik = new MeshKit()
+    const wingL = new vec2(bTip.x + bdv.x * 0.16, bTip.y + 1.7 + bdv.y * 0.16)
+    const wingR = new vec2(bTip.x - bdv.x * 0.16, bTip.y + 1.7 - bdv.y * 0.16)
+    bik.addLineXY(bBase.x, bBase.y, bTip.x, bTip.y, 0.3, ink(LIGHT, 1), 0.5, ink(LIGHT, 0.25))
+    bik.addLineXY(bTip.x, bTip.y, wingL.x, wingL.y, 0.28, ink(LIGHT, 1))
+    bik.addLineXY(bTip.x, bTip.y, wingR.x, wingR.y, 0.28, ink(LIGHT, 1))
+    for (const p of [bTip, bBase]) bik.addSoftRingXY(p.x, p.y, 0, 0.9, ink(LIGHT, 0.35), ZERO, 20)
+    const bImg = this.glow(bf, "BubbleImage", bik)
+    this.inkBeat(bImg.mat, 4, this.ramp(FLIP + 0.5, 0.3))
+    // Beat 5: the cells the image covers flash cyan, top row first (as in the section).
+    const bRowH = (by1 - by0) / BROWS
+    const litCells = (r: number) => (r === 1 ? [1, 2, 3] : r >= 2 && r <= 5 ? [2] : [])
+    let bRow = 0
+    for (let r = BROWS - 1; r >= 0; r--) {
+      const cols = litCells(r)
+      if (cols.length === 0) continue
+      const pk = new MeshKit()
+      for (const c of cols) {
+        const ctr = gp(rowAt(r) + bRowH / 2, (c + 0.5) / BCOLS)
+        const du = new vec3((bdv.x / BCOLS) * 0.42, (bdv.y / BCOLS) * 0.42, 0)
+        const dy = new vec3(0, bRowH * 0.42, 0)
+        pk.addQuad(new vec3(ctr.x, ctr.y, 0.01), dy, du, ink(SIGNAL, 1))
+      }
+      const pm = this.glow(bf, "BubblePixels" + r, pk)
+      const t0 = PIX + 0.05 * bRow
+      this.inkBeat(pm.mat, 4, () => {
+        const tt = this.t - t0
+        if (tt < 0) return 0
+        if (tt < 0.07) return tt / 0.07
+        return 0.6 + 0.4 * Math.exp(-(tt - 0.07) / 0.35)
+      })
+      bRow++
+    }
+    this.cue(B[3] + 0.9, () => {
+      const a = gp(by0, 0)
+      this.label("bubbleSensor", "Sensor", bub.toWorld(-4, -BR - 3.5), bub.toWorld(a.x, a.y))
+    })
+    this.cue(PIX + 0.6, () => {
+      const a = gp(rowAt(3) + bRowH / 2, 0.5)
+      this.label("pixels", "Pixels", bub.toWorld(-4, -BR - 3.5), bub.toWorld(a.x, a.y))
+    })
+
     // Text and controls: the question (with the caption under it) above the window, Stop below.
     const v = center.sub(cam).normalize()
     const vR = v.cross(up).normalize()
@@ -1020,102 +1152,444 @@ export class CameraExplanation extends Explanation {
 }
 
 // =====================================================================================
-// Lamp: current flows along the cord (beads), reaches the bulb, the filament glows and
-// light rays stream out.
+// Lamp — "How does it make light?" Five beats on the paper column lamp (an LED bulb). The section
+// plane holds the lamp's axis and faces the viewer. Electricity is cyan; light is warm white.
 // =====================================================================================
 export class LampExplanation extends Explanation {
-  readonly duration = 15.5
+  static readonly BEATS = [0.05, 3.4, 7.0, 10.6, 14.0]
+  static readonly END = 16.6
+  readonly duration = LampExplanation.END + 0.25
 
-  constructor(ctx: ExplainContext, shade: vec3, base: vec3, cordStart: vec3) {
+  /**
+   * @param dot the lamp's dot (LampMarker), on the axis at the shade's widest point: the LED chip sits here
+   * @param base top centre of the base disc (LampBaseMarker)
+   * @param outlet the wall outlet the cord comes from (CordStartMarker)
+   */
+  constructor(ctx: ExplainContext, dot: vec3, base: vec3, outlet: vec3) {
     super(ctx)
     this.energies = [ENERGY.signal, ENERGY.light]
+    const B = LampExplanation.BEATS
+    const END = LampExplanation.END
+    const LIGHT = ENERGY.light
+    const SIGNAL = ENERGY.signal
+    const cam = ctx.camPos()
     const up = vec3.up()
-    const floorY = base.y - 1
-    const bulb = shade.add(up.uniformScale(-4))
-    // Screen-right as seen by the user: labels go beside the lamp, clear of the pole and the question caption.
-    const right = flat(ctx.camPos().sub(base)).uniformScale(-1).cross(up).normalize()
-    const cordPts = [
-      cordStart,
-      new vec3(cordStart.x, floorY, cordStart.z),
-      new vec3(base.x, floorY, base.z),
-      new vec3(base.x, shade.y - 14, base.z),
-      bulb
-    ]
-    const cord = this.path("Cord", cordPts, 0.7, new vec4(0.95, 0.62, 0.26, 1), 2.0)
-    const N_BEADS = 9
-    const beads: SceneObject[] = []
-    for (let i = 0; i < N_BEADS; i++) beads.push(this.headSphere("Current" + i, 1.5, new vec4(1, 0.92, 0.6, 1)))
-    const SPEED = 55
-    const CORD = 0.2
+    const bounds = ctx.bounds
+    const hair = this.hairAt(dot)
+    const LW = hair * 1.5 // part lines
+    const LWF = hair * 1.25 // faint structure lines
 
-    this.cue(CORD, () => {
-      ctx.log("cord")
-      ctx.log("flow")
-      this.label("cord", "Current flows through the cord", base.add(right.uniformScale(42)).add(up.uniformScale(14)))
+    this.beats(
+      B,
+      [null, "Electric energy flows up the cord.", "A tiny chip turns electricity into light.", "The paper scatters it into a soft glow.", null],
+      END
+    )
+
+    // ---------------- Frame: a section through the lamp's axis, facing the viewer ----------------
+    const n = flat(cam.sub(dot)) // toward the viewer
+    const side = up.cross(n).normalize() // the viewer's right
+    const sec = this.node("LampSection", dot)
+    const secT = sec.getTransform()
+    secT.setWorldRotation(quat.lookAt(n, up))
+    const toWorld = (x: number, y: number) => secT.getWorldTransform().multiplyPoint(new vec3(x, y, 0))
+    // The column in section cm (y up from the dot), measured on the room's lamp: base disc, a
+    // 19.5 cm stem, then the paper shade, widest at the dot, up to the top of the bounds.
+    const yBase = base.y - dot.y
+    const yShadeBot = yBase + 19.5
+    const yShadeTop = bounds.center.y + bounds.size.y / 2 - dot.y
+    const RM = Math.min(bounds.size.x, bounds.size.z) / 2 - 1.5
+    const RB = RM * 0.48
+    const RT = RM * 0.52
+    const shadeR = (y: number) =>
+      y <= 0
+        ? RB + (RM - RB) * Math.sin((Math.PI / 2) * clamp01((y - yShadeBot) / -yShadeBot))
+        : RT + (RM - RT) * Math.cos((Math.PI / 2) * clamp01(y / yShadeTop))
+
+    // ---------------- Beat 1: ghost shell on the column, the x-ray window, the cord's path ----------------
+    this.cue(B[0], () => ctx.log("shell"))
+    this.ghostShell("GhostShell", bounds.center, bounds.size, 0, B[0], {x: side, y: up, z: n})
+
+    // X-ray window on the paper around the bulb (thin rim, faint inner glow). It grows out of the dot.
+    const winC = new vec3(0, -1.5, 0)
+    const RW = Math.min(11, RM - 2)
+    const win = this.node("XrayWindow", vec3.zero(), sec)
+    win.getTransform().setLocalScale(vec3.one().uniformScale(1e-4))
+    const winOpen = () => easeOutCubic(phase(this.t, B[0] + 0.15, B[0] + 0.5))
+    this.tick(() => {
+      const k = winOpen()
+      win.getTransform().setLocalPosition(winC.uniformScale(k))
+      win.getTransform().setLocalScale(vec3.one().uniformScale(Math.max(1e-4, k)))
     })
+    this.cue(B[0] + 0.15, () => ctx.log("cutaway"))
+    const rk = new MeshKit()
+    rk.addArcXY(0, 0, RW, hair * 1.4, 0, Math.PI * 2, ink(UI_WHITE, 0.6), 128)
+    rk.addFanXY(0, 0, RW * 0.72, 0, Math.PI * 2, ink(UI_WHITE, 0.02), ink(UI_WHITE, 0.03), 64)
+    rk.addSoftRingXY(0, 0, RW * 0.72, RW - hair, ink(UI_WHITE, 0.03), ink(UI_WHITE, 0.09), 96)
+    const rim = this.flat(win, "XrayRim", rk)
+    // The window frames the bulb through beat 3 (on bright paper a dimmed rim would vanish).
+    this.inkBeat(rim.mat, 2, winOpen)
+    const partsIn = (delay: number) => () => winOpen() * easeOutCubic((this.t - B[0] - 0.35 - delay) / 0.3)
+
+    // The LED bulb, drawn in section coordinates (the node undoes the window's offset): housing,
+    // screw base and socket (structure, faint white), the LED board and its chip, the globe (light).
+    const bulb = this.node("Bulb", new vec3(-winC.x, -winC.y, 0.01), win)
+    const pl = (k: MeshKit, pts: number[][], w: number, c: vec4) => k.addPolylineXY(pts.map((p) => new vec2(p[0], p[1])), w, c)
+    const structure = ink(UI_WHITE, 0.45)
+    const bk = new MeshKit()
+    pl(bk, [[-2.4, 0], [-1.35, -3], [1.35, -3], [2.4, 0]], LWF, structure)
+    pl(bk, [[-1.35, -3], [-1.35, -5.5], [-0.6, -6.2], [0.6, -6.2], [1.35, -5.5], [1.35, -3]], LWF, structure)
+    bk.addLineXY(-1.35, -4.3, 1.35, -4.0, LWF * 0.8, ink(UI_WHITE, 0.3))
+    pl(bk, [[-1.9, -5.4], [-1.9, -10], [1.9, -10], [1.9, -5.4]], LWF, ink(UI_WHITE, 0.35))
+    bk.addLineXY(-2.4, 0, 2.4, 0, LW, ink(UI_WHITE, 0.6))
+    pl(bk, [[-0.5, 0.05], [-0.5, 0.65], [0.5, 0.65], [0.5, 0.05]], LWF, ink(UI_WHITE, 0.85))
+    const bulbParts = this.flat(bulb, "BulbParts", bk)
+    this.inkBeat(bulbParts.mat, 2, partsIn(0))
+    const GC = new vec3(0, 2.6, 0)
+    const GR = Math.sqrt(2.4 * 2.4 + 2.6 * 2.6)
+    const ga = Math.atan2(-2.6, 2.4)
+    const gk = new MeshKit()
+    gk.addArcXY(GC.x, GC.y, GR, LW, ga, Math.PI - ga, ink(LIGHT, 0.75), 48)
+    const globe = this.flat(bulb, "Globe", gk)
+    this.inkBeat(globe.mat, 3, partsIn(0.07))
+
+    // The cord's path: from the wall outlet down to the floor, under the base, up the stem and the
+    // centre rod into the socket. It draws itself from the bulb back to the outlet.
+    const toOutlet = flat(outlet.sub(base))
+    const floorY = base.y - 1.1
+    const axisAt = (y: number) => new vec3(dot.x, y, dot.z)
+    const cordPts = [outlet, new vec3(outlet.x, floorY, outlet.z), axisAt(floorY).add(toOutlet.uniformScale(RM)), axisAt(base.y - 0.6), axisAt(dot.y - 10)]
+    const cord = this.path("Cord", cordPts, hair * 0.6, ink(UI_WHITE, 0.45), hair * 1.6)
+    this.inkBeat(cord.mat, 0)
+    const cordIn = () => easeInOutCubic(phase(this.t, B[0] + 0.6, B[0] + 1.5))
+    this.tick(() => {
+      const k = cordIn()
+      if (k > 0) cord.setRange(1 - k, 1)
+    })
+    const outletNode = this.node("Outlet", outlet)
+    outletNode.getTransform().setWorldRotation(quat.lookAt(flat(cam.sub(outlet)), up))
+    const ok = new MeshKit()
+    ok.addArcXY(0, 0, 1.6, LWF, 0, Math.PI * 2, structure, 32)
+    for (const x of [-0.55, 0.55]) ok.addFanXY(x, 0, 0.25, 0, Math.PI * 2, structure, structure, 8)
+    const outletMark = this.flat(outletNode, "OutletMark", ok)
+    this.inkBeat(outletMark.mat, 0, this.ramp(B[0] + 1.4, 0.3))
+
+    // Labels: anchored on the part, short leader to just outside the window (or beside the base).
+    const outside = (ax: number, ay: number, dx: number, dy: number, margin: number) => {
+      const d = new vec2(dx, dy).normalize()
+      const px = ax - winC.x
+      const py = ay - winC.y
+      const b = px * d.x + py * d.y
+      const c = px * px + py * py - (RW + margin) * (RW + margin)
+      const t = -b + Math.sqrt(Math.max(0, b * b - c))
+      return toWorld(ax + d.x * t, ay + d.y * t)
+    }
+    const ba = (35 * Math.PI) / 180
+    const globePt = new vec2(GC.x + GR * Math.cos(ba), GC.y + GR * Math.sin(ba))
+    this.cue(B[0] + 0.9, () => this.label("bulb", "LED bulb", outside(globePt.x, globePt.y, 0.75, 0.66, 1.4), toWorld(globePt.x, globePt.y)))
+    const cordMid = vec3.lerp(cordPts[1], cordPts[2], 0.5)
+    this.cue(B[0] + 1.5, () => this.label("cord", "Cord", cordMid.add(side.uniformScale(-16)).add(up.uniformScale(12)), cordMid))
+
+    // ---------------- Beat 2: energy flows up the cord ----------------
+    // Soft cyan pulses travel from the outlet into the socket: energy moving along the cord, drawn
+    // as tapered glows (not particles). The first one leaves the cord charged behind it.
+    const FLOW = B[1] + 0.25
+    const SPEED = 55
+    const LP = 16
+    const NPULSE = 5
+    const Ltot = cord.length
+    const CYC = Ltot + LP + 4
+    const NPTS = 20
+    const charged = this.path("CordCharged", cordPts, hair * 0.7, ink(SIGNAL, 0.5), hair * 2.2)
+    this.inkBeat(charged.mat, 2)
+    const pulses: {node: SceneObject; core: TrailRibbon; halo: TrailRibbon}[] = []
+    for (let i = 0; i < NPULSE; i++) {
+      const node = this.node("Current" + i, vec3.zero(), ctx.root)
+      const core = new TrailRibbon(node, "PulseCore", ctx.glowMat, NPTS, hair * 2.4, ink(SIGNAL, 1))
+      const halo = new TrailRibbon(node, "PulseGlow", ctx.glowMat, NPTS, hair * 8, ink(SIGNAL, 0.22))
+      this.inkBeat(core.mat, 2)
+      this.inkBeat(halo.mat, 2)
+      node.enabled = false
+      pulses.push({node, core, halo})
+    }
+    this.cue(B[1], () => ctx.log("cord"))
+    this.cue(FLOW, () => ctx.log("flow"))
     this.tick((t) => {
-      if (t < CORD) return
-      cord.setRange(0, easeInOut(phase(t, CORD, CORD + 0.8)))
-      cord.setOpacity(0.5)
-      const run = t - CORD - 0.6
-      for (let i = 0; i < N_BEADS; i++) {
+      const run = (t - FLOW) * SPEED
+      if (run < 0) return
+      charged.setRange(0, clamp01(run / Ltot))
+      for (let i = 0; i < NPULSE; i++) {
+        const p = pulses[i]
+        const raw = run - (i * CYC) / NPULSE
+        const head = raw < 0 ? -1 : raw % CYC
+        const on = head >= 0 && head - LP < Ltot
+        p.node.enabled = on
+        if (!on) continue
+        const mid = cord.pointAt(clamp01((head - LP / 2) / Ltot))
+        p.node.getTransform().setLocalPosition(mid)
+        const pts: vec3[] = []
+        const alphas: number[] = []
+        for (let j = 0; j < NPTS; j++) {
+          const u = j / (NPTS - 1)
+          const sRaw = head - LP * u
+          const s = Math.max(0, Math.min(Ltot, sRaw))
+          pts.push(cord.pointAt(s / Ltot).sub(mid))
+          const inside = sRaw >= 0 && sRaw <= Ltot ? 1 : 0
+          // Fades in leaving the outlet, and is taken in by the socket at the top.
+          alphas.push(inside * Math.pow(Math.sin(Math.PI * u), 0.8) * clamp01(s / 6) * clamp01((Ltot - s) / 6))
+        }
+        const view = cam.sub(this.origin.add(mid)).normalize()
+        p.core.update(pts, view, alphas)
+        p.halo.update(pts, view, alphas)
+      }
+    })
+
+    // ---------------- Beat 3: magnify bubble at the LED chip ----------------
+    // Cyan comes in along the board's traces; warm white light leaves the top of the chip.
+    // Same apparent size as the camera's bubble from wherever the lamp is seen.
+    const S = Math.min(2.2, Math.max(1, cam.distance(dot) / 220))
+    const RS = 12 * S
+    const chipW = toWorld(0, 0.35)
+    const bubTarget = dot.add(side.uniformScale(RM + RS + 6)).add(up.uniformScale(RS * 0.3)).add(n.uniformScale(4))
+    const bub = this.magnifyBubble("ChipBubble", chipW, bubTarget, S, 2, B[2])
+    this.cue(B[2], () => ctx.log("bubble"))
+    const face = bub.face
+    const bubIn = (d: number) => () => bub.open() * easeOutCubic((this.t - B[2] - 0.2 - d) / 0.3)
+    // The board and the chip on it (about 6x).
+    const ck = new MeshKit()
+    ck.addLineXY(-10.2, -3, 10.2, -3, 0.16, ink(UI_WHITE, 0.45))
+    ck.addPolylineXY([new vec2(-2.7, -3), new vec2(-2.7, -0.6), new vec2(2.7, -0.6), new vec2(2.7, -3)], 0.18, ink(UI_WHITE, 0.85))
+    ck.addRectXY(-2.6, -2.95, 2.6, -0.65, ink(UI_WHITE, 0.05))
+    const chipMesh = this.glow(face, "LedChip", ck)
+    this.inkBeat(chipMesh.mat, 2, bubIn(0))
+    // Traces: the conductors that bring the electricity in (faint cyan), from both sides.
+    const traces = [
+      [new vec2(-10, -4.6), new vec2(-3.4, -4.6), new vec2(-2.0, -3.05)],
+      [new vec2(10, -4.6), new vec2(3.4, -4.6), new vec2(2.0, -3.05)]
+    ]
+    const tk = new MeshKit()
+    for (const tr of traces) tk.addPolylineXY(tr, 0.12, ink(SIGNAL, 0.4))
+    const traceMesh = this.glow(face, "Traces", tk)
+    this.inkBeat(traceMesh.mat, 2, bubIn(0.05))
+    const polyLen = (pts: vec2[]) => {
+      let L = 0
+      for (let i = 1; i < pts.length; i++) L += pts[i].distance(pts[i - 1])
+      return L
+    }
+    const polyAt = (pts: vec2[], s: number) => {
+      let rest = Math.max(0, s)
+      for (let i = 1; i < pts.length; i++) {
+        const seg = pts[i].distance(pts[i - 1])
+        if (rest <= seg) return vec2.lerp(pts[i - 1], pts[i], seg > 1e-6 ? rest / seg : 0)
+        rest -= seg
+      }
+      return pts[pts.length - 1]
+    }
+    // Cyan pulses run along the traces into the chip (two per side, looping).
+    const IN = B[2] + 0.35
+    const sparks: {line: UnitLine; tr: vec2[]; off: number; a: number}[] = []
+    for (const tr of traces) {
+      for (let k = 0; k < 2; k++) {
+        const line = new UnitLine(face, "ChipCurrent", ctx.glowMat, 0.36, ink(SIGNAL, 1), 0.45)
+        const sp = {line, tr, off: k * 0.5, a: 0}
+        this.inkBeat(line.mat, 2, () => sp.a)
+        sparks.push(sp)
+      }
+    }
+    this.tick((t) => {
+      for (const sp of sparks) {
+        const L = polyLen(sp.tr)
+        const run = t - IN
         if (run < 0) {
-          beads[i].enabled = false
+          sp.a = 0
           continue
         }
-        const fr = (((run * SPEED) / cord.length + i / N_BEADS) % 1 + 1) % 1
-        beads[i].enabled = true
-        beads[i].getTransform().setLocalPosition(cord.pointAt(fr))
+        const f = (run * 0.9 + sp.off) % 1
+        const s = f * (L + 1.8)
+        const a = polyAt(sp.tr, s - 1.8)
+        const b = polyAt(sp.tr, Math.min(L, s))
+        sp.line.set(new vec3(a.x, a.y, 0.03), new vec3(b.x, b.y, 0.03))
+        sp.a = clamp01(run / 0.3) * clamp01(s / 1.5) * clamp01((L + 1.8 - s) / 1.2) * bub.open()
       }
     })
-
-    // ---- bulb + filament glow ----
-    const BULB = 6.8
-    const bulbNode = this.node("Bulb", bulb)
-    bulbNode.enabled = false
-    const coreKit = new MeshKit()
-    coreKit.addSphere(vec3.zero(), 4.5, new vec4(0.6, 0.45, 0.25, 1), 8, 12)
-    coreKit.addSphere(vec3.zero(), 10, new vec4(0.2, 0.15, 0.08, 0.2), 8, 12)
-    const core = this.glow(bulbNode, "BulbGlow", coreKit)
-    const filKit = new MeshKit()
-    const zig: vec3[] = []
-    for (let i = 0; i <= 8; i++) zig.push(new vec3(-2 + i * 0.5, i % 2 === 0 ? -0.6 : 0.6, 0))
-    filKit.addTube(zig, 0.22, new vec4(1, 0.95, 0.8, 1), 5, 1)
-    this.glow(bulbNode, "Filament", filKit)
-    const bulbPop = this.pop(bulbNode)
-    this.cue(BULB, () => {
-      ctx.log("bulb")
-      bulbPop.show(true)
-      this.unlabel("cord")
-      this.label("bulb", "The hot filament glows: that's light", bulb.add(right.uniformScale(56)))
-    })
+    this.cue(IN, () => ctx.log("chip"))
+    // Light out: the top of the chip glows warm and packets of light leave it upward.
+    const LIGHT_ON = B[2] + 0.9
+    const dk = new MeshKit()
+    dk.addFanXY(0, -0.6, 5.2, 0, Math.PI, ink(LIGHT, 0.32), ZERO, 32)
+    dk.addLineXY(-2.7, -0.6, 2.7, -0.6, 0.26, ink(LIGHT, 1), 0.5, ink(LIGHT, 0.3))
+    const dieGlow = this.glow(face, "ChipLight", dk)
+    this.inkBeat(dieGlow.mat, 2, this.ramp(LIGHT_ON, 0.3))
+    const chipRays: {p: GlowPath; off: number}[] = []
+    for (let i = 0; i < 7; i++) {
+      const ang = ((90 + (i - 3) * 17) * Math.PI) / 180
+      const x0 = -2.1 + 0.7 * i
+      const p0 = new vec2(x0, -0.4)
+      const d = new vec2(Math.cos(ang), Math.sin(ang))
+      // Out to just inside the rim.
+      const bq = p0.x * d.x + p0.y * d.y
+      const cq = p0.x * p0.x + p0.y * p0.y - 10.6 * 10.6
+      const L = -bq + Math.sqrt(Math.max(0, bq * bq - cq))
+      const p1 = p0.add(d.uniformScale(L))
+      const p = new GlowPath(face, "ChipRay" + i, ctx.glowMat, [new vec3(p0.x, p0.y, 0.03), new vec3(p1.x, p1.y, 0.03)], {
+        radius: 0.09,
+        color: ink(LIGHT, 0.95),
+        halo: 0.38,
+        haloAlpha: 0.18,
+        sides: 5,
+        step: 0.5
+      })
+      this.inkBeat(p.mat, 2)
+      chipRays.push({p, off: ((i * 3) % 7) / 7})
+    }
     this.tick((t) => {
-      if (t < BULB) return
-      setFade(core.mat, 0.85 + 0.15 * Math.sin(t * 9))
-    })
-
-    // ---- rays stream out of the shade ----
-    const RAYS = 7.6
-    const rays: {p: GlowPath; offset: number}[] = []
-    this.cue(RAYS, () => {
-      ctx.log("rays")
-      const n = 14
-      for (let i = 0; i < n; i++) {
-        const az = (i / n) * Math.PI * 2
-        const el = -0.25 - 0.5 * ((i * 7) % 5) / 4
-        const dir = new vec3(Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el)).normalize()
-        const p = this.path("LightRay" + i, [bulb.add(dir.uniformScale(8)), bulb.add(dir.uniformScale(48))], 0.3, new vec4(1, 0.86, 0.55, 1), 1.0)
-        rays.push({p, offset: ((i * 5) % n) / n})
+      if (t < LIGHT_ON) return
+      for (const r of chipRays) {
+        const h = ((t - LIGHT_ON) * 1.3 + r.off) % 1.4
+        r.p.setRange(Math.max(0, h - 0.4), Math.min(1, h))
       }
     })
+    // At real size the chip lights up inside the bulb, and stays on.
+    const lk = new MeshKit()
+    lk.addFanXY(0, 0.65, 2.6, 0, Math.PI, ink(LIGHT, 0.7), ZERO, 24)
+    lk.addFanXY(GC.x, GC.y, GR, 0, Math.PI * 2, ink(LIGHT, 0.12), ink(LIGHT, 0.03), 32)
+    const bulbLight = this.flat(bulb, "BulbLight", lk)
+    this.inkBeat(bulbLight.mat, 4, this.ramp(LIGHT_ON, 0.4))
+    this.cue(LIGHT_ON, () => {
+      ctx.log("light")
+      if (ctx.playPowerUp) ctx.playPowerUp()
+      ctx.log("powerUp")
+    })
+    this.cue(B[2] + 1.1, () => this.label("chip", "LED chip", bub.toWorld(bub.R + 4, -4), bub.toWorld(2.7, -1.8)))
+
+    // ---------------- Beat 4: light hits the paper and scatters into a soft glow ----------------
+    const RAYS = B[3] + 0.2
+    const rayOpts = (c: vec4) => ({radius: hair * 0.55, color: c, halo: hair * 2.2, haloAlpha: 0.16, sides: 5, step: 0.6})
+    const rays: {p: GlowPath; head: SceneObject; spot: SceneObject; burst: SceneObject; st: number; dur: number}[] = []
+    const rayDegs = [-35, -10, 15, 40, 65, 115, 140, 165, 190, 215]
+    rayDegs.forEach((deg, i) => {
+      const a = (deg * Math.PI) / 180
+      const d = new vec3(Math.cos(a), Math.sin(a), 0)
+      const p0 = GC.add(d.uniformScale(GR + 0.3))
+      let hit = p0
+      for (let s = GR; s < 140; s += 0.25) {
+        const q = GC.add(d.uniformScale(s))
+        hit = q
+        if (Math.abs(q.x) >= shadeR(q.y) || q.y >= yShadeTop || q.y <= yShadeBot) break
+      }
+      const p = new GlowPath(sec, "LightRay" + i, ctx.glowMat, [p0, hit], rayOpts(ink(LIGHT, 0.9)))
+      const st = ((i * 3) % rayDegs.length) * 0.05
+      const dur = 0.25 + p0.distance(hit) / 110
+      // The light is diffuse once it has scattered: the rays fade out as the glow settles.
+      this.inkBeat(p.mat, 3, () => 1 - clamp01((this.t - B[4]) / 0.5))
+      const hk = new MeshKit()
+      hk.addFanXY(0, 0, hair * 2.2, 0, Math.PI * 2, ink(LIGHT, 1), ink(LIGHT, 0.7), 16)
+      hk.addSoftRingXY(0, 0, hair * 2.2, hair * 6, ink(LIGHT, 0.3), ZERO, 20)
+      const head = this.flat(sec, "LightHead" + i, hk)
+      head.so.enabled = false
+      this.inkBeat(head.mat, 3)
+      // Where it hits the paper: a soft spot that spreads, and a few short scattered rays.
+      const tHit = RAYS + st + dur
+      const spot = this.node("Scatter" + i, new vec3(hit.x, hit.y, 0.04), sec)
+      const sk = new MeshKit()
+      sk.addFanXY(0, 0, 1, 0, Math.PI * 2, ink(LIGHT, 0.5), ZERO, 20)
+      const spotMesh = this.flat(spot, "ScatterSpot", sk)
+      this.inkBeat(spotMesh.mat, 3, () => {
+        const tt = this.t - tHit
+        return tt < 0 ? 0 : clamp01(tt / 0.08) * (0.35 + 0.65 * Math.exp(-tt / 0.5))
+      })
+      const burst = this.node("ScatterRays" + i, new vec3(hit.x, hit.y, 0.04), sec)
+      const sbk = new MeshKit()
+      for (let k = 0; k < 5; k++) {
+        const ba2 = a + Math.PI + ((k - 2) * 0.62) + (k % 2 === 0 ? 0 : Math.PI)
+        sbk.addLineXY(0, 0, Math.cos(ba2), Math.sin(ba2), hair * 0.35, ink(LIGHT, 0.7), hair * 0.6, ink(LIGHT, 0.15))
+      }
+      const burstMesh = this.flat(burst, "ScatterBurst", sbk)
+      this.inkBeat(burstMesh.mat, 3, () => {
+        const tt = this.t - tHit
+        return tt < 0 ? 0 : clamp01(tt / 0.06) * Math.exp(-tt / 0.35)
+      })
+      rays.push({p, head: head.so, spot, burst, st, dur})
+    })
+    this.cue(RAYS, () => ctx.log("rays"))
+    this.cue(RAYS + 0.3, () => ctx.log("scatter"))
     this.tick((t) => {
-      if (t < RAYS) return
       for (const r of rays) {
-        const h = ((t - RAYS) * 0.9 + r.offset) % 1.3
-        r.p.setRange(Math.max(0, h - 0.35), Math.min(1, h))
+        const k = easeInOutCubic(phase(t, RAYS + r.st, RAYS + r.st + r.dur))
+        if (k > 0) r.p.setRange(0, k)
+        r.head.enabled = k > 0 && k < 1
+        if (r.head.enabled) r.head.getTransform().setLocalPosition(r.p.pointAt(k).add(new vec3(0, 0, 0.05)))
+        const tt = t - (RAYS + r.st + r.dur)
+        r.spot.getTransform().setLocalScale(vec3.one().uniformScale(tt < 0 ? 1e-4 : 1 + 5 * easeOutCubic(tt / 0.7)))
+        r.burst.getTransform().setLocalScale(vec3.one().uniformScale(tt < 0 ? 1e-4 : 1.5 + 2.5 * easeOutCubic(tt / 0.35)))
       }
     })
-    this.cue(14.4, () => {
+    // The whole column glows: warm white at 12% or less, brightest around the bulb, with the
+    // paper's outline lit. It spreads up and down from the bulb as the rays land.
+    const GLOW = B[3] + 0.5
+    const glowNode = this.node("ColumnGlow", new vec3(0, GC.y, -0.05), sec)
+    const ck2 = new MeshKit()
+    const nz = new vec3(0, 0, 1)
+    const lv = (y: number) => 0.12 * (0.45 + 0.55 * Math.exp(-Math.pow((y - GC.y) / 38, 2)))
+    const STEP = 2
+    const HALO = 4.5
+    for (let y = yShadeBot; y < yShadeTop - 0.01; y += STEP) {
+      const y1 = Math.min(yShadeTop, y + STEP)
+      const r0 = shadeR(y)
+      const r1 = shadeR(y1)
+      const c0 = ink(LIGHT, lv(y))
+      const c1 = ink(LIGHT, lv(y1))
+      const e0 = ink(LIGHT, lv(y) * 0.45)
+      const e1 = ink(LIGHT, lv(y1) * 0.45)
+      const ya = y - GC.y
+      const yb = y1 - GC.y
+      for (const sgn of [-1, 1]) {
+        const a = ck2.vert(new vec3(0, ya, 0), nz, c0)
+        const b = ck2.vert(new vec3(sgn * r0, ya, 0), nz, e0)
+        const c = ck2.vert(new vec3(sgn * r1, yb, 0), nz, e1)
+        const d = ck2.vert(new vec3(0, yb, 0), nz, c1)
+        ck2.tri(a, b, c)
+        ck2.tri(a, c, d)
+        // A soft halo just outside the paper, so the glow reads against the room.
+        const h0 = ck2.vert(new vec3(sgn * r0, ya, 0), nz, ink(LIGHT, lv(y) * 0.8))
+        const h1 = ck2.vert(new vec3(sgn * (r0 + HALO), ya, 0), nz, ZERO)
+        const h2 = ck2.vert(new vec3(sgn * (r1 + HALO), yb, 0), nz, ZERO)
+        const h3 = ck2.vert(new vec3(sgn * r1, yb, 0), nz, ink(LIGHT, lv(y1) * 0.8))
+        ck2.tri(h0, h1, h2)
+        ck2.tri(h0, h2, h3)
+      }
+    }
+    for (const sgn of [-1, 1]) {
+      const edge: vec2[] = []
+      for (let y = yShadeBot; y <= yShadeTop + 0.01; y += 1.5) edge.push(new vec2(sgn * shadeR(y), y - GC.y))
+      ck2.addPolylineXY(edge, LWF, ink(LIGHT, 0.5))
+    }
+    ck2.addLineXY(-RT, yShadeTop - GC.y, RT, yShadeTop - GC.y, LWF, ink(LIGHT, 0.35))
+    ck2.addLineXY(-RB, yShadeBot - GC.y, RB, yShadeBot - GC.y, LWF, ink(LIGHT, 0.35))
+    const glowMesh = this.flat(glowNode, "ColumnGlowMesh", ck2)
+    const spread = () => easeOutCubic(phase(this.t, GLOW, GLOW + 1.0))
+    this.inkBeat(glowMesh.mat, 4, () => clamp01((this.t - GLOW) / 0.4) * (this.t < B[4] ? 1 : 1 - 0.2 * easeInOutCubic((this.t - B[4]) / 1.2)))
+    this.tick(() => {
+      const k = spread()
+      glowNode.getTransform().setLocalScale(new vec3(0.5 + 0.5 * k, Math.max(1e-3, 0.06 + 0.94 * k), 1))
+    })
+    this.cue(GLOW, () => ctx.log("glow"))
+    const paperY = Math.min(28, yShadeTop * 0.45)
+    this.cue(B[3] + 1.1, () =>
+      this.label("shade", "Paper shade", toWorld(shadeR(paperY) + 13, paperY + 8), toWorld(shadeR(paperY), paperY))
+    )
+
+    // ---------------- Beat 5: the glow settles ----------------
+    this.cue(B[4], () => ctx.log("settle"))
+
+    // Text and controls: the question (with the caption under it) above the column, Stop under the bubble.
+    const v = dot.sub(cam).normalize()
+    const vR = v.cross(up).normalize()
+    const vU = vR.cross(v).normalize()
+    const ui = ctx.uiScale
+    this.captionHint = toWorld(0, yShadeTop).add(vU.uniformScale(0.8 * ui + 1.3 * ui + 0.9 * ui + 1.6 * ui))
+    this.stopHint = bubTarget.add(vU.uniformScale(-(RS + 3.1 * ui))).add(v.uniformScale(-2))
+
+    this.cue(END, () => {
       ctx.log("done")
       this.hideLabels()
     })

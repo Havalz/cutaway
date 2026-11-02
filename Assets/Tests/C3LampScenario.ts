@@ -1,11 +1,13 @@
 import {Scenario} from "Leaf.lspkg/Scenarios/scenario/Scenario"
 import {expect} from "Leaf.lspkg/Utils/common/Expect"
 import {findSceneObjectByName, sleep} from "Leaf.lspkg/Utils/common/Utils"
-import {cleanStart, expectOrder, getMain, isEnabled, press, SETTLE_MS, startGuaranteedQuestion, waitForPhase} from "./CutawayTestUtils"
+import {cleanStart, expectOrder, getMain, isEnabled, press, SETTLE_MS, startGuaranteedQuestion, waitForPhase, waitUntil} from "./CutawayTestUtils"
 
 /**
- * Done criterion 3 (lamp): turning to the lamp brings up its chip; its guaranteed question
- * plays current flowing along the cord, then the bulb lights and light streams out.
+ * Done criterion 3 (lamp): turning to the lamp brings up its chip; its guaranteed question plays
+ * the light path of the LED lamp: ghost shell + x-ray window on the bulb and the cord's path,
+ * cyan energy pulses up the cord, the magnify bubble at the LED chip (cyan in, light out, with a
+ * power-up tone from the lamp), then rays scattering in the paper into a glow over the column.
  */
 @component
 export class C3LampScenario extends Scenario {
@@ -19,23 +21,42 @@ export class C3LampScenario extends Scenario {
     expect(main.getStationState("lamp")).toBe("idle")
     await startGuaranteedQuestion(main, "lamp")
 
-    // Current along the cord: beads move along it.
-    await waitForPhase(main, "cord", 2000)
-    await sleep(1200)
+    // Beat 1: ghost shell, the x-ray window with the bulb, and the cord's path.
+    await waitForPhase(main, "shell", 2000)
+    await waitForPhase(main, "cutaway", 2000)
+    await sleep(1400)
+    for (const part of ["GhostShell", "XrayWindow", "Bulb"]) expect(isEnabled(part)).toBe(true)
     expect(findSceneObjectByName("Cord") !== undefined).toBe(true)
-    const bead = findSceneObjectByName("Current0")
-    expect(bead !== undefined && bead.isEnabledInHierarchy).toBe(true)
-    const p0 = bead.getTransform().getLocalPosition()
-    await sleep(200)
-    expect(bead.getTransform().getLocalPosition().distance(p0)).toBeGreaterThan(2)
 
-    // Then the light.
-    await waitForPhase(main, "bulb", 7000)
-    await sleep(400)
-    expect(isEnabled("Bulb")).toBe(true)
-    await waitForPhase(main, "rays", 2000)
+    // Beat 2: energy pulses travel up the cord.
+    await waitForPhase(main, "cord", 4000)
+    await waitForPhase(main, "flow", 1000)
+    await sleep(600)
+    const pulse = findSceneObjectByName("Current0")
+    expect(pulse !== undefined).toBe(true)
+    await waitUntil(() => pulse.isEnabledInHierarchy, 1500, () => "Current0 never enabled")
+    const p0 = pulse.getTransform().getLocalPosition()
+    await sleep(200)
+    expect(pulse.getTransform().getLocalPosition().distance(p0)).toBeGreaterThan(2)
+
+    // Beat 3: the bubble at the LED chip; the light comes on with the power-up tone from the lamp.
+    await waitForPhase(main, "bubble", 5000)
+    await waitForPhase(main, "chip", 1000)
+    await waitForPhase(main, "light", 1500)
+    await waitForPhase(main, "powerUp", 200)
+    const toneSo = findSceneObjectByName("LampPowerUp")
+    const tone = toneSo.getComponent("Component.AudioComponent") as AudioComponent
+    expect(tone.isPlaying()).toBe(true)
+    expect(tone.spatialAudio.enabled).toBe(true)
+    expect(toneSo.getTransform().getWorldPosition().distance(main.getMarkerPosition("lamp")) < 20).toBe(true)
+    expect(isEnabled("ChipBubble")).toBe(true)
+
+    // Beat 4: rays hit the paper and scatter into a glow over the column.
+    await waitForPhase(main, "rays", 5000)
     expect(findSceneObjectByName("LightRay0") !== undefined).toBe(true)
-    expectOrder(main, ["start:lamp:q0", "cord", "flow", "bulb", "rays"])
+    await waitForPhase(main, "glow", 1500)
+    expect(isEnabled("ColumnGlow")).toBe(true)
+    expectOrder(main, ["start:lamp:q0", "shell", "cutaway", "cord", "flow", "bubble", "chip", "light", "powerUp", "rays", "glow"])
 
     await press("LampStop")
     await sleep(500)

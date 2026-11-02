@@ -1,7 +1,7 @@
 import {Scenario} from "Leaf.lspkg/Scenarios/scenario/Scenario"
 import {expect} from "Leaf.lspkg/Utils/common/Expect"
 import {sleep} from "Leaf.lspkg/Utils/common/Utils"
-import {CHIP_TEXT, chipLabel, cleanStart, getMain, isEnabled, KEYS, PREFIX, SETTLE_MS} from "./CutawayTestUtils"
+import {angleDeg, CHIP_TEXT, chipLabel, cleanStart, getMain, isEnabled, KEYS, PREFIX, SETTLE_MS} from "./CutawayTestUtils"
 
 /**
  * Done criterion 1: at start each of the three objects shows only a small dot; looking at one
@@ -46,6 +46,23 @@ export class C1IdleAndGazeScenario extends Scenario {
       expect(isEnabled(PREFIX[key] + "ChipPop")).toBe(false)
       expect(isEnabled(PREFIX[key] + "IdleDot")).toBe(true)
     }
+
+    // Two dots lined up in the gaze: from the sofa the camera sits in front of the record player
+    // (under 1° apart). Looking along that line focuses the nearer one, the camera.
+    const sofa = new vec3(71.92, 0, 228.56)
+    main.setHeadOverride(sofa)
+    main.lookAway()
+    await sleep(SETTLE_MS)
+    const toCam = main.getMarkerPosition("camera").sub(sofa)
+    const toRecord = main.getMarkerPosition("recordPlayer").sub(sofa)
+    expect(angleDeg(toCam, toRecord) < 4).toBe(true)
+    main.lookAt("recordPlayer")
+    await sleep(SETTLE_MS)
+    expect(main.getStationState("camera")).toBe("chip")
+    expect(main.getStationState("recordPlayer")).toBe("idle")
+    main.setHeadOverride(null)
+    main.lookAway()
+    await sleep(SETTLE_MS)
     main.setGazeOverride(null)
   }
 }
