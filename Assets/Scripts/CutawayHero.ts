@@ -17,6 +17,7 @@ import {CutawayLabelsUI} from "./CutawayLabelsUI"
 import {MeshKit, setFade, spawnMesh, TrailRibbon} from "./CutawayGeometry"
 import {TableSurface} from "./CutawayHeroSurface"
 import {addPoly, bevelBox, bevelFrame, Blade, chamferRect, clipPoly, extrudeStrip, extrudeX, irisBlades, irisOpening, latheLoop, latheSmooth, lensProfile, lensRim, ringPts} from "./CutawayHeroParts"
+import {circle2, hull2, meshBoxes, polyGap, rect2, toView, viewFrame} from "./CutawayLayout"
 import {BODY_BOX_CENTER, BODY_BOX_SIZE, BODY_MIN_Y, FOOT_CENTER, FOOT_SIZE, FOOTPRINT, footReach, HeroPhysics, hullLowestY, LENS_LENGTH, LENS_RADIUS, LENS_Z0, maxFootDistance} from "./CutawayHeroPhysics"
 import {applyType, ENERGY, ink, keyWord, setTextAlpha, UI_WHITE} from "./CutawayStyle"
 import {clamp01, easeIn, easeInOutCubic, easeOutCubic, faceToward} from "./CutawayTween"
@@ -67,6 +68,22 @@ export interface HeroOptics {
   h_i: number
   c: number
   sharp: boolean
+}
+
+/** §9 clean-up (tests): what the user sees, as world geometry. */
+export interface HeroLayout {
+  /** Each visible interior part: one box (8 world corners) per mesh. */
+  parts: {key: string; label: string; boxes: vec3[][]}[]
+  /** The body shell (the ghost of the body): its mesh's box. */
+  shell: vec3[][]
+  /** The shown labels' text quads (4 world corners) and the caption's. */
+  labels: {id: string; text: string; corners: vec3[]}[]
+  sensor: vec3
+  /** The rail's anchor (world) and its visible boxes. */
+  rail: vec3
+  railBoxes: vec3[][]
+  /** The magnify bubble, if open: centre and radius (world cm). */
+  bubble: {center: vec3; radius: number; open: number} | null
 }
 
 export interface HeroPartInfo {
@@ -171,6 +188,17 @@ const SLAT_HH = 0.31
 /** Body shell offset when taken apart, and in the light path: up and back, clear of every part. */
 const BODY_APART = new vec3(0, 5.5, -3.0)
 const BODY_FAR = new vec3(0, 11.2, -4.5)
+/**
+ * Sensor magnify bubble (§9): radius (world cm), magnification of the sensor in it (a round window
+ * onto the sensor's middle), and its centre beside the sensor at sensor height: along the user's
+ * right, and toward the user (cm). The sensor's left is the light path and above it hang the shell
+ * ghost and the eyepiece, so the clear spot beside it, at its height, is on its right: level with
+ * it on screen, between it and the rail's top row, clear of both.
+ */
+const BUBBLE_R = 8.5
+const BUBBLE_SIDE = 11.5
+const BUBBLE_TOWARD = 0
+const BUBBLE_M = 1.6
 /** Shell fill in the light path. */
 const BODY_LIGHT_FILL = 0.06
 
@@ -485,6 +513,22 @@ function springOut(u: number): number {
   return (1 - (1 + w * x) * Math.exp(-w * x)) / (1 - (1 + w) * Math.exp(-w))
 }
 
+/** The part of segment a-b inside the disc of radius r at the origin (x0, y0, x1, y1), or null. */
+function clipToDisc(ax: number, ay: number, bx: number, by: number, r: number): number[] | null {
+  const dx = bx - ax
+  const dy = by - ay
+  const A = dx * dx + dy * dy
+  const B = 2 * (ax * dx + ay * dy)
+  const C = ax * ax + ay * ay - r * r
+  const disc = B * B - 4 * A * C
+  if (A < 1e-12 || disc <= 0) return null
+  const q = Math.sqrt(disc)
+  const t0 = Math.max(0, (-B - q) / (2 * A))
+  const t1 = Math.min(1, (-B + q) / (2 * A))
+  if (t1 <= t0) return null
+  return [ax + dx * t0, ay + dy * t0, ax + dx * t1, ay + dy * t1]
+}
+
 /** The camera hero stage. Owned by CutawayMain; one instance, created on launch, cleared on finish/Reset. */
 export class CameraHero {
   state: HeroState = "none"
@@ -494,6 +538,7 @@ export class CameraHero {
   private root: SceneObject
   private replica: SceneObject
   private layer: LayerSet
+  private layerMade = false
   private bodySo: SceneObject
   private bodyMat: Material
   private barrelSo: SceneObject
@@ -620,6 +665,7 @@ export class CameraHero {
   private bubbleSharp: SceneObject | null = null
   private bubbleSharpMat: Material | null = null
   private bubbleLeader: Beam | null = null
+  private bubbleOpen = 0
   private sharpK = 0
   private captionKey = ""
   private captionHoldT = 0
@@ -1053,6 +1099,18 @@ export class CameraHero {
     return {parts, partTris, shellTris: this.shellTris}
   }
 
+  /** §9 clean-up (tests): the parts, shell, labels and bubble as the user sees them (world). */
+  getLayout(): HeroLayout {
+    const boxes = meshBoxes
+    const parts = this.parts.filter((p) => p.looks.length && p.so.enabled).map((p) => ({key: p.key, label: p.label, boxes: boxes(p.so)}))
+    const rail = this.railAnchor()
+    let bubble: HeroLayout["bubble"] = null
+    if (this.bubble && this.bubbleOpen > 0.01) bubble = {center: this.bubble.getTransform().getWorldPosition(), radius: BUBBLE_R * this.bubble.getTransform().getWorldScale().x, open: this.bubbleOpen}
+    const labels = this.ctx.labels.getTextQuads().filter((q) => q.id.startsWith("hero_") || q.id === "caption")
+    const railBoxes = this.ctx.rail.isVisible() ? this.ctx.rail.getBoxes() : []
+    return {parts, shell: boxes(this.bodySo, this.bodyMat), labels, sensor: this.partWorld(this.sensorPart), rail, railBoxes, bubble}
+  }
+
   /** When the last launch started and when the replica came to rest (getTime(), -1 if not yet). */
   getTimes(): {launchedAt: number; landedAt: number} {
     return {launchedAt: this.launchedAt, landedAt: this.landedAt}
@@ -1075,8 +1133,14 @@ export class CameraHero {
     rtr.setWorldRotation(quat.quatIdentity())
     rtr.setWorldScale(vec3.one())
 
-    this.layer = LayerSet.makeUnique()
-    if (this.ctx.camera) this.ctx.camera.renderLayer = this.ctx.camera.renderLayer.union(this.layer)
+    // One render layer for the stage's lifetime, reused by every launch: a new unique layer per
+    // launch was never released, and after a few relaunches the camera's layer set overflowed
+    // ("Unique layers set union truncated").
+    if (!this.layerMade) {
+      this.layer = LayerSet.makeUnique()
+      if (this.ctx.camera) this.ctx.camera.renderLayer = this.ctx.camera.renderLayer.union(this.layer)
+      this.layerMade = true
+    }
 
     this.replica = this.node(this.root, "HeroReplica", vec3.zero())
     this.buildLightRig()
@@ -1596,7 +1660,8 @@ export class CameraHero {
   }
 
   private onGrabEnd(): void {
-    if (!this.grab) return
+    // Test hook: a frozen stage stays held (a screenshot of the drag); the next clean start clears it.
+    if (!this.grab || this.hold) return
     this.grab = null
     this.ctx.log("hero:release")
     // On the table it drops the 1.5 cm under gravity and settles; hovering, it stays up.
@@ -2267,24 +2332,120 @@ export class CameraHero {
   private barrelFill = 1
   private bodyFill = 1
 
+  /**
+   * Part labels (§9: no label overlaps another label or a part). Each label's words are placed from
+   * the user's eye: rows above or below its part (its preferred side first), the words beside the
+   * leader's end. The first spot whose words clear every visible part, the labels already placed,
+   * the bubble, the caption and the rail wins; the shell and lens ghosts are avoided too when
+   * possible. A label keeps its spot while it stays clear, and glides to a new one (≈70 ms).
+   */
   private updatePartLabels(): void {
     const labels = this.ctx.labels
     const rtr = this.replica.getTransform()
     const rot = rtr.getWorldRotation()
     const sc = rtr.getWorldScale().x
+    const want: Part[] = []
     for (const p of this.parts) {
       if (!p.looks.length) continue
       const id = "hero_" + p.key
       // In live view only the parts the light path is about keep their labels.
       const keep = !this.live || p.key === "elements" || p.key === "sensor"
-      const want = p.e > 0.8 && this.state !== "returning" && keep
-      const anchor = p.so.getTransform().getWorldTransform().multiplyPoint(p.anchor)
-      const textPos = anchor.add(rot.multiplyVec3(p.labelOff.uniformScale(sc)))
-      if (want && !labels.isShown(id)) labels.show(id, p.label, textPos, anchor)
-      else if (want) labels.move(id, textPos, anchor)
-      else if (!want && labels.isShown(id)) labels.hide(id)
+      if (p.e > 0.8 && this.state !== "returning" && keep) want.push(p)
+      else {
+        if (labels.isShown(id)) labels.hide(id)
+        this.labelPlans.delete(p.key)
+      }
+    }
+    if (!want.length) return
+    const F = viewFrame(this.ctx.camPos(), this.stageCenter())
+    const view = (pts: vec3[]) => hull2(pts.map((q) => toView(F, q)))
+    const hard: vec2[][] = []
+    const soft: vec2[][] = []
+    for (const p of this.parts) {
+      if (!p.looks.length || !p.so.enabled) continue
+      const corners: vec3[] = []
+      for (const b of meshBoxes(p.so)) for (const q of b) corners.push(q)
+      if (corners.length) hard.push(view(corners))
+    }
+    for (const b of meshBoxes(this.bodySo, this.bodyMat)) soft.push(view(b))
+    for (const b of meshBoxes(this.barrelSo, this.barrelMat)) soft.push(view(b))
+    if (this.bubble && this.bubbleOpen > 0.01) {
+      const c = this.bubble.getTransform().getWorldPosition()
+      const k = F.D / Math.max(1, c.sub(F.eye).dot(F.f))
+      hard.push(circle2(toView(F, c), BUBBLE_R * this.bubble.getTransform().getWorldScale().x * k + 0.5))
+    }
+    const cap = labels.getCaptionQuad()
+    if (cap) hard.push(view(cap))
+    if (this.ctx.rail.isVisible()) for (const b of this.ctx.rail.getBoxes()) hard.push(view(b))
+
+    const dd = labels.getDesignDistance()
+    const M = 0.8
+    const placed: vec2[][] = []
+    const dt = getDeltaTime()
+    for (const p of want) {
+      const id = "hero_" + p.key
+      const anchorW = p.so.getTransform().getWorldTransform().multiplyPoint(p.anchor)
+      const A = toView(F, anchorW)
+      const dA = Math.max(1, anchorW.sub(F.eye).dot(F.f))
+      // Words at design scale; their angular size is constant (scale ∝ distance), so in view
+      // units they are size · D / designDistance.
+      const size = labels.measure(p.label).uniformScale(F.D / dd)
+      const g = (0.6 * F.D) / dd
+      const offW = rot.multiplyVec3(p.labelOff.uniformScale(sc))
+      const sv = offW.dot(F.u) >= 0 ? 1 : -1
+      const sh = offW.dot(F.r) >= 0 ? 1 : -1
+      const box = (o: vec2, side: number) => {
+        const e = A.add(o)
+        return side > 0 ? rect2(e.x + g, e.x + g + size.x, e.y - size.y / 2, e.y + size.y / 2) : rect2(e.x - g - size.x, e.x - g, e.y - size.y / 2, e.y + size.y / 2)
+      }
+      const clear = (o: vec2, side: number, useSoft: boolean) => {
+        const b = box(o, side)
+        for (const h of hard) if (polyGap(b, h) < M) return false
+        for (const h of placed) if (polyGap(b, h) < M) return false
+        // The leader must not cut through words already placed.
+        const seg = [A, A.add(o)]
+        for (const h of placed) if (polyGap(seg, h) < 0.3) return false
+        if (useSoft) for (const h of soft) if (polyGap(b, h) < M) return false
+        return true
+      }
+      let plan = this.labelPlans.get(p.key) ?? null
+      if (plan && !clear(plan.o, plan.side, plan.soft)) plan = null
+      if (!plan) {
+        search: for (const useSoft of [true, false]) {
+          for (const v of [sv, -sv]) {
+            for (const rise of [3, 4.5, 6, 8, 10, 12.5, 15, 18, 22]) {
+              for (const lat of [0, 2.5, 5, 8, 11, 14]) {
+                for (const side of [sh, -sh]) {
+                  const o = new vec2(side * lat, v * rise)
+                  if (clear(o, side, useSoft)) {
+                    plan = {o, side, soft: useSoft}
+                    break search
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      // Nothing clear (very crowded): the part's own default spot.
+      if (!plan) plan = {o: new vec2(offW.dot(F.r), offW.dot(F.u)).uniformScale(F.D / dA), side: sh, soft: false}
+      this.labelPlans.set(p.key, plan)
+      placed.push(box(plan.o, plan.side))
+      placed.push([A, A.add(plan.o)])
+      // Glide the shown offset to the plan.
+      let o = this.labelShownOff.get(p.key)
+      const fresh = !labels.isShown(id) || !o
+      o = fresh ? plan.o : o.add(plan.o.sub(o).uniformScale(1 - Math.exp(-dt / 0.07)))
+      this.labelShownOff.set(p.key, o)
+      const k = dA / F.D
+      const textPos = anchorW.add(F.r.uniformScale(o.x * k)).add(F.u.uniformScale(o.y * k))
+      if (fresh) labels.show(id, p.label, textPos, anchorW, plan.side)
+      else labels.move(id, textPos, anchorW, plan.side)
     }
   }
+
+  private labelPlans = new Map<string, {o: vec2; side: number; soft: boolean}>()
+  private labelShownOff = new Map<string, vec2>()
 
   private hideAllLabels(): void {
     for (const p of this.parts) if (p.looks.length) this.ctx.labels.hide("hero_" + p.key)
@@ -2715,22 +2876,39 @@ export class CameraHero {
     const b = this.node(this.root, "HeroSensorBubble", vec3.zero())
     const face = this.node(b, "BubbleFace", vec3.zero())
     this.bubbleMat = this.glowMat()
-    const R = 13
+    const R = BUBBLE_R
     const k = new MeshKit()
     k.addArcXY(0, 0, R, 0.22, 0, Math.PI * 2, ink(UI_WHITE, 0.85), 96)
     k.addArcXY(0, 0, R - 0.6, 0.11, 0, Math.PI * 2, ink(UI_WHITE, 0.4), 96)
     k.addFanXY(0, 0, R - 0.7, 0, Math.PI * 2, ink(UI_WHITE, 0.02), ink(UI_WHITE, 0.035), 64)
-    // The sensor face-on at 1.9x: cyan outline, faint fill, pixel grid.
-    const M = 1.9
+    // The sensor face-on, magnified like a loupe: cyan outline, faint fill and pixel grid, cut to
+    // the bubble's round window.
+    const M = BUBBLE_M
     const hw = (SENSOR_W * SCALE * M) / 2
     const hh = (SENSOR_H * SCALE * M) / 2
-    k.addRectXY(-hw, -hh, hw, hh, ink(SIGNAL, 0.06))
-    k.addLineXY(-hw, -hh, hw, -hh, 0.14, ink(SIGNAL, 0.85))
-    k.addLineXY(hw, -hh, hw, hh, 0.14, ink(SIGNAL, 0.85))
-    k.addLineXY(hw, hh, -hw, hh, 0.14, ink(SIGNAL, 0.85))
-    k.addLineXY(-hw, hh, -hw, -hh, 0.14, ink(SIGNAL, 0.85))
-    for (let i = 1; i < 12; i++) k.addLineXY(-hw + (i / 12) * 2 * hw, -hh, -hw + (i / 12) * 2 * hw, hh, 0.04, ink(SIGNAL, 0.14))
-    for (let j = 1; j < 8; j++) k.addLineXY(-hw, -hh + (j / 8) * 2 * hh, hw, -hh + (j / 8) * 2 * hh, 0.04, ink(SIGNAL, 0.14))
+    const Rc = R - 0.9
+    const line = (ax: number, ay: number, bx: number, by: number, w: number, c: vec4) => {
+      const seg = clipToDisc(ax, ay, bx, by, Rc)
+      if (seg) k.addLineXY(seg[0], seg[1], seg[2], seg[3], w, c)
+    }
+    {
+      const n = 64
+      const c0 = k.vert(new vec3(0, 0, 0), new vec3(0, 0, 1), ink(SIGNAL, 0.06))
+      const ring: number[] = []
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2
+        const x = Math.max(-hw, Math.min(hw, Math.cos(a) * Rc))
+        const y = Math.max(-hh, Math.min(hh, Math.sin(a) * Rc))
+        ring.push(k.vert(new vec3(x, y, 0), new vec3(0, 0, 1), ink(SIGNAL, 0.06)))
+      }
+      for (let i = 0; i < n; i++) k.tri(c0, ring[i], ring[(i + 1) % n])
+    }
+    line(-hw, -hh, hw, -hh, 0.14, ink(SIGNAL, 0.85))
+    line(hw, -hh, hw, hh, 0.14, ink(SIGNAL, 0.85))
+    line(hw, hh, -hw, hh, 0.14, ink(SIGNAL, 0.85))
+    line(-hw, hh, -hw, -hh, 0.14, ink(SIGNAL, 0.85))
+    for (let i = 1; i < 12; i++) line(-hw + (i / 12) * 2 * hw, -hh, -hw + (i / 12) * 2 * hw, hh, 0.04, ink(SIGNAL, 0.14))
+    for (let j = 1; j < 8; j++) line(-hw, -hh + (j / 8) * 2 * hh, hw, -hh + (j / 8) * 2 * hh, 0.04, ink(SIGNAL, 0.14))
     spawnMesh(face, "BubbleFrame", k.build(), this.ctx.glowMat, undefined, this.bubbleMat)
     const img = this.node(face, "BubbleImage", new vec3(0, 0, 0.05))
     img.getTransform().setLocalScale(vec3.one().uniformScale(M))
@@ -2762,10 +2940,11 @@ export class CameraHero {
     const sensor = this.partWorld(this.sensorPart)
     const head = this.ctx.camPos()
     const toUser = flatDir(head.sub(sensor))
-    // Above the body (clear of its ghost, even taken apart), a little toward the user.
-    const target = sensor.add(new vec3(0, 50, 0)).add(toUser.uniformScale(6))
+    const right = toUser.uniformScale(-1).cross(vec3.up()).normalize()
+    const target = sensor.add(right.uniformScale(BUBBLE_SIDE)).add(toUser.uniformScale(BUBBLE_TOWARD))
     // Opens after the mirror lifts (the image is on the sensor from then on).
     const open = easeOutCubic((this.lightT - VF_BEAT - 0.1) / 0.3) * this.lightFade()
+    this.bubbleOpen = open
     const tr = this.bubble.getTransform()
     tr.setWorldPosition(vec3.lerp(sensor, target, open))
     tr.setWorldScale(vec3.one().uniformScale(Math.max(1e-4, open)))
@@ -2778,9 +2957,11 @@ export class CameraHero {
     const s = o.h_i
     this.bubbleSharp.getTransform().setLocalScale(new vec3(s, -s, 1))
     setFade(this.bubbleSharpMat, this.sharpK * open)
-    // Leader: sensor top → rim.
-    const rimPt = tr.getWorldPosition().add(sensor.sub(tr.getWorldPosition()).normalize().uniformScale(13 * open))
-    const from = sensor.add(new vec3(0, SENSOR_H * 1.5, 0))
+    // Leader: from beside the sensor to the rim.
+    const bc = tr.getWorldPosition()
+    const toB = bc.sub(sensor)
+    const rimPt = bc.sub(toB.normalize().uniformScale(BUBBLE_R * open))
+    const from = sensor.add(toB.normalize().uniformScale(1.2))
     const d = rimPt.sub(from)
     const lt = this.bubbleLeader.so.getTransform()
     if (d.length > 0.5 && open > 0.05) {
@@ -3180,6 +3361,7 @@ export class CameraHero {
     if (this.rayFaintMat) setFade(this.rayFaintMat, 0.3 * this.lightFade())
     if (this.bubble) {
       const k = this.lightFade()
+      this.bubbleOpen = Math.min(this.bubbleOpen, k)
       this.bubble.getTransform().setWorldScale(vec3.one().uniformScale(Math.max(1e-4, k)))
       if (this.bubbleLeader) this.bubbleLeader.so.enabled = k > 0.05
     }
@@ -3199,6 +3381,7 @@ export class CameraHero {
     this.resetCandle()
     this.bubble = null
     this.bubbleLeader = null
+    this.bubbleOpen = 0
     this.bubbleImage = null
     this.bubbleFlash = null
     this.bubbleSharp = null
@@ -3286,12 +3469,16 @@ export class CameraHero {
 
   private placeRail(): void {
     if (this.state !== "landed" && this.state !== "light" && !(this.state === "returning" && this.ctx.rail.isVisible())) return
+    this.ctx.rail.place(this.railAnchor())
+  }
+
+  /** The rail's anchor: beside the replica on the user's side, in front of it and right of the body. */
+  private railAnchor(): vec3 {
     const c = this.stageCenter()
     const head = this.ctx.camPos()
     const toUser = flatDir(head.sub(c))
     const right = toUser.uniformScale(-1).cross(vec3.up()).normalize()
-    // Beside the replica on the user's side: in front of it and to the right of the body.
-    this.ctx.rail.place(c.add(toUser.uniformScale(34)).add(right.uniformScale(42)).add(new vec3(0, -8, 0)))
+    return c.add(toUser.uniformScale(34)).add(right.uniformScale(42)).add(new vec3(0, -8, 0))
   }
 
   /**
@@ -3300,11 +3487,8 @@ export class CameraHero {
    * "Take apart" sits a row above "Focus".
    */
   private captionAnchor(raised: boolean): vec3 {
-    const c = this.stageCenter()
     const head = this.ctx.camPos()
-    const toUser = flatDir(head.sub(c))
-    const right = toUser.uniformScale(-1).cross(vec3.up()).normalize()
-    const rail = c.add(toUser.uniformScale(34)).add(right.uniformScale(42)).add(new vec3(0, -8, 0))
+    const rail = this.railAnchor()
     const k = Math.min(6, Math.max(0.3, rail.distance(head) / 110))
     // Rail top above its anchor at design scale (slider label tops), plus the caption's two lines and a gap.
     return rail.add(new vec3(0, k * ((raised ? 10.3 : 4.1) + 5), 0))

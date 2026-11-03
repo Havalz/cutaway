@@ -6,31 +6,32 @@ import {applyType, setTextAlpha} from "./CutawayStyle"
 import {Pop} from "./CutawayTween"
 
 /**
- * The "Reset" pill: floats low and slightly to the left of the user (body-locked on yaw),
- * so it is in view when looking down and out of the way when looking at the room.
+ * The "Reset" pill: floats low and to the left of the user (body-locked on yaw), in the lower-left
+ * of the view: about 15° below and 10° left of a level gaze, so it is fully in view from the
+ * default pose (§9) and clear of the middle, where the objects and their explanations are.
  * Styled like the chips: a hairline capsule of light with a faint fill and 85% white text,
  * brightening when aimed at and pressing to 97%. Built at the chips' 110 cm design scale and
  * scaled with distance, so its type and stroke match the chips exactly.
  */
 @component
 export class CutawayResetUI extends BaseScriptComponent {
-  @ui.label("Cutaway Reset pill — floats low and slightly left of the user")
+  @ui.label("Cutaway Reset pill — floats low and left, in the lower-left of the view")
   @ui.separator
   @ui.group_start("Placement")
   @input
   @hint("Distance in front of the user (cm, horizontal)")
   @widget(new SliderWidget(30, 120, 1))
-  forwardCm: number = 55
+  forwardCm: number = 60
 
   @input
   @hint("How far below eye level (cm)")
   @widget(new SliderWidget(10, 80, 1))
-  downCm: number = 42
+  downCm: number = 16
 
   @input
   @hint("How far to the left of the user's center line (cm)")
   @widget(new SliderWidget(0, 60, 1))
-  leftCm: number = 18
+  leftCm: number = 11
 
   @input
   @hint("How quickly the pill catches up when the user turns (1/s)")
@@ -139,6 +140,14 @@ export class CutawayResetUI extends BaseScriptComponent {
       this.camTransform = WorldCameraFinderProvider.getInstance().getTransform()
     })
     this.createEvent("UpdateEvent").bind(() => this.onUpdate())
+  }
+
+  /** The pill's four world corners (layout tests). */
+  getCorners(): vec3[] {
+    const m = this.btn.getSceneObject().getTransform().getWorldTransform()
+    const w = this.pillWidth / 2
+    const h = this.pillHeight / 2
+    return [new vec3(-w, -h, 0), new vec3(w, -h, 0), new vec3(w, h, 0), new vec3(-w, h, 0)].map((q) => m.multiplyPoint(q))
   }
 
   /** Masks the UIKit button's own visual once UIKit has created it. */

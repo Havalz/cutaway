@@ -194,6 +194,34 @@ export class CutawayHeroUI extends BaseScriptComponent {
     this.panel.getTransform().setLocalScale(vec3.one().uniformScale(s))
   }
 
+  /** World boxes (8 corners) of the rail's visible text and meshes (layout tests). */
+  getBoxes(): vec3[][] {
+    const out: vec3[][] = []
+    const corners = (m: mat4, a: vec3, b: vec3) => {
+      const c: vec3[] = []
+      for (const x of [a.x, b.x]) for (const y of [a.y, b.y]) for (const z of [a.z, b.z]) c.push(m.multiplyPoint(new vec3(x, y, z)))
+      return c
+    }
+    const walk = (so: SceneObject) => {
+      if (!so.enabled) return
+      const m = so.getTransform().getWorldTransform()
+      const t = so.getComponent("Component.Text") as Text
+      if (t && t.enabled && t.text.length) {
+        try {
+          const r = t.getBoundingBox()
+          out.push(corners(m, new vec3(r.left, r.bottom, 0), new vec3(r.right, r.top, 0)))
+        } catch (e) {
+          // rich text: no glyph bounds
+        }
+      }
+      const v = so.getComponent("Component.RenderMeshVisual") as RenderMeshVisual
+      if (v && v.enabled && v.mesh) out.push(corners(m, v.mesh.aabbMin, v.mesh.aabbMax))
+      for (let i = 0; i < so.getChildrenCount(); i++) walk(so.getChild(i))
+    }
+    walk(this.panel)
+    return out
+  }
+
   // ---------------- Build ----------------
 
   private child(parent: SceneObject, name: string): SceneObject {

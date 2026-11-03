@@ -3,7 +3,8 @@ import {ScenarioConfig} from "Leaf.lspkg/Scenarios/scenario/ScenarioConfig"
 import {sleep} from "Leaf.lspkg/Utils/common/Utils"
 import {StationKey} from "../Scripts/CutawayMain"
 import {imageDistance} from "../Scripts/CutawayHero"
-import {cleanStart, getMain, press, PREFIX, SETTLE_MS, startGuaranteedQuestion, waitForPhase} from "./CutawayTestUtils"
+import {cleanStart, drag, getMain, press, PREFIX, SETTLE_MS, startGuaranteedQuestion, waitForPhase} from "./CutawayTestUtils"
+import {printLayout} from "./HeroLayoutScenario"
 
 /**
  * Helper (not a done-criterion test): drives one object to a moment and returns, so the preview
@@ -22,11 +23,13 @@ import {cleanStart, getMain, press, PREFIX, SETTLE_MS, startGuaranteedQuestion, 
  * the next run or test clears it.
  * - `station` cameraHero (the camera's "Bring it closer" stage), `step`:
  *     launch  mid-flight (just after the bayonet click)     land   at rest on the table
+ *     drag    held mid-drag (lifted 1.5 cm, sliding right)  hover  risen to hover, parts just parting
  *     apart   fully apart, labels on (held before the light path starts)
  *     light   the viewfinder beat                          focus  live view, focused sharp
  *     blurry  live view, out of focus                      photo  the print, sharp
  *     back    flying home
  *   Each holds the stage's timeline (setHoldHero); the next run or test releases it.
+ *   `layout` "1": then print the stage's layout as world geometry (see HeroLayoutScenario).
  */
 @component
 export class DemoPlayScenario extends Scenario {
@@ -39,6 +42,10 @@ export class DemoPlayScenario extends Scenario {
       await cleanStart(main)
       main.setHoldHero(false)
       await runHero(main, get("step").trim(), get("extraMs"))
+      if (get("layout") === "1") {
+        await sleep(400)
+        printLayout()
+      }
       const h = main.getHero()
       if (h) {
         const i = h.getInfo()
@@ -116,6 +123,21 @@ async function runHero(main: ReturnType<typeof getMain>, step: string, extraRaw:
     await sleep(900)
     await press("HeroPutBack")
     await sleep(extraRaw ? extra : 1000)
+    main.setHoldHero(true)
+    return
+  }
+  if (step === "drag") {
+    // Freeze once lifted, while the hand is still moving; the frozen stage keeps it held.
+    const moving = drag("HeroGrab", new vec3(0.25, 0, 0.1), 900)
+    await sleep(extraRaw ? extra : 700)
+    main.setHoldHero(true)
+    await moving
+    return
+  }
+  if (step === "hover") {
+    hero.setApart(0.12)
+    await wait("hero:hover", 3000)
+    await sleep(extraRaw ? extra : 900)
     main.setHoldHero(true)
     return
   }

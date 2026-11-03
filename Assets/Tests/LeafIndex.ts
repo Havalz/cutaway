@@ -20,6 +20,8 @@ import {P4HoverScenario} from "./P4HoverScenario"
 import {P5SolidPartsScenario} from "./P5SolidPartsScenario"
 import {P6CandleOpticsScenario} from "./P6CandleOpticsScenario"
 import {P7PhotoScenario} from "./P7PhotoScenario"
+import {P8CleanUpScenario} from "./P8CleanUpScenario"
+import {HeroLayoutScenario} from "./HeroLayoutScenario"
 
 @component
 export class LeafIndex extends BaseScriptComponent {
@@ -44,6 +46,8 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "p5-hero-solid-parts", typename: P5SolidPartsScenario.getTypeName()},
     {id: "p6-hero-candle-optics", typename: P6CandleOpticsScenario.getTypeName()},
     {id: "p7-hero-photo-print", typename: P7PhotoScenario.getTypeName()},
-    {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer", step: "", untilPhase: "", extraMs: ""}}
+    {id: "p8-hero-clean-up", typename: P8CleanUpScenario.getTypeName()},
+    {id: "helper-hero-layout", typename: HeroLayoutScenario.getTypeName()},
+    {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer", step: "", untilPhase: "", extraMs: "", layout: ""}}
   ]
 }

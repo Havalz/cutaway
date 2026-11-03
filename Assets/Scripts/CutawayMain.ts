@@ -773,6 +773,11 @@ export class CutawayMain extends BaseScriptComponent {
     return this.running ? this.running.root.name : null
   }
 
+  /** The Reset pill's four world corners (layout tests). */
+  getResetPillCorners(): vec3[] {
+    return this.resetUI.getCorners()
+  }
+
   /** The camera hero stage (null if it is not wired). */
   getHero(): CameraHero | null {
     return this.hero

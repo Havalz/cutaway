@@ -1719,9 +1719,6 @@
   Enabled: true
   ScriptAsset: !<reference> d1bf3933-1650-45fd-a8e0-b0c45f97a4e4
   ScriptInputsDefault:
-    forwardCm: true
-    downCm: true
-    leftCm: true
     followSpeed: true
     deadzoneDeg: true
     label: true
@@ -1732,9 +1729,9 @@
     {}
   ScriptInputs:
     "":
-      forwardCm: !<float> 55.000000
-      downCm: !<float> 42.000000
-      leftCm: !<float> 18.000000
+      forwardCm: !<float> 60.000000
+      downCm: !<float> 16.000000
+      leftCm: !<float> 11.000000
       followSpeed: !<float> 5.000000
       deadzoneDeg: !<float> 40.000000
       label: Reset
