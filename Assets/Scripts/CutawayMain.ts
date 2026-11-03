@@ -366,7 +366,8 @@ export class CutawayMain extends BaseScriptComponent {
         if (a) a.getSceneObject().getTransform().setWorldPosition(p)
       },
       log: (p) => this.log(p),
-      caption: (text, at) => this.labelsUI.setCaption(text, at)
+      caption: (text, at) => this.labelsUI.setCaption(text, at),
+      avoid: () => (this.resetUI ? [this.resetUI.getCorners()] : [])
     })
     this.heroUI.onPutBack.add(() => this.hero.putBack())
     this.heroUI.onPhoto.add(() => this.hero.photo())

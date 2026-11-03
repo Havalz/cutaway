@@ -27,6 +27,7 @@ import {printLayout} from "./HeroLayoutScenario"
  *     apart   fully apart, labels on (held before the light path starts)
  *     light   the viewfinder beat                          focus  live view, focused sharp
  *     blurry  live view, out of focus                      photo  the print, sharp
+ *     photoBlurry  the print, out of focus
  *     back    flying home
  *   Each holds the stage's timeline (setHoldHero); the next run or test releases it.
  *   `layout` "1": then print the stage's layout as world geometry (see HeroLayoutScenario).
@@ -175,7 +176,11 @@ async function runHero(main: ReturnType<typeof getMain>, step: string, extraRaw:
     main.setHoldHero(true)
     return
   }
-  if (step === "photo") {
+  if (step === "photo" || step === "photoBlurry") {
+    if (step === "photoBlurry") {
+      hero.setFocusL(36)
+      await sleep(300)
+    }
     await press("HeroPhoto")
     // Pass 2: the print flies to the user and develops (1.2 s) before the frame is frozen.
     await wait("hero:printDeveloped", 4000)

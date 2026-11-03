@@ -531,6 +531,63 @@ export class MeshKit {
     for (let i = 1; i < pts.length; i++) this.addLineXY(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y, width, color)
   }
 
+  /**
+   * Append `src` (a mesh in the XY plane) scaled by `s` about its origin and moved by (dx, dy),
+   * clipped to the rectangle x0..x1 × y0..y1: triangles inside are copied, triangles across an
+   * edge are cut there (colours interpolated), triangles outside are dropped.
+   */
+  addClippedXY(src: MeshKit, s: number, dx: number, dy: number, x0: number, y0: number, x1: number, y1: number): void {
+    const d = src.data
+    const n = new vec3(0, 0, 1)
+    // A vertex as [x, y, z, r, g, b, a] in this kit's space.
+    const at = (i: number): number[] => [d[i * 10] * s + dx, d[i * 10 + 1] * s + dy, d[i * 10 + 2], d[i * 10 + 6], d[i * 10 + 7], d[i * 10 + 8], d[i * 10 + 9]]
+    const emit = (v: number[]) => this.vert(new vec3(v[0], v[1], v[2]), n, new vec4(v[3], v[4], v[5], v[6]))
+    const inside = (v: number[]) => v[0] >= x0 && v[0] <= x1 && v[1] >= y0 && v[1] <= y1
+    const edges: [number, number, number][] = [
+      [0, x0, 1],
+      [0, x1, -1],
+      [1, y0, 1],
+      [1, y1, -1]
+    ]
+    const mapped = new Map<number, number>()
+    const shared = (i: number, v: number[]) => {
+      let j = mapped.get(i)
+      if (j === undefined) {
+        j = emit(v)
+        mapped.set(i, j)
+      }
+      return j
+    }
+    for (let t = 0; t < src.indices.length; t += 3) {
+      const ids = [src.indices[t], src.indices[t + 1], src.indices[t + 2]]
+      const vs = ids.map(at)
+      if (vs.every(inside)) {
+        this.tri(shared(ids[0], vs[0]), shared(ids[1], vs[1]), shared(ids[2], vs[2]))
+        continue
+      }
+      let poly = vs
+      for (const [axis, bound, keep] of edges) {
+        const out: number[][] = []
+        for (let i = 0; i < poly.length; i++) {
+          const a = poly[i]
+          const b = poly[(i + 1) % poly.length]
+          const ina = (a[axis] - bound) * keep >= 0
+          const inb = (b[axis] - bound) * keep >= 0
+          if (ina) out.push(a)
+          if (ina !== inb) {
+            const u = (bound - a[axis]) / (b[axis] - a[axis])
+            out.push(a.map((x, j) => x + (b[j] - x) * u))
+          }
+        }
+        poly = out
+        if (poly.length < 3) break
+      }
+      if (poly.length < 3) continue
+      const vi = poly.map(emit)
+      for (let i = 1; i + 1 < vi.length; i++) this.tri(vi[0], vi[i], vi[i + 1])
+    }
+  }
+
   build(): RenderMesh {
     const mb = new MeshBuilder(LAYOUT)
     mb.topology = MeshTopology.Triangles

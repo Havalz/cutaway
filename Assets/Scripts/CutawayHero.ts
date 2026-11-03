@@ -19,7 +19,7 @@ import {TableSurface} from "./CutawayHeroSurface"
 import {addPoly, bevelBox, bevelFrame, Blade, chamferRect, clipPoly, extrudeStrip, extrudeX, irisBlades, irisOpening, latheLoop, latheSmooth, lensProfile, lensRim, ringPts} from "./CutawayHeroParts"
 import {circle2, hull2, meshBoxes, polyGap, rect2, toView, viewFrame} from "./CutawayLayout"
 import {BODY_BOX_CENTER, BODY_BOX_SIZE, BODY_MIN_Y, FOOT_CENTER, FOOT_SIZE, FOOTPRINT, footReach, HeroPhysics, hullLowestY, LENS_LENGTH, LENS_RADIUS, LENS_Z0, maxFootDistance} from "./CutawayHeroPhysics"
-import {applyType, ENERGY, ink, keyWord, setTextAlpha, UI_WHITE} from "./CutawayStyle"
+import {applyType, ENERGY, ink, keyWord, UI_WHITE} from "./CutawayStyle"
 import {clamp01, easeIn, easeInOutCubic, easeOutCubic, faceToward} from "./CutawayTween"
 
 export type HeroSound = "lift" | "bayonet" | "flight" | "land" | "tap" | "part" | "mirror" | "shutter" | "print"
@@ -59,6 +59,8 @@ export interface HeroContext {
   moveSound: (s: HeroSound, p: vec3) => void
   log: (p: string) => void
   caption: (text: string | null, topCenter?: vec3) => void
+  /** Other UI the photo print keeps clear of when there is room (world quads: the Reset pill). */
+  avoid?: () => vec3[][]
 }
 
 export interface HeroOptics {
@@ -234,19 +236,49 @@ const PULSE_POOL = 48
 const RAY_STEADY = 0.72
 
 // ---------------- Photo print (world cm) ----------------
-const PRINT_W = 20
-const PRINT_H = 13
-const PRINT_BORDER = 1
-/** Where it floats: 55 cm from the eyes, 14 cm below the eye line (53 cm out, flat). */
-const PRINT_OUT = 53
-const PRINT_DROP = 14
+/** The image area (the sensor's 3:2 frame enlarged) and its white border. */
+const PRINT_IMG_W = 12
+const PRINT_IMG_H = 8
+const PRINT_BORDER = 0.8
+/** The bottom border is wider, instant-film style: the tag sits in it. */
+const PRINT_CHIN = 2
+const PRINT_W = PRINT_IMG_W + 2 * PRINT_BORDER
+const PRINT_H = PRINT_IMG_H + PRINT_BORDER + PRINT_CHIN
+/** The image area's centre above the card's centre. */
+const PRINT_IMG_Y = (PRINT_CHIN - PRINT_BORDER) / 2
+/** Where it floats: 75 cm from the eyes, a little below eye level (these drops first, cm). */
+const PRINT_DIST = 75
+const PRINT_DROPS = [12, 10, 14, 8, 16]
+/** Its slow bob once it is there (cm, up and down). */
+const PRINT_BOB = 0.35
+/** The caption hangs this far below the print's bottom edge (cm, beyond the bob). */
+const PRINT_CAPTION_GAP = 0.6
+/**
+ * Blur copies on the print: rings of the sunflower spiral (1 + 3R(R+1) copies). The bright flame
+ * gets more, so a wide blur reads as one smooth patch of light rather than a cluster of flames.
+ */
+const PRINT_RINGS = 4
+const PRINT_FLAME_RINGS = 6
+/** The flame's light on the print, × the wax's: it stays the brightest thing even when blurred. */
+const PRINT_FLAME_BOOST = 8
 const PRINT_SLIDE = 0.3
 const PRINT_RISE = 0.25
 const PRINT_FLY = 0.35
 const PRINT_DEVELOP = 1.2
 const PRINT_ARRIVE = PRINT_SLIDE + PRINT_RISE + PRINT_FLY
-/** The tag's text scale (note style): letters about 1.2 cm tall, readable at 55 cm. */
-const PRINT_TAG_SCALE = 1.5
+/**
+ * The tag's text scale (note style): letters about 1.2 cm tall from ascender to descender (the
+ * note font's line box is ~1.5× that, 1.8 cm), centred in the 2 cm bottom border.
+ */
+const PRINT_TAG_SCALE = 1.8
+/** The tag's ink on the white paper: deep enough to read as print, never black (additive display). */
+const TAG_INK_SHARP = new vec4(0.04, 0.46, 0.6, 1)
+const TAG_INK_BLURRY = new vec4(0.66, 0.35, 0.06, 1)
+/** The print's picture: the warm glow behind the candle (light, additive), and the wax. */
+const PRINT_GLOW_EDGE = new vec3(0.34, 0.19, 0.07)
+const PRINT_GLOW_PEAK = new vec3(0.6, 0.38, 0.16)
+const PRINT_WAX = new vec4(1, 0.96, 0.86, 1)
+const PRINT_WAX_K = 0.9
 
 // ---------------- Timeline (s) ----------------
 const T_RISE = 0.7
@@ -440,6 +472,137 @@ function addCandleImage(k: MeshKit, m: number, mono: vec4 | null): void {
   addFlameCore(k, u(FLAME_BASE), 0.5, FLAME_W / h, m, mono)
 }
 
+/** The print tag's words in their ink colour at opacity `a`. */
+function setTagInk(t: Text, c: vec4, a: number): void {
+  t.textFill.color = new vec4(c.x, c.y, c.z, clamp01(a))
+}
+
+/** Points spread evenly over the unit disc on a sunflower spiral (even density, no lattice): 1 + 3R(R+1). */
+function spiralOffsets(rings: number): vec2[] {
+  const count = 1 + 3 * rings * (rings + 1)
+  const out: vec2[] = []
+  for (let i = 0; i < count; i++) {
+    const r = Math.sqrt((i + 0.5) / count)
+    const a = i * 2.399963
+    out.push(new vec2(Math.cos(a) * r, Math.sin(a) * r))
+  }
+  return out
+}
+
+/**
+ * The candle as the print shows it (same frame as addCandleImage), in two parts drawn with their own
+ * copy counts: the wax (light cream, its top lit warm by the flame), and the wick and flame, the
+ * flame `flameBoost` times brighter than in addCandleImage so it stays the brightest thing in the
+ * photo even when the blur spreads it wide. `m` scales each part's light (1/√copies).
+ */
+function addPrintWax(k: MeshKit, m: number): void {
+  const h = HERO_H_O / SCALE
+  const r = CANDLE_R / h
+  const top = CANDLE_TOP / h
+  const wax = ink(PRINT_WAX, PRINT_WAX_K * m)
+  k.addRectXY(-r, -0.5, r, top - 0.02, wax)
+  k.addRectXY(-r * 0.9, top - 0.02, r * 0.9, top, wax)
+  k.addRectXY(-r, top - 0.2, r, top - 0.02, ink(WAX_GLOW, 0), ink(WAX_GLOW, 0), ink(WAX_GLOW, 0.3 * m), ink(WAX_GLOW, 0.3 * m))
+}
+
+function addPrintFlame(k: MeshKit, m: number, flameBoost: number): void {
+  const h = HERO_H_O / SCALE
+  const u = (y: number) => y / h
+  const top = u(CANDLE_TOP)
+  k.addRectXY(-0.008, top, 0.008, u(WICK_TOP), ink(new vec4(0.55, 0.38, 0.22, 1), 0.6 * m))
+  const fy = u(FLAME_BASE) + 0.3 * (0.5 - u(FLAME_BASE))
+  k.addFanXY(0, fy, 0.2, 0, Math.PI * 2, ink(WAX_GLOW, 0.3 * m * Math.SQRT2), ink(WAX_GLOW, 0), 24)
+  const f = m * Math.sqrt(flameBoost)
+  addOuterFlame(k, u(FLAME_BASE), 0.5, FLAME_W / h, f, null)
+  addFlameCore(k, u(FLAME_BASE), 0.5, FLAME_W / h, f, null)
+}
+
+/**
+ * The photo on the print (fix pass): what the sensor recorded, filling the image area `w` × `h`
+ * (centred on the origin, XY facing +Z) as one static mesh. Nothing in it is black, so all of it
+ * reads on an additive display.
+ * - A soft warm glow fills the frame: dim amber at the edges, brightest around the flame.
+ * - The candle stands in it upright, `ch` cm tall and centred: light cream wax; the flame is the
+ *   brightest thing.
+ * - The sensor's blur (`c` cm on the print) applies to the whole picture. The candle is drawn as
+ *   copies spread evenly over the blur disc (each 1/N of the light), the glow is widened by the same
+ *   disc (variance c²/16 per axis, its light kept), and the wax hides the glow behind it in the
+ *   proportion its copies cover each point, so sharp or blurred it reads as wax in front of the glow.
+ *   Every copy is clipped to the image area, which keeps the photo's edge crisp.
+ */
+function buildPrintPicture(w: number, h: number, ch: number, c: number, rings: number, flameRings: number): RenderMesh {
+  const offsets = spiralOffsets(rings).map((o) => o.uniformScale(c / 2))
+  const N = offsets.length
+  const hw = w / 2
+  const hh = h / 2
+  const unit = HERO_H_O / SCALE
+  // The wax's outline (cm): x within ±wr, y from wy0 to wy1.
+  const wr = (CANDLE_R / unit) * ch
+  const wy0 = -0.5 * ch
+  const wy1 = (CANDLE_TOP / unit) * ch
+  const R = c / 2
+  const cover = (x: number, y: number): number => {
+    if (x + R < -wr || x - R > wr || y + R < wy0 || y - R > wy1) return 0
+    if (x - R >= -wr && x + R <= wr && y - R >= wy0 && y + R <= wy1) return 1
+    let n = 0
+    for (const o of offsets) {
+      const px = x - o.x
+      const py = y - o.y
+      if (px >= -wr && px <= wr && py >= wy0 && py <= wy1) n++
+    }
+    return n / N
+  }
+  // The glow, centred on the flame.
+  const fy = ((FLAME_BASE + 0.35 * (unit / 2 - FLAME_BASE)) / unit) * ch
+  const s0 = Math.min(3.2, Math.max(1.6, 0.75 * ch))
+  const s2 = s0 * s0 + (c * c) / 16
+  const amp = (s0 * s0) / s2
+  // Grid lines every 0.25 cm, plus the wax's edges and, when blurred, the band the blur spreads them over.
+  const lines = (lo: number, hi: number, edges: number[]): number[] => {
+    const out: number[] = []
+    const n = Math.ceil((hi - lo) / 0.25)
+    for (let i = 0; i <= n; i++) out.push(lo + ((hi - lo) * i) / n)
+    for (const e of edges) {
+      out.push(e)
+      if (c > 0.02) {
+        const m = Math.min(24, Math.max(2, Math.ceil(c / 0.1)))
+        for (let i = 0; i <= m; i++) out.push(e - R + (c * i) / m)
+      }
+    }
+    const sorted = out.filter((v) => v >= lo && v <= hi).sort((a, b) => a - b)
+    return sorted.filter((v, i) => i === 0 || v - sorted[i - 1] > 1e-3)
+  }
+  const xs = lines(-hw, hw, [-wr, wr])
+  const ys = lines(-hh, hh, [wy0, wy1])
+  const k = new MeshKit()
+  const nz = new vec3(0, 0, 1)
+  const g0 = k.vertexCount
+  // Glow light per vertex (alpha 1, so the additive light is the colour itself).
+  for (const y of ys)
+    for (const x of xs) {
+      const g = amp * Math.exp(-(x * x + (y - fy) * (y - fy)) / (2 * s2))
+      const keep = 1 - cover(x, y)
+      k.vert(new vec3(x, y, 0), nz, new vec4((PRINT_GLOW_EDGE.x + PRINT_GLOW_PEAK.x * g) * keep, (PRINT_GLOW_EDGE.y + PRINT_GLOW_PEAK.y * g) * keep, (PRINT_GLOW_EDGE.z + PRINT_GLOW_PEAK.z * g) * keep, 1))
+    }
+  const nx = xs.length
+  for (let j = 0; j + 1 < ys.length; j++)
+    for (let i = 0; i + 1 < nx; i++) {
+      const a = g0 + j * nx + i
+      k.tri(a, a + 1, a + nx + 1)
+      k.tri(a, a + nx + 1, a + nx)
+    }
+  // The candle: copies over the blur disc, each clipped to the image area. The wax uses the same
+  // copies its hole in the glow was cut with; the flame has its own, denser set.
+  const wax = new MeshKit()
+  addPrintWax(wax, 1 / Math.sqrt(N))
+  for (const o of offsets) k.addClippedXY(wax, ch, o.x, o.y, -hw, -hh, hw, hh)
+  const flameOffsets = spiralOffsets(flameRings).map((o) => o.uniformScale(c / 2))
+  const flame = new MeshKit()
+  addPrintFlame(flame, 1 / Math.sqrt(flameOffsets.length), PRINT_FLAME_BOOST)
+  for (const o of flameOffsets) k.addClippedXY(flame, ch, o.x, o.y, -hw, -hh, hw, hh)
+  return k.build()
+}
+
 /** The candle image's outline (same frame as addCandleImage): the wax body and the flame. */
 function candleOutline(): vec2[][] {
   const h = HERO_H_O / SCALE
@@ -463,13 +626,8 @@ class BlurImage {
   constructor(parent: SceneObject, name: string, material: Material, mono: vec4 | null, rings: number) {
     this.so = global.scene.createSceneObject(name)
     this.so.setParent(parent)
-    // Copies spread evenly over the blur disk on a sunflower spiral (even density, no lattice).
-    const count = 1 + 3 * rings * (rings + 1)
-    for (let i = 0; i < count; i++) {
-      const r = Math.sqrt((i + 0.5) / count)
-      const a = i * 2.399963
-      this.offsets.push(new vec2(Math.cos(a) * r, Math.sin(a) * r))
-    }
+    // Copies spread evenly over the blur disk.
+    this.offsets = spiralOffsets(rings)
     const k = new MeshKit()
     // The glow material blends Add with source alpha, and ink() premultiplies, so a copy's light
     // goes with k²: k = 1/√N gives each copy 1/N of the light and N stacked copies exactly 1.
@@ -680,13 +838,15 @@ export class CameraHero {
   private printImgC = 0
   private printTagText = ""
   private printTag: Text | null = null
+  private printTagInk = TAG_INK_SHARP
   private printBlankMat: Material | null = null
   private printTarget: vec3 | null = null
   private printFrom: {pos: vec3; rot: quat} | null = null
   private printLogged = {shown: false, developed: false}
-  private oldPrints: {so: SceneObject; t: number; mats: Material[]; tag: Text | null}[] = []
+  private oldPrints: {so: SceneObject; t: number; mats: Material[]; tag: Text | null; ink: vec4}[] = []
   private printMats: Material[] = []
-  private printImage: BlurImage | null = null
+  /** The picture's material (it fades in as the print develops). */
+  private printPicMat: Material | null = null
   /** Prints taken off the stage, destroyed a couple of frames later (see buryPrints). */
   private grave: {so: SceneObject; frames: number}[] = []
   private flashT = -1
@@ -843,7 +1003,7 @@ export class CameraHero {
     this.bubble = null
     this.bubbleLeader = null
     this.print = null
-    this.printImage = null
+    this.printPicMat = null
     this.printTag = null
     this.printBlankMat = null
     this.printMats = []
@@ -961,6 +1121,31 @@ export class CameraHero {
   /** The live print's SceneObject (the one named HERO_PRINT_NAME), or null. */
   getPrintObject(): SceneObject | null {
     return this.print
+  }
+
+  /**
+   * The live print's layout (tests): its card's 4 world corners, the card's size and borders (cm),
+   * and the tag's words in the card's own cm (origin at the card's centre, x right, y up).
+   */
+  getPrintLayout(): {card: vec3[]; w: number; h: number; border: number; chin: number; tag: {x0: number; x1: number; y0: number; y1: number} | null} | null {
+    if (!this.print) return null
+    const m = this.print.getTransform().getWorldTransform()
+    const W = PRINT_W / 2
+    const H = PRINT_H / 2
+    const card = [new vec3(-W, -H, 0), new vec3(W, -H, 0), new vec3(W, H, 0), new vec3(-W, H, 0)].map((q) => m.multiplyPoint(q))
+    let tag: {x0: number; x1: number; y0: number; y1: number} | null = null
+    if (this.printTag) {
+      try {
+        const r = this.printTag.getBoundingBox()
+        const tr = this.printTag.getSceneObject().getTransform()
+        const p = tr.getLocalPosition()
+        const s = tr.getLocalScale().x
+        tag = {x0: p.x + r.left * s, x1: p.x + r.right * s, y0: p.y + r.bottom * s, y1: p.y + r.top * s}
+      } catch (e) {
+        tag = null
+      }
+    }
+    return {card, w: PRINT_W, h: PRINT_H, border: PRINT_BORDER, chin: PRINT_CHIN, tag}
   }
 
   /** The candle: flame tip and base (world), the rays' start points (world), the flame's stretch. */
@@ -2509,8 +2694,9 @@ export class CameraHero {
     this.updateRays()
     this.updateBubble(dt)
     this.updateShot(dt)
-    // Captions: sharp / blurry once live (after the mirror-up line has been read).
-    if (this.captionHoldT > 0) this.captionHoldT -= dt
+    // Captions: sharp / blurry once live (after the mirror-up line has been read). A caption held
+    // back while a print develops keeps its full reading time for when it shows.
+    if (this.captionHoldT > 0 && !this.captionWaiting()) this.captionHoldT -= dt
     if (this.live && this.captionHoldT <= 0 && this.shotT < 0) {
       const sharp = this.getOptics().sharp
       this.setCaption(sharp ? "sharp" : "blurry")
@@ -2520,6 +2706,15 @@ export class CameraHero {
   private setCaption(key: string): void {
     if (key === this.captionKey) return
     this.captionKey = key
+    this.showCaption()
+  }
+
+  /**
+   * Show the current caption where it belongs: hidden while a print develops, then hanging below
+   * the print while it is there; otherwise above the rail (every caption after the first once the
+   * rail has its light-path layout).
+   */
+  private showCaption(): void {
     const texts: {[k: string]: string} = {
       vf: keyWord("Until you shoot, a mirror sends *light* to your eye.", LIGHT),
       up: keyWord("Mirror up: now the *light* reaches the sensor.", LIGHT),
@@ -2527,8 +2722,10 @@ export class CameraHero {
       blurry: keyWord("*Blurry.* Turn the focus until the rays meet.", LIGHT),
       pixel: keyWord("Each pixel turns light into *signal*.", SIGNAL)
     }
-    // Every caption after the first comes once the rail has its light-path layout.
-    this.ctx.caption(texts[key] ?? null, this.captionAnchor(key !== "vf"))
+    const text = texts[this.captionKey] ?? null
+    if (this.captionWaiting()) this.ctx.caption(null)
+    else if (this.print) this.ctx.caption(text, this.printCaptionAnchor())
+    else this.ctx.caption(text, this.captionAnchor(this.captionKey !== "vf"))
   }
 
   /**
@@ -3011,17 +3208,18 @@ export class CameraHero {
     const first = t < 0.1 ? 1 - easeInOutCubic(t / 0.1) : 0
     const second = t < 0.105 ? 0 : t < 0.205 ? easeInOutCubic((t - 0.105) / 0.1) : t < 0.45 ? 1 : 1 - easeInOutCubic((t - 0.45) / 0.15)
     this.setCurtains(t < 0.02 ? 1 : first, second)
-    // Exposure ends when the second curtain closes: the pixels flash and the print is made.
+    // Exposure ends when the second curtain closes: the print is made and the pixels flash. (The
+    // print first, so the "pixel" caption already knows to wait for it to develop.)
+    if (t >= 0.205 && !this.shotFlags.print) {
+      this.shotFlags.print = true
+      this.makePrint()
+    }
     if (t >= 0.205 && !this.shotFlags.flash) {
       this.shotFlags.flash = true
       this.flashT = 0
       this.setCaption("pixel")
       this.captionHoldT = 2.5
       this.ctx.log("hero:pixels")
-    }
-    if (t >= 0.205 && !this.shotFlags.print) {
-      this.shotFlags.print = true
-      this.makePrint()
     }
     if (t >= 0.62) {
       this.shotT = -1
@@ -3032,12 +3230,15 @@ export class CameraHero {
   private shotFlags = {flash: false, print: false}
 
   /**
-   * The photo (§8): a 20 × 13 cm print with a 1 cm white border and a soft gloss. It slides out of
-   * the top of the camera body, rises, turns to the user and floats 55 cm in front of them, a
-   * little below the eye line; then it develops like instant film (blank, the image fading in over
-   * 1.2 s). The image is the candle upright with exactly the sensor's blur (the sensor frame
-   * enlarged; relative blur c / h unchanged). A tag reads "Sharp" or "Out of focus". The next photo
-   * replaces it; pinching it dismisses it.
+   * The photo (§8, fix pass): a print with a 12 × 8 cm image area, a 0.8 cm white border (the bottom
+   * one 2 cm, instant-film style, holding the tag) and a soft gloss. It slides out of the top of the
+   * camera body, rises, turns to the user and floats 75 cm from their eyes, a little below eye level
+   * and tilted toward them, beside the replica (printPlace); then it develops like instant film
+   * (blank, the picture fading in over 1.2 s). The picture is the candle upright in a warm glow with
+   * exactly the sensor's blur (the sensor frame enlarged; relative blur c / h unchanged; see
+   * buildPrintPicture). The tag in the bottom border reads "Sharp" or "Out of focus". The stage
+   * caption waits while the print develops, then hangs below it. The next photo replaces the print;
+   * pinching it dismisses it.
    *
    * The print is the one SceneObject named HERO_PRINT_NAME; a replaced or dismissed print is renamed
    * before it fades, so a name lookup only ever finds the live one.
@@ -3051,41 +3252,43 @@ export class CameraHero {
     const W = PRINT_W / 2
     const H = PRINT_H / 2
     const b = PRINT_BORDER
-    // The card: a white border around the image area.
+    // The image area: above the wide bottom border.
+    const iy0 = -H + PRINT_CHIN
+    const iy1 = H - b
+    // The card: white paper around the image area.
     const cardMat = this.glowMat()
     mats.push(cardMat)
     const ck = new MeshKit()
     const paper = ink(new vec4(0.97, 0.96, 0.93, 1), 0.85)
-    ck.addRectXY(-W, -H, W, -H + b, paper)
-    ck.addRectXY(-W, H - b, W, H, paper)
-    ck.addRectXY(-W, -H + b, -W + b, H - b, paper)
-    ck.addRectXY(W - b, -H + b, W, H - b, paper)
-    spawnMesh(face, "PrintCard", ck.build(), this.ctx.glowMat, undefined, cardMat)
+    ck.addRectXY(-W, -H, W, iy0, paper)
+    ck.addRectXY(-W, iy1, W, H, paper)
+    ck.addRectXY(-W, iy0, -W + b, iy1, paper)
+    ck.addRectXY(W - b, iy0, W, iy1, paper)
+    const card = spawnMesh(face, "PrintCard", ck.build(), this.ctx.glowMat, undefined, cardMat)
     // The blank film: a pale layer over the image area that clears as the picture develops.
     this.printBlankMat = this.glowMat()
     const bk = new MeshKit()
-    bk.addRectXY(-W + b, -H + b, W - b, H - b, ink(new vec4(0.82, 0.86, 0.88, 1), 0.32))
+    bk.addRectXY(-W + b, iy0, W - b, iy1, ink(new vec4(0.82, 0.86, 0.88, 1), 0.32))
     spawnMesh(face, "PrintBlank", bk.build(), this.ctx.glowMat, new vec3(0, 0, 0.02), this.printBlankMat)
-    // The image: the sensor frame fitted into the image area, upright. A candle that would overflow
+    // The picture: the sensor frame fitted into the image area, upright. A candle that would overflow
     // the photo (subject closer than ~30 cm) is scaled down to fit; its relative blur stays the same.
-    const areaW = PRINT_W - 2 * b
-    const areaH = PRINT_H - 2 * b
-    let e = Math.min(areaW / (SENSOR_W * SCALE), areaH / (SENSOR_H * SCALE))
-    e = Math.min(e, (areaH - 1) / Math.max(1e-3, o.h_i))
-    const img = this.node(face, "PrintImage", new vec3(0, 0, 0.04))
-    this.printImage = new BlurImage(img, "PrintBlur", this.ctx.glowMat, null, 3)
+    let e = Math.min(PRINT_IMG_W / (SENSOR_W * SCALE), PRINT_IMG_H / (SENSOR_H * SCALE))
+    e = Math.min(e, (PRINT_IMG_H - 1) / Math.max(1e-3, o.h_i))
     this.printImgH = o.h_i * e
     this.printImgC = o.c * e
-    this.printImage.update(this.printImgH, this.printImgC, 0)
+    this.printPicMat = this.glowMat()
+    mats.push(this.printPicMat)
+    const pic = buildPrintPicture(PRINT_IMG_W, PRINT_IMG_H, this.printImgH, this.printImgC, PRINT_RINGS, PRINT_FLAME_RINGS)
+    spawnMesh(face, "PrintPicture", pic, this.ctx.glowMat, new vec3(0, PRINT_IMG_Y, 0.04), this.printPicMat)
     // Gloss: a soft diagonal sheen, a thin second streak, a touch brighter toward the top.
     const sheenMat = this.glowMat()
     mats.push(sheenMat)
     const sk = new MeshKit()
     const nx = 16
-    const ny = 10
+    const ny = 12
     const gloss = (x: number, y: number) => {
       const d = x * 0.6 + y * 0.8
-      return 0.3 * Math.exp(-Math.pow((d - 2.5) / 3.2, 2)) + 0.2 * Math.exp(-Math.pow((d + 4.5) / 0.9, 2)) + 0.12 * ((y + H) / (2 * H))
+      return 0.3 * Math.exp(-Math.pow((d - 1.7) / 2.2, 2)) + 0.2 * Math.exp(-Math.pow((d + 3.1) / 0.62, 2)) + 0.12 * ((y + H) / (2 * H))
     }
     const nz = new vec3(0, 0, 1)
     const g0 = sk.vertexCount
@@ -3102,37 +3305,25 @@ export class CameraHero {
         sk.tri(gi(i, j), gi(i + 1, j + 1), gi(i, j + 1))
       }
     spawnMesh(face, "PrintSheen", sk.build(), this.ctx.glowMat, new vec3(0, 0, 0.08), sheenMat)
-    // The tag under the photo: "Sharp" (signal cyan) or "Out of focus" (warm light).
+    // The tag, centred in the bottom border: "Sharp" (signal teal) or "Out of focus" (amber), in
+    // ink on the paper, words about 1.2 cm tall.
     const sharp = o.sharp
     this.printTagText = sharp ? "Sharp" : "Out of focus"
-    const tagCol = sharp ? SIGNAL : LIGHT
-    const tw = sharp ? 6.2 : 10.4
-    const th = 2.2
-    const tag = this.node(face, "PrintTag", new vec3(0, -H - 0.5 - th / 2, 0.05))
-    const tagMat = this.glowMat()
-    mats.push(tagMat)
-    const tk = new MeshKit()
-    const tr = th / 2
-    tk.addRectXY(-tw / 2 + tr, -tr, tw / 2 - tr, tr, ink(tagCol, 0.16))
-    tk.addFanXY(-tw / 2 + tr, 0, tr, Math.PI / 2, Math.PI * 1.5, ink(tagCol, 0.16), ink(tagCol, 0.16), 12)
-    tk.addFanXY(tw / 2 - tr, 0, tr, -Math.PI / 2, Math.PI / 2, ink(tagCol, 0.16), ink(tagCol, 0.16), 12)
-    tk.addLineXY(-tw / 2 + tr, tr, tw / 2 - tr, tr, 0.09, ink(tagCol, 0.85))
-    tk.addLineXY(-tw / 2 + tr, -tr, tw / 2 - tr, -tr, 0.09, ink(tagCol, 0.85))
-    tk.addArcXY(-tw / 2 + tr, 0, tr, 0.09, Math.PI / 2, Math.PI * 1.5, ink(tagCol, 0.85), 12)
-    tk.addArcXY(tw / 2 - tr, 0, tr, 0.09, -Math.PI / 2, Math.PI / 2, ink(tagCol, 0.85), 12)
-    spawnMesh(tag, "TagPill", tk.build(), this.ctx.glowMat, undefined, tagMat)
-    const textSo = this.node(tag, "TagText", new vec3(0, 0, 0.05))
+    this.printTagInk = sharp ? TAG_INK_SHARP : TAG_INK_BLURRY
+    const textSo = this.node(face, "PrintTag", new vec3(0, -H + PRINT_CHIN / 2, 0.1))
     textSo.getTransform().setLocalScale(vec3.one().uniformScale(PRINT_TAG_SCALE))
     const t = textSo.createComponent("Component.Text") as Text
     t.text = this.printTagText
     t.depthTest = true
     applyType(t, "note")
-    setTextAlpha(t, 0)
+    setTagInk(t, this.printTagInk, 0)
     t.horizontalAlignment = HorizontalAlignment.Center
     t.verticalAlignment = VerticalAlignment.Center
     t.horizontalOverflow = HorizontalOverflow.Overflow
     t.verticalOverflow = VerticalOverflow.Overflow
     t.layoutRect = Rect.create(-30, 30, -3, 3)
+    // Drawn after the paper, so the paper's light never washes over the words.
+    t.setRenderOrder(card.rmv.renderOrder + 1)
     this.printTag = t
     // Pinch the print to dismiss it.
     const col = so.createComponent("Physics.ColliderComponent") as ColliderComponent
@@ -3141,7 +3332,6 @@ export class CameraHero {
     col.shape = box
     const inter = so.createComponent(Interactable.getTypeName()) as Interactable
     inter.onTriggerEnd.add(() => this.dismissPrint(so))
-    mats.push(this.printImage.mat)
     this.printMats = mats
     this.printBlur = o.c
     this.printH = o.h_i
@@ -3153,6 +3343,8 @@ export class CameraHero {
     for (const m of mats) setFade(m, 0)
     setFade(this.printBlankMat, 0)
     this.placePrint()
+    // The caption waits until the print has developed.
+    this.showCaption()
     this.ctx.sound("print", this.printSlot().pos)
     this.ctx.log("hero:print")
   }
@@ -3166,18 +3358,19 @@ export class CameraHero {
     if (col) col.enabled = false
     const mats = this.printMats.slice()
     if (this.printBlankMat) mats.push(this.printBlankMat)
-    this.oldPrints.push({so, t: 0, mats, tag: this.printTag})
+    this.oldPrints.push({so, t: 0, mats, tag: this.printTag, ink: this.printTagInk})
     this.print = null
     this.printTag = null
-    this.printImage = null
+    this.printPicMat = null
     this.printBlankMat = null
     this.printMats = []
   }
 
-  /** Pinched: the print goes. */
+  /** Pinched: the print goes, and the caption returns to its place above the rail. */
   private dismissPrint(so: SceneObject): void {
     if (!this.print || !this.print.isSame(so)) return
     this.retirePrint()
+    this.showCaption()
     this.ctx.log("hero:printDismissed")
   }
 
@@ -3193,15 +3386,97 @@ export class CameraHero {
     return {pos, rot: quat.lookAt(n, up), up}
   }
 
-  /** Where the print floats: 55 cm from the eyes, straight ahead (level), 14 cm below the eye line. */
+  /**
+   * Where the print floats (fix pass): 75 cm from the eyes, a little below eye level, facing them,
+   * beside the replica on the user's side, on the side away from the rail. Judged from the eye like
+   * the labels: the print and the caption under it must clear the replica (parts, shell, bubble),
+   * the candle and the rail; the part labels and the Reset pill too while there is room. For each
+   * drop in PRINT_DROPS it starts where the print's centre is just past the replica's edge and steps
+   * outward 0.5° at a time (up to 8°); the first clear spot wins.
+   */
   private printPlace(): vec3 {
-    return this.ctx.camPos().add(this.getViewDir().uniformScale(PRINT_OUT)).add(new vec3(0, -PRINT_DROP, 0))
+    const eye = this.ctx.camPos()
+    const S = this.stageCenter()
+    const F = viewFrame(eye, S)
+    const view = (pts: vec3[]) => hull2(pts.map((q) => toView(F, q)))
+    const replica: vec2[][] = []
+    for (const p of this.parts) if (p.looks.length && p.so.enabled) for (const bx of meshBoxes(p.so)) replica.push(view(bx))
+    for (const bx of meshBoxes(this.bodySo, this.bodyMat)) replica.push(view(bx))
+    for (const bx of meshBoxes(this.barrelSo, this.barrelMat)) replica.push(view(bx))
+    const hard = replica.slice()
+    if (this.subject) for (const bx of meshBoxes(this.subject)) hard.push(view(bx))
+    if (this.bubble && this.bubbleOpen > 0.01) {
+      const c = this.bubble.getTransform().getWorldPosition()
+      const k = F.D / Math.max(1, c.sub(F.eye).dot(F.f))
+      hard.push(circle2(toView(F, c), BUBBLE_R * this.bubble.getTransform().getWorldScale().x * k))
+    }
+    if (this.ctx.rail.isVisible()) for (const bx of this.ctx.rail.getBoxes()) hard.push(view(bx))
+    const soft: vec2[][] = []
+    for (const q of this.ctx.labels.getTextQuads()) if (q.id.startsWith("hero_")) soft.push(view(q.corners))
+    if (this.ctx.avoid) for (const q of this.ctx.avoid()) soft.push(view(q))
+
+    // The side away from the rail, and the replica's edge on that side (view units).
+    const toS = flatDir(S.sub(eye))
+    const right = toS.cross(vec3.up()).normalize()
+    const side = this.railAnchor().sub(S).dot(right) >= 0 ? -1 : 1
+    let edge = side < 0 ? 1e9 : -1e9
+    for (const h of replica) for (const q of h) edge = side < 0 ? Math.min(edge, q.x) : Math.max(edge, q.x)
+    if (!replica.length) edge = 0
+
+    // The print (its bob included) and the caption slot under it, as one shape seen from the eye.
+    // The captions shown under a print are one line, narrower than the print.
+    const capScale = Math.max(0.3, PRINT_DIST / this.ctx.labels.getDesignDistance())
+    const capW = PRINT_W
+    const capH = 1.1 * capScale
+    const M = F.D * Math.tan(0.4 * DEG)
+    const at = (drop: number, a: number): vec3 => {
+      const flat = Math.sqrt(PRINT_DIST * PRINT_DIST - drop * drop)
+      const dir = toS.uniformScale(Math.cos(a)).add(right.uniformScale(side * Math.sin(a)))
+      return eye.add(dir.uniformScale(flat)).add(new vec3(0, -drop, 0))
+    }
+    const shape = (P: vec3): vec2[] => {
+      const rot = faceToward(eye.sub(P))
+      const r = rot.multiplyVec3(vec3.right())
+      const u = rot.multiplyVec3(vec3.up())
+      const top = PRINT_H / 2 + PRINT_BOB
+      const bottom = PRINT_H / 2 + PRINT_BOB + PRINT_CAPTION_GAP + capH
+      const pts = [P.add(r.uniformScale(-PRINT_W / 2)).add(u.uniformScale(top)), P.add(r.uniformScale(PRINT_W / 2)).add(u.uniformScale(top)), P.add(r.uniformScale(capW / 2)).add(u.uniformScale(-bottom)), P.add(r.uniformScale(-capW / 2)).add(u.uniformScale(-bottom))]
+      return view(pts)
+    }
+    const clear = (s: vec2[], obstacles: vec2[][]) => obstacles.every((h) => polyGap(s, h) >= M)
+    for (const useSoft of [true, false]) {
+      for (const drop of PRINT_DROPS) {
+        let start = -1
+        for (let deg = 0; deg <= 60; deg += 0.5) {
+          const P = at(drop, deg * DEG)
+          if (start < 0) {
+            if (side * (toView(F, P).x - edge) < 0) continue
+            start = deg
+          }
+          if (deg > start + 8) break
+          const s = shape(P)
+          if (clear(s, hard) && (!useSoft || clear(s, soft))) return P
+        }
+      }
+    }
+    // Nothing clear (an unusual layout): just past the replica's edge, at the first drop.
+    for (let deg = 0; deg <= 60; deg += 0.5) {
+      const P = at(PRINT_DROPS[0], deg * DEG)
+      if (side * (toView(F, P).x - edge) >= 0) return P
+    }
+    return at(PRINT_DROPS[0], 0)
   }
 
-  /** The user's view direction, level (toward the replica if they look straight up or down). */
-  getViewDir(): vec3 {
-    const view = this.ctx.camera ? this.ctx.camera.getTransform().back : null
-    return flatDir(view && Math.abs(view.y) < 0.95 ? view : this.replicaCenter().sub(this.ctx.camPos()))
+  /** Where the caption hangs once the print has developed: centred under its bottom edge (and its bob). */
+  private printCaptionAnchor(): vec3 {
+    const P = this.printTarget ?? (this.print ? this.print.getTransform().getWorldPosition() : this.replicaCenter())
+    const up = faceToward(this.ctx.camPos().sub(P)).multiplyVec3(vec3.up())
+    return P.add(up.uniformScale(-(PRINT_H / 2 + PRINT_BOB + PRINT_CAPTION_GAP)))
+  }
+
+  /** True while a print is developing: the stage caption waits for it. */
+  private captionWaiting(): boolean {
+    return !!this.print && !this.printLogged.developed
   }
 
   /** Pose the live print on its path: slide out of the slot, rise, turn and fly to the user, float. */
@@ -3231,7 +3506,7 @@ export class CameraHero {
       }
       const u = springOut((t - PRINT_SLIDE - PRINT_RISE) / PRINT_FLY)
       // Floating: a slow, small bob once it is there.
-      const bob = t > PRINT_ARRIVE ? 0.35 * Math.sin(((t - PRINT_ARRIVE) / 3.2) * Math.PI * 2) : 0
+      const bob = t > PRINT_ARRIVE ? PRINT_BOB * Math.sin(((t - PRINT_ARRIVE) / 3.2) * Math.PI * 2) : 0
       const to = this.printTarget.add(new vec3(0, bob, 0))
       pos = vec3.lerp(this.printFrom.pos, to, u).add(new vec3(0, 6 * Math.sin(Math.PI * u), 0))
       rot = quat.slerp(this.printFrom.rot, faceToward(head.sub(pos)), u)
@@ -3252,14 +3527,16 @@ export class CameraHero {
       const a = (this.state === "returning" ? this.lightFade() : 1) * clamp01(t / 0.08)
       for (const m of this.printMats) setFade(m, a)
       if (this.printBlankMat) setFade(this.printBlankMat, a * (1 - 0.85 * d))
-      if (this.printImage) this.printImage.update(this.printImgH, this.printImgC, a * d)
-      if (this.printTag) setTextAlpha(this.printTag, a * clamp01((t - PRINT_ARRIVE) / 0.2))
+      if (this.printPicMat) setFade(this.printPicMat, a * d)
+      if (this.printTag) setTagInk(this.printTag, this.printTagInk, a * clamp01((t - PRINT_ARRIVE) / 0.2))
       if (t >= PRINT_ARRIVE && !this.printLogged.shown) {
         this.printLogged.shown = true
         this.ctx.log("hero:printShown")
       }
       if (dev >= 1 && !this.printLogged.developed) {
         this.printLogged.developed = true
+        // Developed: the caption comes back, below the print.
+        this.showCaption()
         this.ctx.log("hero:printDeveloped")
       }
     }
@@ -3267,7 +3544,7 @@ export class CameraHero {
       p.t += dt
       const a = Math.max(0, 1 - easeIn(p.t / 0.22))
       for (const m of p.mats) setFade(m, a)
-      if (p.tag) setTextAlpha(p.tag, a)
+      if (p.tag) setTagInk(p.tag, p.ink, a)
       const tr = p.so.getTransform()
       tr.setWorldPosition(tr.getWorldPosition().add(new vec3(0, -12 * dt, 0)))
       if (p.t >= 0.22) {
@@ -3391,7 +3668,7 @@ export class CameraHero {
     this.oldPrints = []
     this.printMats = []
     this.printTag = null
-    this.printImage = null
+    this.printPicMat = null
     this.printBlankMat = null
   }
 
@@ -3413,7 +3690,7 @@ export class CameraHero {
     this.oldPrints = []
     this.printMats = []
     this.printTag = null
-    this.printImage = null
+    this.printPicMat = null
     this.printBlankMat = null
   }
 
