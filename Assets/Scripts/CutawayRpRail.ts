@@ -25,7 +25,7 @@ export interface RpRailVisual {
   putBack: boolean
 }
 
-type SliderKey = "apart" | "loudness" | "pitch"
+export type SliderKey = "apart" | "loudness" | "pitch"
 
 interface LightSlider {
   pop: Pop
@@ -59,12 +59,15 @@ export class RpRail {
   onPutBack: (() => void) | null = null
   /** Fired on every pinch of a rail control (world position), for the tick sound. */
   onPinch: ((p: vec3) => void) | null = null
+  /** Fired as soon as a slider's value changes (drag or setValue), so its effects land in the same frame. */
+  onChange: ((k: SliderKey, v: number) => void) | null = null
 
   private panel: SceneObject
   private sliders: Record<SliderKey, LightSlider>
   private putBack: Pill
   private mode: RpRailMode = "none"
   private camTransform: Transform | null = null
+  private seen: Record<SliderKey, number> = {apart: -1, loudness: -1, pitch: -1}
 
   constructor(parent: SceneObject, private glowMaterial: Material) {
     this.so = this.child(parent, "RpRail")
@@ -74,6 +77,11 @@ export class RpRail {
       apart: this.buildSlider("RpRailApart", "Take apart"),
       loudness: this.buildSlider("RpRailLoudness", "Loudness"),
       pitch: this.buildSlider("RpRailPitch", "Pitch")
+    }
+    for (const k of Object.keys(this.sliders) as SliderKey[]) {
+      const sl = this.sliders[k].slider
+      sl.onValueChange.add(() => this.notify(k))
+      sl.onKnobMoved.add(() => this.notify(k))
     }
     this.putBack = this.buildPill("RpRailPutBack", "Put it back", 10.5)
     this.putBack.pop.so.getTransform().setLocalPosition(new vec3(0, -(ROW_H + 1.6), 0))
@@ -116,6 +124,7 @@ export class RpRail {
 
   setValue(k: SliderKey, v: number): void {
     this.sliders[k].slider.resetToValue(Math.max(0, Math.min(1, v)))
+    this.notify(k)
   }
 
   /** Change a slider's label (e.g. "Pitch  440 Hz"). */
@@ -184,7 +193,10 @@ export class RpRail {
 
   /** Per frame (driven by the stage). */
   update(dt: number): void {
-    for (const k of Object.keys(this.sliders) as SliderKey[]) this.updateSlider(this.sliders[k], dt)
+    for (const k of Object.keys(this.sliders) as SliderKey[]) {
+      this.notify(k)
+      this.updateSlider(this.sliders[k], dt)
+    }
     const p = this.putBack
     if (!p.masked) this.maskPill(p)
     p.pop.update(dt)
@@ -196,6 +208,14 @@ export class RpRail {
   }
 
   // ---------------- Build ----------------
+
+  /** Tell the stage when a value really changed (from an event, setValue, or the per-frame check). */
+  private notify(k: SliderKey): void {
+    const v = this.getValue(k)
+    if (v === this.seen[k]) return
+    this.seen[k] = v
+    if (this.onChange) this.onChange(k, v)
+  }
 
   private child(parent: SceneObject, name: string): SceneObject {
     const so = global.scene.createSceneObject(name)

@@ -9,6 +9,7 @@
  */
 
 export const RP_SAMPLE_RATE = 44100
+const HIST_N = 8192
 
 /** The tone's harmonics: [multiple, amplitude, phase]. The groove, signal and cone draw this same shape. */
 const HARMONICS: [number, number, number][] = [
@@ -45,6 +46,10 @@ export class RpTone {
   private samples = 0
   private lastAsk = 0
   private lastBuf: Float32Array | null = null
+  /** The most recent output samples, oldest first once full (tests measure the played frequency). */
+  private hist = new Float32Array(HIST_N)
+  private histAt = 0
+  private histCount = 0
   readonly ok: boolean
   readonly why: string
 
@@ -73,6 +78,7 @@ export class RpTone {
     this.on = true
     this.phase = 0
     this.g = 0
+    this.histCount = 0
     if (!this.audio.isPlaying()) this.audio.play(-1)
   }
 
@@ -104,6 +110,14 @@ export class RpTone {
     return this.audio ? this.audio.getSceneObject().getTransform().getWorldPosition() : null
   }
 
+  /** The last `n` samples sent to the output, in order (at most 8192). */
+  getRecent(n: number): Float32Array {
+    const m = Math.min(n, this.histCount)
+    const out = new Float32Array(m)
+    for (let i = 0; i < m; i++) out[i] = this.hist[(this.histAt - m + i + HIST_N * 2) % HIST_N]
+    return out
+  }
+
   /** The last block of samples sent to the output (tests measure its frequency). */
   getLastBlock(): Float32Array | null {
     return this.lastBuf
@@ -131,7 +145,10 @@ export class RpTone {
       this.phase += (tau * this.f) / RP_SAMPLE_RATE
       if (this.phase > tau) this.phase -= tau
       buf[i] = this.g * rpToneShape(this.phase)
+      this.hist[this.histAt] = buf[i]
+      this.histAt = (this.histAt + 1) % HIST_N
     }
+    this.histCount = Math.min(HIST_N, this.histCount + n)
     this.provider.enqueueAudioFrame(buf, new vec3(n, 1, 1))
     this.frames++
     this.samples += n

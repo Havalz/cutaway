@@ -21,7 +21,7 @@ import {CutawayLabelsUI} from "./CutawayLabelsUI"
 import {RecordPlayerModel, RP_GEOM} from "./CutawayRecordPlayerModel"
 import {DeckEvent, RP_CUE_CM, RpDeck} from "./CutawayRpDeck"
 import {RpPhysics} from "./CutawayRpPhysics"
-import {RpRail} from "./CutawayRpRail"
+import {RpRail, SliderKey} from "./CutawayRpRail"
 import {pitchToFreq, RpSoundInfo, RpSoundShow} from "./CutawayRpSound"
 import {RpTone} from "./CutawayRpTone"
 import {arcControl, bezier, clampFoot, clearOfHead, contactGlowKit, DEG, fitScale, flatDir, footprint, Footprint, footprintOutlineXY, footRadius, footReach, hoverDiscKit, hullLowestY, placeGlowAndDisc, unclampFoot} from "./CutawayStageKit"
@@ -271,7 +271,9 @@ export class RecordPlayerHero {
   private landedAt = -1
   private homeAt = -1
 
-  constructor(private ctx: RpContext) {}
+  constructor(private ctx: RpContext) {
+    ctx.rail.onChange = (k, v) => this.onSlider(k, v)
+  }
 
   // =====================================================================================
   // Public API
@@ -896,6 +898,12 @@ export class RecordPlayerHero {
         if (this.state === "landed") this.showCaption(0)
         break
     }
+  }
+
+  /** A slider moved: its label, and everything it drives, in the same frame. */
+  private onSlider(k: SliderKey, v: number): void {
+    if (k === "pitch") this.ctx.rail.setLabel("pitch", "Pitch  " + Math.round(pitchToFreq(v)) + " Hz")
+    if ((k === "pitch" || k === "loudness") && this.sound && this.deck && this.model) this.sound.refresh(this.soundParams())
   }
 
   /** Loudness and pitch from the rail, the platter's speed, where the stylus is. */

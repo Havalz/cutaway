@@ -9,8 +9,9 @@
  *   from the speaker's own position (an Audio Output on a spatial AudioComponent there).
  *
  * Real physics, shown honestly (the Devpost page says the waves are slowed and magnified):
- *   - The rings are the real wavelength in air: they leave the cone once per (slowed) period and
- *     travel at the (slowed) speed of sound, so their spacing is exactly λ = 34300 / f cm.
+ *   - The rings are the real wavelength in air: one leaves the cone each (slowed) period and they
+ *     travel at the (slowed) speed of sound, so their spacing is λ = 34300 / f cm. They are computed
+ *     from the speaker's phase each frame (ring i at RC + λ·(i + frac)), so Pitch respaces them at once.
  *   - The groove's wiggle is its real wavelength on the record, v / f with v = 2π·r·(33⅓/60) at the
  *     stylus radius r, magnified M times in the bubble.
  *   - All motion the eye follows (the groove's scroll and wiggle, the stylus, the signal waveform,
@@ -100,8 +101,11 @@ export interface RpSoundInfo {
   /** Shown in the bubble (world cm): the groove's side-to-side amplitude and its wavelength. */
   grooveAmp: number
   grooveWavelength: number
-  /** The signal waveform's height (cm) and the cone's excursion amplitude (cm). */
+  /** The signal waveform's height (cm) and its wavelength along the thread (cm). */
   signalAmp: number
+  signalWavelength: number
+  /** The cone's (slowed) rate (Hz) and its excursion amplitude (cm). */
+  coneHz: number
   coneAmp: number
   /** The cone's current offset along its axis (cm) and its position. */
   coneOffset: number
@@ -137,8 +141,15 @@ export class RpSoundShow {
   private tArrive = 0
   /** The signal's phase at the cartridge (rad): advances 2π·(f/S)·speed per second. */
   private phi = 0
-  private psiPrev = 0
-  private births: number[] = []
+  /**
+   * The phase at the speaker end of the thread (rad), advanced at the same rate. Kept on its own so a
+   * Pitch change (which changes the waveform's wavelength along the thread) never makes the cone or
+   * the rings jump; the waveform is drawn back from it along the thread.
+   */
+  private psiS = 0
+  private psiInit = false
+  private psiArrive = 0
+  private ringRadii: number[] = []
   private bubble: Bubble | null = null
   private thread: GlowPath | null = null
   private wave: TrailRibbon | null = null
@@ -189,8 +200,10 @@ export class RpSoundShow {
     this.phase = "groove"
     this.t = 0
     this.phi = 0
-    this.psiPrev = 0
-    this.births = []
+    this.psiS = 0
+    this.psiInit = false
+    this.psiArrive = 0
+    this.ringRadii = []
     this.buildBubble(stylus)
     this.buildThread(threadPts)
     this.buildCone()
@@ -209,6 +222,11 @@ export class RpSoundShow {
     this.cb.log("rp:soundStop")
   }
 
+  /** A slider moved: apply the new values now (same frame), without advancing time. */
+  refresh(p: RpSoundParams): void {
+    this.update(0, p)
+  }
+
   /** Remove everything at once (Reset). */
   clear(): void {
     if (this.root) this.root.destroy()
@@ -222,7 +240,7 @@ export class RpSoundShow {
     this.conePop = null
     this.coneMats = []
     this.rings = []
-    this.births = []
+    this.ringRadii = []
     this.phase = "off"
     this.tone.stop()
     this.info = this.emptyInfo()
@@ -240,6 +258,7 @@ export class RpSoundShow {
     const fS = p.freq / RP_S
     const omega = 2 * Math.PI * fS * p.speedRatio
     this.phi += omega * dt
+    this.psiS += omega * dt
     let env = 1
     if (this.phase === "fading") {
       env = 1 - clamp01((this.t - this.tFade) / FADE_S)
@@ -262,6 +281,11 @@ export class RpSoundShow {
     }
     const front = tSig <= 0 ? 0 : Math.min(Ltot, v * tSig)
     const kt = (2 * Math.PI * fS) / v
+    if (!this.psiInit) {
+      // The speaker end lags the cartridge by the thread's length in waves.
+      this.psiS = this.phi - kt * Ltot
+      this.psiInit = true
+    }
     if (this.thread) {
       this.thread.setRange(0, Ltot > 0 ? front / Ltot : 0)
       setFade(this.thread.mat, env)
@@ -270,7 +294,7 @@ export class RpSoundShow {
     if (this.phase === "signal" && front >= Ltot - 1e-3) {
       this.phase = "sound"
       this.tArrive = this.t
-      this.psiPrev = this.phi - kt * Ltot
+      this.psiArrive = this.psiS
       if (this.conePop) this.conePop.show(true)
       this.tone.start()
       this.cb.caption(3)
@@ -279,7 +303,7 @@ export class RpSoundShow {
 
     // ---------------- At the speaker: the cone, the rings, the tone ----------------
     // The cone moves with the waveform's value where the thread ends (in step with it).
-    const psi = this.phi - kt * Ltot
+    const psi = this.psiS
     const soundOn = this.phase === "sound" || (this.phase === "fading" && this.tArrive > 0)
     const sEnv = soundOn ? clamp01((this.t - this.tArrive) / 0.25) * env : 0
     const coneAmp = L * CONE_X
@@ -289,24 +313,27 @@ export class RpSoundShow {
       this.cone.getTransform().setLocalPosition(sp.add(this.axis.uniformScale(coneOffset)))
       if (this.conePop) this.conePop.update(dt)
     }
-    // A ring leaves the cone each time its (slowed) cycle comes round; the exact moment within the
-    // frame keeps the spacing exact: (c/S)·(S/f) = c/f.
-    if (this.phase === "sound" && omega > 1e-6) {
-      const twoPi = Math.PI * 2
-      let k = Math.floor(this.psiPrev / twoPi) + 1
-      while (k * twoPi <= psi) {
-        this.births.push(this.t - (psi - k * twoPi) / omega)
-        k++
-      }
-    }
-    this.psiPrev = psi
-    const cS = RP_SOUND_CM_S / RP_S
-    this.births = this.births.filter((b) => RC + cS * (this.t - b) < RING_MAX)
-    const bright = 0.3 + 0.7 * L
-    this.updateRings(sp, cS, bright, env, cam)
-
     // The tone: the record's frequency at the platter's speed, louder with Loudness.
     const toneF = p.freq * Math.max(0.05, p.speedRatio)
+
+    // Rings: one left the cone at each whole cycle of the speaker's phase since the sound arrived;
+    // the one born k cycles ago is k + frac wavelengths out, λ = c / f (the real wavelength in air).
+    // They travel at (c/S) and the spacing follows Pitch in the same frame.
+    this.ringRadii = []
+    if (soundOn) {
+      const lam = RP_SOUND_CM_S / toneF
+      const cyc = psi / (Math.PI * 2)
+      const m0 = Math.floor(cyc)
+      const fr = cyc - m0
+      const first = Math.ceil(this.psiArrive / (Math.PI * 2) - 1e-9)
+      for (let i = 0; i < RING_POOL && m0 - i >= first; i++) {
+        const r = RC + lam * (fr + i)
+        if (r >= RING_MAX) break
+        this.ringRadii.push(r)
+      }
+    }
+    const bright = 0.3 + 0.7 * L
+    this.updateRings(sp, bright, env, cam)
     const toneG = this.phase === "sound" ? loudnessGain(L) * sEnv : 0
     if (this.phase === "sound") this.tone.set(toneF, toneG)
     if (this.phase === "fading") this.tone.set(toneF, 0)
@@ -322,14 +349,13 @@ export class RpSoundShow {
       grooveAmp: L * RP_GROOVE_AMP_CM * RP_M,
       grooveWavelength: lam * RP_M,
       signalAmp: L * SIG_A,
+      signalWavelength: (2 * Math.PI) / kt,
+      coneHz: toneF / RP_S,
       coneAmp,
       coneOffset,
       conePos: this.cone ? this.cone.getTransform().getWorldPosition() : null,
       coneShown: !!this.conePop && this.conePop.isShown,
-      rings: this.births
-        .slice()
-        .reverse()
-        .map((b) => ({center: sp, radius: RC + cS * (this.t - b)})),
+      rings: this.ringRadii.map((r) => ({center: sp, radius: r})),
       ringBrightness: bright,
       toneFreq: toneF,
       toneGain: toneG,
@@ -511,7 +537,7 @@ export class RpSoundShow {
       if (n.dot(up) < 0) n = n.uniformScale(-1)
       // Small along the arm, full height once it is out of the deck.
       const grow = 0.5 + 0.5 * clamp01(s / 60)
-      pts.push(base.add(n.uniformScale(L * SIG_A * grow * rpToneShape(this.phi - kt * s))))
+      pts.push(base.add(n.uniformScale(L * SIG_A * grow * rpToneShape(this.psiS + kt * (Ltot - s)))))
       alphas.push(env * clamp01((front - s) / 6 + 0.15) * clamp01(s / 3 + 0.2))
     }
     const view = cam.sub(this.thread.pointAt(0.5)).normalize()
@@ -573,20 +599,20 @@ export class RpSoundShow {
     }
   }
 
-  private updateRings(center: vec3, cS: number, bright: number, env: number, cam: vec3): void {
+  private updateRings(center: vec3, bright: number, env: number, cam: vec3): void {
     const u = this.axis.cross(vec3.up()).normalize()
     const v = u.cross(this.axis).normalize()
     const view = cam.sub(center).normalize()
-    const n = Math.min(this.births.length, this.rings.length)
+    const n = Math.min(this.ringRadii.length, this.rings.length)
     for (let i = 0; i < this.rings.length; i++) {
       const ring = this.rings[i]
       if (i >= n) {
         ring.setVisible(false)
         continue
       }
-      const b = this.births[this.births.length - 1 - i]
-      const radius = RC + cS * (this.t - b)
-      const a = bright * env * Math.pow(1 - clamp01(radius / RING_MAX), 1.5) * clamp01((this.t - b) / 0.08)
+      const radius = this.ringRadii[i]
+      // Fades in as it leaves the cone's rim, out toward RING_MAX.
+      const a = bright * env * Math.pow(1 - clamp01(radius / RING_MAX), 1.5) * clamp01((radius - RC) / 5 + 0.1)
       const pts: vec3[] = []
       const alphas: number[] = []
       for (let j = 0; j < RING_PTS; j++) {
@@ -609,6 +635,8 @@ export class RpSoundShow {
       grooveAmp: 0,
       grooveWavelength: 0,
       signalAmp: 0,
+      signalWavelength: 0,
+      coneHz: 0,
       coneAmp: 0,
       coneOffset: 0,
       conePos: null,
