@@ -94,6 +94,31 @@ const MOTOR_X = -15.5
 const MOTOR_Z = -7.5
 const BELT_Y = 6.15
 
+/**
+ * The belt's centreline in its own space (x, z), in the direction it runs: round the sub-platter's
+ * groove, along the tangent to the motor pulley, round it and back (the record turns clockwise
+ * seen from above, so both pulleys and the belt run the same way).
+ */
+export function rpBeltRing(): {p: vec2; n: vec2}[] {
+  const c2 = new vec2(MOTOR_X - AXIS_X, MOTOR_Z - AXIS_Z)
+  const R1 = 5.42 + 0.045
+  const R2 = 0.48 + 0.045
+  const D = c2.length
+  const phi = Math.atan2(c2.y, c2.x)
+  const alpha = Math.acos((R1 - R2) / D)
+  const ring: {p: vec2; n: vec2}[] = []
+  const arcPts = (c: vec2, r: number, a0: number, a1: number, n: number) => {
+    for (let i = 0; i <= n; i++) {
+      const a = a0 + ((a1 - a0) * i) / n
+      const d = new vec2(Math.cos(a), Math.sin(a))
+      ring.push({p: c.add(d.uniformScale(r)), n: d})
+    }
+  }
+  arcPts(new vec2(0, 0), R1, phi + alpha, phi + TAU - alpha, 48)
+  arcPts(c2, R2, phi - alpha, phi + alpha, 12)
+  return ring
+}
+
 /** The model's layout for the hero stage (model space, cm at 1x). */
 export const RP_GEOM = {
   plinthHalf: new vec2(PL_HW, PL_HD),
@@ -1158,22 +1183,7 @@ export class RecordPlayerModel {
 
     // Belt: a flat band round the sub-platter's groove and the motor pulley.
     const BL = this.part(I, "RpBelt", new vec3(AXIS_X, BELT_Y, AXIS_Z))
-    const c2 = new vec2(MOTOR_X - AXIS_X, MOTOR_Z - AXIS_Z)
-    const R1 = 5.42 + 0.045
-    const R2 = 0.48 + 0.045
-    const D = c2.length
-    const phi = Math.atan2(c2.y, c2.x)
-    const alpha = Math.acos((R1 - R2) / D)
-    const ring: RP2[] = []
-    const arcPts = (c: vec2, r: number, a0: number, a1: number, n: number) => {
-      for (let i = 0; i <= n; i++) {
-        const a = a0 + ((a1 - a0) * i) / n
-        const d = new vec2(Math.cos(a), Math.sin(a))
-        ring.push({p: c.add(d.uniformScale(r)), n: d})
-      }
-    }
-    arcPts(new vec2(0, 0), R1, phi + alpha, phi + TAU - alpha, 48)
-    arcPts(c2, R2, phi - alpha, phi + alpha, 12)
+    const ring: RP2[] = rpBeltRing()
     const bk = new MeshKit()
     const t = 0.045
     const hh = 0.13

@@ -46,7 +46,14 @@ export class RpDeck {
   private tipLocalZ: number
   private arm: Transform
   private armLift: Transform
-  private spinParts: {tr: Transform; base: quat; ratio: number}[] = []
+  private spinParts: {tr: Transform; base: quat; ratio: number; drive: boolean}[] = []
+  /**
+   * Taken apart, the motor runs on its own: the pulley drives the belt, which turns the sub-platter
+   * (at 33⅓ rpm) while the platter is lifted off. Extra angle of the drive over the platter's (rad).
+   */
+  driveAngle = 0
+  driveOmega = 0
+  private driveOn = false
   private anim: {from: {yaw: number; lift: number}; to: {yaw: number; lift: number}; t: number; dur: number} | null = null
   private spinT = 0
   private spinFrom = 0
@@ -66,14 +73,14 @@ export class RpDeck {
     this.yawOuter = this.yawForRadius(G.grooveOuter)
     this.yawInner = this.yawForRadius(G.grooveInner)
     const sub = G.subPlatterR / G.pulleyR
-    for (const [name, ratio] of [
-      ["RpPlatter", 1],
-      ["RpRecord", 1],
-      ["RpSubPlatter", 1],
-      ["RpMotorPulley", sub]
-    ] as [string, number][]) {
+    for (const [name, ratio, drive] of [
+      ["RpPlatter", 1, false],
+      ["RpRecord", 1, false],
+      ["RpSubPlatter", 1, true],
+      ["RpMotorPulley", sub, true]
+    ] as [string, number, boolean][]) {
       const so = model.parts[name]
-      if (so) this.spinParts.push({tr: so.getTransform(), base: so.getTransform().getLocalRotation(), ratio})
+      if (so) this.spinParts.push({tr: so.getTransform(), base: so.getTransform().getLocalRotation(), ratio, drive})
     }
     this.apply()
   }
@@ -199,7 +206,19 @@ export class RpDeck {
     this.lift = 0
     this.omega = 0
     this.spinTarget = 0
+    this.driveOn = false
+    this.driveOmega = 0
     this.apply()
+  }
+
+  /** Run the motor on its own (taken apart) or let it run down. */
+  setDrive(on: boolean): void {
+    this.driveOn = on
+  }
+
+  /** The belt's speed (cm/s at 1x): the sub-platter's groove speed. */
+  get beltSpeed(): number {
+    return (this.omega + this.driveOmega) * (G.subPlatterR + 0.045)
   }
 
   /** Events since the last call (touchdown, liftoff, rested). */
@@ -252,6 +271,11 @@ export class RpDeck {
       }
     }
     this.platterAngle += this.omega * dt
+    // The motor on its own: up to speed in about 0.5 s, down in about 0.5 s.
+    const target = this.driveOn ? RP_OMEGA : 0
+    this.driveOmega += (target - this.driveOmega) * (1 - Math.exp(-dt / 0.15))
+    if (Math.abs(target - this.driveOmega) < 1e-4) this.driveOmega = target
+    this.driveAngle += this.driveOmega * dt
     this.apply()
   }
 
@@ -273,6 +297,9 @@ export class RpDeck {
     const pitch = -Math.asin(Math.max(-1, Math.min(1, this.lift / this.tipLocalZ)))
     this.armLift.setLocalRotation(quat.angleAxis(pitch, new vec3(1, 0, 0)))
     // Records turn clockwise seen from above.
-    for (const s of this.spinParts) s.tr.setLocalRotation(quat.angleAxis(-this.platterAngle * s.ratio, vec3.up()).multiply(s.base))
+    for (const s of this.spinParts) {
+      const a = this.platterAngle + (s.drive ? this.driveAngle : 0)
+      s.tr.setLocalRotation(quat.angleAxis(-a * s.ratio, vec3.up()).multiply(s.base))
+    }
   }
 }

@@ -19,6 +19,7 @@ import {setFade, spawnMesh, TrailRibbon} from "./CutawayGeometry"
 import {TableSurface} from "./CutawayHeroSurface"
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
 import {RecordPlayerModel, RP_GEOM} from "./CutawayRecordPlayerModel"
+import {RpApart, RpApartInfo} from "./CutawayRpApart"
 import {DeckEvent, RP_CUE_CM, RpDeck} from "./CutawayRpDeck"
 import {RpPhysics} from "./CutawayRpPhysics"
 import {RpRail, SliderKey} from "./CutawayRpRail"
@@ -140,8 +141,13 @@ const CAPTIONS = [
   "Lift the arm and place the needle on the record.",
   keyWord("The needle rides the wiggle and *shakes*.", ENERGY.motion),
   keyWord("A magnet and coils turn that shaking into *signal*.", ENERGY.signal),
-  keyWord("The speaker pushes *air*. That's the sound you hear.", ENERGY.motion)
+  keyWord("The speaker pushes *air*. That's the sound you hear.", ENERGY.motion),
+  keyWord("Wiggle a magnet near a coil, and *current* flows.", ENERGY.signal)
 ]
+/** Taken apart: the caption for the live detail. */
+const CAPTION_APART = 4
+/** How fast the parts follow the "Take apart" slider (slider units per second), as the camera. */
+const APART_RATE = 1.6
 /** Defaults for the sliders when the record first plays: comfortable, and 440 Hz. */
 const LOUDNESS_DEFAULT = 0.6
 const PITCH_DEFAULT = 2 / 3
@@ -257,6 +263,10 @@ export class RecordPlayerHero {
   private grabs: {slide: SceneObject; turn: SceneObject; arm: SceneObject} | null = null
   private deck: RpDeck | null = null
   private sound: RpSoundShow | null = null
+  private apart: RpApart | null = null
+  /** The take-apart value the parts follow: the slider's, rate-limited, and 0 until it hovers. */
+  private sEff = 0
+  private lookByRmv = new Map<RenderMeshVisual, Look>()
   /** The tonearm in the hand: where its handle and the hand were at the grab, the yaw then, the hand's vertical travel. */
   private armGrab: {h0: vec3; q0: vec3 | null; accum: vec3; dy: number; ang0: number; yaw0: number} | null = null
   private captionStage = -1
@@ -348,6 +358,10 @@ export class RecordPlayerHero {
   clear(): void {
     if (this.sound) this.sound.clear()
     this.sound = null
+    if (this.apart) this.apart.hideLabels()
+    this.apart = null
+    this.sEff = 0
+    this.lookByRmv.clear()
     this.deck = null
     this.armGrab = null
     this.captionStage = -1
@@ -453,6 +467,14 @@ export class RecordPlayerHero {
   }
 
   /** The direction the tonearm side (+X) faces, flat (world). */
+  getApartInfo(): RpApartInfo | null {
+    return this.apart ? this.apart.getInfo() : null
+  }
+
+  getApartValue(): number {
+    return this.sEff
+  }
+
   getDeck(): RpDeck | null {
     return this.state === "none" ? null : this.deck
   }
@@ -513,6 +535,24 @@ export class RecordPlayerHero {
       log: (p) => this.ctx.log(p),
       caption: (stage) => this.showCaption(stage)
     })
+    this.apart = new RpApart(this.model, this.deck, {
+      labels: this.ctx.labels,
+      glowMat: this.ctx.glowMat,
+      camPos: () => this.ctx.camPos(),
+      stageCenter: () => this.stageCenter(),
+      railBoxes: () => (this.ctx.rail.isVisible() ? this.ctx.rail.getBoxes() : []),
+      setGroup: (g, fill, fade) => {
+        const gl = this.groupLook[g]
+        if (gl) {
+          gl.fill = fill
+          gl.fade = fade
+        }
+      },
+      groupSolid: (g) => this.groupSolid(g),
+      meshSolid: (rmv) => this.meshSolid(rmv),
+      partSound: (p) => this.ctx.sound("part", p),
+      log: (p) => this.ctx.log(p)
+    })
     this.buildLooks()
     this.buildGlowAndDisc()
   }
@@ -553,8 +593,26 @@ export class RecordPlayerHero {
         look.twoSided = pass.twoSided
       }
       this.looks.push(look)
+      this.lookByRmv.set(m.rmv, look)
       if (!this.groupLook[group]) this.groupLook[group] = {fill: 1, rim: 1, fade: 1}
     }
+  }
+
+  /** Whether a look group is drawn solid now. */
+  private groupSolid(g: string): boolean {
+    const gl = this.groupLook[g]
+    return this.shellFill * (gl ? gl.fill : 1) >= 0.95 && this.globalFade * (gl ? gl.fade : 1) >= 0.95
+  }
+
+  /** A mesh as the user sees it: solid (true), an outline or ghost (false), or not drawn (null). */
+  private meshSolid(rmv: RenderMeshVisual): boolean | null {
+    const l = this.lookByRmv.get(rmv)
+    if (!l || l.accent || !rmv.getSceneObject().isEnabledInHierarchy) return null
+    const gl = this.groupLook[l.group]
+    const fill = this.shellFill * (gl ? gl.fill : 1)
+    const fade = this.globalFade * (gl ? gl.fade : 1)
+    if (fill >= 0.95 && fade >= 0.95) return true
+    return fade > 0.05 ? false : null
   }
 
   /** Apply the look: the shell's fill (rim-only in flight) times each group's own fill and fade. */
@@ -779,7 +837,8 @@ export class RecordPlayerHero {
 
   /** Whether the stage wants to hover (the take-apart step). */
   private wantHover(): boolean {
-    return false
+    // Taking it apart works with the arm at rest (spec §4).
+    return this.state === "landed" && this.ctx.rail.getValue("apart") > 0.001 && !!this.deck && this.deck.atRest && !this.armGrab
   }
 
   /** How far the parts may separate this frame (0 until it hovers). */
@@ -858,8 +917,25 @@ export class RecordPlayerHero {
     // Fill in from rim-only to the solid look over 400 ms.
     this.shellFill = easeOutCubic(this.t / T_FILL)
     this.shellRim = 0.9 + (0.3 - 0.9) * this.shellFill
-    this.updatePose(dt, true)
+    // The parts separate only once it hovers, and gather again before it comes down.
+    const target = this.pose === "hover" && this.wantHover() ? this.ctx.rail.getValue("apart") : 0
+    const step = APART_RATE * dt
+    this.sEff = Math.abs(target - this.sEff) <= step ? target : this.sEff + Math.sign(target - this.sEff) * step
+    this.updatePose(dt, this.sEff <= 0.001)
     this.updateDeck(dt)
+    this.updateApart(dt)
+  }
+
+  /** The parts, the live detail and the caption for the take-apart. */
+  private updateApart(dt: number): void {
+    if (!this.apart) return
+    this.apart.update(dt, this.sEff, pitchToFreq(this.ctx.rail.getValue("pitch")))
+    const busy = !this.deck || !this.deck.atRest
+    if (this.apart.live) {
+      if (this.captionStage !== CAPTION_APART) this.showCaption(CAPTION_APART)
+    } else if (this.sEff > 0.001) {
+      if (this.captionStage === 0) this.showCaption(-1)
+    } else if (!busy && this.pose === "rest" && (this.captionStage === CAPTION_APART || this.captionStage === -1)) this.showCaption(0)
   }
 
   // =====================================================================================
