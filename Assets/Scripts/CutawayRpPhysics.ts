@@ -64,8 +64,9 @@ export class RpPhysics {
     this.body.shape = box
     this.body.mass = 4
     if (opts.matter) this.body.matter = opts.matter
-    this.body.onCollisionEnter.add((e) => {
-      const c = e.collision
+    // The engine reports a contact (with no impulse) a step before the box actually reaches the
+    // table, about 1 cm above it: only a contact that pushes back counts as touching down.
+    const onHit = (c: Collision) => {
       if (!this.body.dynamic || !c || c.contactCount === 0) return
       let p = vec3.zero()
       let imp = 0
@@ -73,9 +74,12 @@ export class RpPhysics {
         p = p.add(k.position)
         imp += k.impulse
       }
+      if (imp <= 1e-4) return
       p = p.uniformScale(1 / c.contacts.length)
       if (this.contactCb) this.contactCb(p, imp)
-    })
+    }
+    this.body.onCollisionEnter.add((e) => onHit(e.collision))
+    this.body.onCollisionStay.add((e) => onHit(e.collision))
   }
 
   /** Rebuild the table collider for a newly found surface. */
