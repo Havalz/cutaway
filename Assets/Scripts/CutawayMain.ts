@@ -93,6 +93,11 @@ export class CutawayMain extends BaseScriptComponent {
   lampBaseMarker: SceneObject
 
   @input
+  @allowUndefined
+  @hint("Bulb marker: the real lamp's LED chips, low inside the shade on its socket (the explanation's x-ray window and chip bubble; the lamp marker stays the gaze target)")
+  bulbMarker: SceneObject
+
+  @input
   @hint("Where the lamp cord starts (wall outlet)")
   cordStartMarker: SceneObject
 
@@ -137,8 +142,18 @@ export class CutawayMain extends BaseScriptComponent {
 
   @input
   @allowUndefined
-  @hint("The lamp model's shell material (LampShell slot: uber PBR, vertex colour as emissive lift, warm fresnel rim; the paper uses it as is)")
+  @hint("The lamp model's shell material (LampShell slot: uber PBR, vertex colour as emissive lift, warm fresnel rim)")
   lampShellMaterial: Material
+
+  @input
+  @allowUndefined
+  @hint("The lamp's paper (LampPaper: LampShell with the procedural rice-paper crinkle as base and emissive texture; the paper uses it as is)")
+  lampPaperMaterial: Material
+
+  @input
+  @allowUndefined
+  @hint("The lamp's steel (LampSteel: LampShell with the procedural brushed-steel texture, for the base, collar, stem and rings)")
+  lampSteelMaterial: Material
 
   @input
   @allowUndefined
@@ -662,7 +677,7 @@ export class CutawayMain extends BaseScriptComponent {
     } else if (s.key === "camera") {
       exp = new CameraExplanation(ctx, this.cameraFacing, this.cameraBodySize)
     } else {
-      exp = new LampExplanation(ctx, this.pos(this.lampMarker), this.pos(this.lampBaseMarker), this.pos(this.cordStartMarker))
+      exp = new LampExplanation(ctx, this.pos(this.lampMarker), this.pos(this.lampBaseMarker), this.pos(this.cordStartMarker), this.bulbMarker ? this.pos(this.bulbMarker) : null)
     }
     if (exp.stopHint) s.ui.setStopWorldPosition(exp.stopHint)
     else s.ui.resetStopPosition()
@@ -892,13 +907,14 @@ export class CutawayMain extends BaseScriptComponent {
     return this.soundLog.slice()
   }
 
-  getMarkerPosition(name: "recordPlayer" | "needle" | "speaker" | "camera" | "lamp"): vec3 {
+  getMarkerPosition(name: "recordPlayer" | "needle" | "speaker" | "camera" | "lamp" | "bulb"): vec3 {
     const map = {
       recordPlayer: this.recordPlayerMarker,
       needle: this.needleMarker,
       speaker: this.speakerMarker,
       camera: this.cameraMarker,
-      lamp: this.lampMarker
+      lamp: this.lampMarker,
+      bulb: this.bulbMarker ?? this.lampMarker
     }
     return this.pos(map[name])
   }

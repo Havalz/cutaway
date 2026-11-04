@@ -67,14 +67,28 @@ const SOCKET_Y0 = SHADE_Y0 + 16
 const SOCKET_H = 4.4
 const SOCKET_R = 1.8
 const BULB_Y0 = SOCKET_Y0 + 1.4
-/** In bulb space: screw base, insulator, neck housing, LED board, frosted envelope. */
+/**
+ * A standard A-shape (A60) LED bulb, in bulb space: the screw base and its insulator, a short white
+ * housing flaring from the screw to the glass (the driver inside), the LED board on its top, and the
+ * frosted pear envelope over the board: a cone from the housing into a 6 cm sphere, tangent to it.
+ */
 const SCREW_TOP = 2.4
 const NECK_Y0 = 2.75
-const NECK_Y1 = 5.6
-const BOARD_Y = 5.5
-const GLASS_Y0 = 5.4
-const GLASS_H = 5.6
+const NECK_Y1 = 5.0
+const NECK_R0 = 1.42
+const NECK_R1 = 2.2
+/** The envelope's flank slope (dr/dy) where it leaves the housing, and the housing's at its top. */
+const GLASS_SLOPE = 0.6
+const BOARD_Y = 5.0
+const BOARD_R = 1.95
+const GLASS_Y0 = NECK_Y1 - 0.03
+const GLASS_R0 = 2.15
 const GLASS_R = 3.0
+/** Where the cone meets the sphere (glass space), the sphere's centre and the envelope's height. */
+const GLASS_RT = GLASS_R / Math.sqrt(1 + GLASS_SLOPE * GLASS_SLOPE)
+const GLASS_YT = (GLASS_RT - GLASS_R0) / GLASS_SLOPE
+const GLASS_YC = GLASS_YT + GLASS_SLOPE * GLASS_RT
+const GLASS_H = GLASS_YC + GLASS_R
 
 /** Cord: where it leaves the base (angle about +Y from +X toward +Z), radius, foot switch, plug. */
 const CORD_EXIT_DEG = 40
@@ -133,6 +147,9 @@ export const LAMP_GEOM = {
   ledY: BULB_Y0 + BOARD_Y + 0.16,
   /** Top of the frosted envelope, model space. */
   bulbTopY: BULB_Y0 + GLASS_Y0 + GLASS_H,
+  /** Centre of the envelope's sphere (the bulb's optical centre), model space. */
+  bulbCenterY: BULB_Y0 + GLASS_Y0 + GLASS_YC,
+  bulbR: GLASS_R,
   switchAt: SWITCH_AT,
   switchDeg: SWITCH_DEG,
   switchHalf: SWITCH_HALF,
@@ -154,21 +171,28 @@ interface FinishSpec {
   rimExp: number
   /** Emissive lift (vertex colour) when it is not the albedo; see the record player model. */
   emit?: vec3
+  /** Rim colour when it is not the warm white (the steel's edges catch a neutral highlight). */
+  rimCol?: vec3
 }
 
 const grey = (v: number) => new vec3(v, v, v)
 
+/** Neutral highlight for the steel's edges. */
+const RIM_STEEL = new vec3(1, 0.985, 0.96)
+
 /**
  * Base colours from the reference, lifted for the additive display. The paper is the star: warm
  * white, fully matte (no specular sparkle, so it never reads as plastic), with a broad soft warm rim
- * that makes its edges glow like light through paper. Brushed steel for the base, stem and rings.
+ * that makes its edges glow like light through paper; its fine crinkle is the LampPaper texture.
+ * Brushed steel for the base, stem and rings (the LampBrushed texture): a mid-grey body, metallic,
+ * with a tight bright neutral rim, so the light gathers along the edges instead of a milky sheen.
  */
 const FINISH: Record<LampFinish, FinishSpec> = {
-  // The paper's material is the LampShell asset itself (same values as here); only `emit` (its vertex colour) is used from this entry.
-  paper: {albedo: new vec3(0.8, 0.77, 0.7), metallic: 0, roughness: 0.95, rim: 0.36, rimExp: 1.6, emit: new vec3(0.64, 0.61, 0.54)},
+  // The paper's material is the LampPaper asset itself (same values as here); only `emit` (its vertex colour) is used from this entry.
+  paper: {albedo: new vec3(0.8, 0.77, 0.7), metallic: 0, roughness: 0.95, rim: 0.36, rimExp: 1.6, emit: new vec3(0.66, 0.63, 0.56)},
   paperIn: {albedo: new vec3(0.8, 0.75, 0.66), metallic: 0, roughness: 0.95, rim: 0.2, rimExp: 2.0, emit: new vec3(0.5, 0.46, 0.39)},
-  steel: {albedo: new vec3(0.78, 0.77, 0.75), metallic: 0.5, roughness: 0.32, rim: 0.38, rimExp: 2.4},
-  ring: {albedo: new vec3(0.72, 0.71, 0.68), metallic: 0.5, roughness: 0.42, rim: 0.3, rimExp: 2.4},
+  steel: {albedo: grey(0.5), metallic: 0.85, roughness: 0.3, rim: 0.62, rimExp: 3.6, emit: grey(0.58), rimCol: RIM_STEEL},
+  ring: {albedo: grey(0.5), metallic: 0.85, roughness: 0.32, rim: 0.6, rimExp: 3.2, emit: grey(0.56), rimCol: RIM_STEEL},
   chrome: {albedo: grey(0.86), metallic: 0.85, roughness: 0.16, rim: 0.45, rimExp: 2.4},
   plastic: {albedo: new vec3(0.9, 0.89, 0.86), metallic: 0, roughness: 0.42, rim: 0.32, rimExp: 2.4},
   socket: {albedo: new vec3(0.66, 0.65, 0.62), metallic: 0.05, roughness: 0.5, rim: 0.36, rimExp: 2.4},
@@ -193,7 +217,6 @@ const col = (f: LampFinish) => {
   return new vec4(e.x, e.y, e.z, 1)
 }
 const rgb = (r: number, g: number, b: number) => new vec4(r, g, b, 1)
-const scaleCol = (c: vec4, k: number) => new vec4(c.x * k, c.y * k, c.z * k, 1)
 
 /**
  * Draw order (lower first). The look is additive with depth writes, so a part draws before whatever
@@ -223,6 +246,68 @@ interface RP2 {
   n: vec2
 }
 
+/** What the builders below need of a mesh kit (MeshKit, or UvKit for the textured parts). */
+interface Kit {
+  vert(p: vec3, n: vec3, c: vec4, uv?: vec2): number
+  triOut(a: number, b: number, c: number): void
+  readonly vertexCount: number
+  readonly triangleCount: number
+  build(): RenderMesh
+}
+
+/** Texture coordinates for a lathe point: the profile point and its turn round the axis (0..1). */
+type LatheUv = (p: PP, u: number) => vec2
+
+/**
+ * MeshKit's layout (position, normal, colour) plus texture0, for the parts that carry a texture (the
+ * paper's crinkle, the steel's brushing). Faces are wound to their normals like MeshKit's.
+ */
+class UvKit implements Kit {
+  /** Floats per vertex: position 3, normal 3, colour 4, uv 2. */
+  readonly stride = 12
+  data: number[] = []
+  private indices: number[] = []
+  private count = 0
+
+  vert(p: vec3, n: vec3, c: vec4, uv: vec2 = vec2.zero()): number {
+    this.data.push(p.x, p.y, p.z, n.x, n.y, n.z, c.x, c.y, c.z, c.w, uv.x, uv.y)
+    return this.count++
+  }
+
+  triOut(a: number, b: number, c: number): void {
+    const d = this.data
+    const S = this.stride
+    const P = (i: number) => new vec3(d[i * S], d[i * S + 1], d[i * S + 2])
+    const N = (i: number) => new vec3(d[i * S + 3], d[i * S + 4], d[i * S + 5])
+    const f = P(b).sub(P(a)).cross(P(c).sub(P(a)))
+    if (f.dot(N(a).add(N(b)).add(N(c))) >= 0) this.indices.push(a, b, c)
+    else this.indices.push(a, c, b)
+  }
+
+  get vertexCount(): number {
+    return this.count
+  }
+
+  get triangleCount(): number {
+    return this.indices.length / 3
+  }
+
+  build(): RenderMesh {
+    const mb = new MeshBuilder([
+      {name: "position", components: 3},
+      {name: "normal", components: 3, normalized: true},
+      {name: "color", components: 4},
+      {name: "texture0", components: 2}
+    ])
+    mb.topology = MeshTopology.Triangles
+    mb.indexType = MeshIndexType.UInt16
+    mb.appendVerticesInterleaved(this.data)
+    mb.appendIndices(this.indices)
+    mb.updateMesh()
+    return mb.getMesh()
+  }
+}
+
 function basis(ax: vec3): {u: vec3; v: vec3} {
   const ref = Math.abs(ax.y) < 0.9 ? vec3.up() : new vec3(1, 0, 0)
   const u = ref.cross(ax).normalize()
@@ -230,8 +315,11 @@ function basis(ax: vec3): {u: vec3; v: vec3} {
   return {u, v}
 }
 
-/** Surface of revolution of `bands` around axis `ax` through `c`; `color` may vary per point and angle. */
-function lathe(k: MeshKit, c: vec3, ax: vec3, bands: Bands, seg: number, color: vec4 | ((p: PP, a: number) => vec4)): void {
+/**
+ * Surface of revolution of `bands` around axis `ax` through `c`; `color` may vary per point and
+ * angle; `uv` (UvKit only) maps each profile point and its turn round the axis to the texture.
+ */
+function lathe(k: Kit, c: vec3, ax: vec3, bands: Bands, seg: number, color: vec4 | ((p: PP, a: number) => vec4), uv?: LatheUv): void {
   const {u, v} = basis(ax)
   const cols = seg + 1
   for (const band of bands) {
@@ -242,7 +330,7 @@ function lathe(k: MeshKit, c: vec3, ax: vec3, bands: Bands, seg: number, color: 
         const a = (s / seg) * TAU
         const d = u.uniformScale(Math.cos(a)).add(v.uniformScale(Math.sin(a)))
         const cc = typeof color === "function" ? color(p, a) : color
-        k.vert(c.add(ax.uniformScale(p.y)).add(d.uniformScale(p.r)), d.uniformScale(p.nr / nl).add(ax.uniformScale(p.ny / nl)), cc)
+        k.vert(c.add(ax.uniformScale(p.y)).add(d.uniformScale(p.r)), d.uniformScale(p.nr / nl).add(ax.uniformScale(p.ny / nl)), cc, uv ? uv(p, s / seg) : undefined)
       }
     }
     for (let j = 0; j < band.length - 1; j++)
@@ -254,6 +342,9 @@ function lathe(k: MeshKit, c: vec3, ax: vec3, bands: Bands, seg: number, color: 
       }
   }
 }
+
+/** Brushed round a turned part (rings, collar): the grain varies with height, so its lines run round. */
+const aroundUv: LatheUv = (p, u) => new vec2(p.y * 0.08, u)
 
 /** Quarter-round from the side (normal out) to the top (normal up), radius `rr`, corner at (r, y1). */
 function roundTop(r: number, y1: number, rr: number, steps: number = 4): PP[] {
@@ -473,18 +564,6 @@ function even(pts: vec3[], step: number): vec3[] {
   return out
 }
 
-/** Small deterministic PRNG (mulberry32), so the paper's crinkle is the same on every build. */
-function prng(seed: number): () => number {
-  let a = seed >>> 0
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0
-    let t = a
-    t = Math.imul(t ^ (t >>> 15), t | 1)
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
-
 // =====================================================================================
 // The model
 // =====================================================================================
@@ -492,8 +571,12 @@ function prng(seed: number): () => number {
 export interface LampModelCtx {
   /** Parent for the model's root. */
   parent: SceneObject
-  /** LampShell: uber PBR, additive, vertex colour as emissive, warm rim (the paper uses it as is). */
+  /** LampShell: uber PBR, additive, vertex colour as emissive, warm rim. */
   shellMat: Material
+  /** LampPaper: LampShell with the rice-paper crinkle as its base and emissive texture (the paper uses it as is). */
+  paperMat?: Material | null
+  /** LampSteel: LampShell with the brushed-steel texture, for the base, collar, stem and rings. */
+  steelMat?: Material | null
   /** Render layer for the model and its lights (the camera must render it). */
   layer: LayerSet
 }
@@ -628,17 +711,39 @@ export class LampModel {
     return so
   }
 
+  /** The textured material a finish is drawn with (its UVs come from a UvKit), or null for plain LampShell. */
+  private texturedFor(f: LampFinish): Material | null {
+    if (f === "paper" || f === "paperIn") return this.ctx.paperMat ?? null
+    if (f === "steel" || f === "ring") return this.ctx.steelMat ?? null
+    return null
+  }
+
+  /**
+   * The vertex colour a finish's mesh carries. The uber shader adds the vertex colour to the emissive
+   * texture before multiplying by emissiveColor, so a textured finish carries black here and its
+   * emit colour moves to the material's emissiveColor (see mat()): emissive = texture × emit.
+   */
+  private vcol(f: LampFinish): vec4 {
+    return this.texturedFor(f) ? new vec4(0, 0, 0, 1) : col(f)
+  }
+
   private mat(f: LampFinish): Material {
     const have = this.mats[f]
     if (have) return have
-    const m = this.ctx.shellMat.clone()
+    const tex = this.texturedFor(f)
+    const m = (tex ?? this.ctx.shellMat).clone()
+    if (tex) {
+      const e = FINISH[f].emit ?? FINISH[f].albedo
+      m.mainPass.emissiveColor = new vec3(e.x, e.y, e.z)
+    }
+    // The paper keeps its asset's values (LampPaper, or LampShell without it).
     if (f !== "paper") {
       const s = FINISH[f]
       const p = m.mainPass
       p.baseColor = new vec4(s.albedo.x, s.albedo.y, s.albedo.z, 1)
       p.metallic = s.metallic
       p.roughness = s.roughness
-      p.rimColor = RIM_WARM
+      p.rimColor = s.rimCol ?? RIM_WARM
       p.rimIntensity = s.rim
       p.rimExponent = s.rimExp
       p.emissiveIntensity = LIFT
@@ -651,7 +756,7 @@ export class LampModel {
    * Spawn a mesh child of a part. With `local` false (default) the kit is authored in model space
    * and offset by the part's pivot; with `local` true it is authored in the part's own space.
    */
-  private mesh(part: SceneObject, suffix: string, k: MeshKit, f: LampFinish, order: number, local: boolean = false): SceneObject {
+  private mesh(part: SceneObject, suffix: string, k: Kit, f: LampFinish, order: number, local: boolean = false): SceneObject {
     const off = local ? vec3.zero() : this.pivots[part.name].uniformScale(-1)
     const so = this.node(part, part.name + suffix, off)
     const rmv = so.createComponent("Component.RenderMeshVisual") as RenderMeshVisual
@@ -664,11 +769,13 @@ export class LampModel {
       if (this.interiorSos.indexOf(p) >= 0) interior = true
       p = p.getParent()
     }
-    // Vertex extents (MeshKit packs position, normal, colour: 10 floats a vertex).
-    const data = (k as unknown as {data: number[]}).data
+    // Vertex extents (MeshKit packs position, normal, colour: 10 floats a vertex; UvKit adds uv).
+    const raw = k as unknown as {data: number[]; stride?: number}
+    const data = raw.data
+    const stride = raw.stride ?? 10
     const lo = [1e9, 1e9, 1e9]
     const hi = [-1e9, -1e9, -1e9]
-    for (let i = 0; i < data.length; i += 10)
+    for (let i = 0; i < data.length; i += stride)
       for (let c = 0; c < 3; c++) {
         lo[c] = Math.min(lo[c], data[i + c])
         hi[c] = Math.max(hi[c], data[i + c])
@@ -697,16 +804,10 @@ export class LampModel {
 
   private buildBase(): void {
     const B = this.part(this.root, "LampBase", vec3.zero())
-    const k = new MeshKit()
-    const steel = col("steel")
-    // Brushed steel: fine concentric streaks on the rim and dome (per-row shade, slightly uneven round).
-    const rnd = prng(7)
-    const streak = new Map<number, number>()
-    const brushed = (p: PP, a: number) => {
-      const key = Math.round(p.y * 100) * 10000 + Math.round(p.r * 100)
-      if (!streak.has(key)) streak.set(key, (rnd() - 0.5) * 0.1)
-      return scaleCol(steel, 1 + (streak.get(key) as number) * (0.75 + 0.25 * Math.sin(a * 2 + p.r)))
-    }
+    const k = new UvKit()
+    const steel = this.vcol("steel")
+    // Fine radial brushing (LampBrushed's grain runs along v): u = the turn round the axis, v = radius.
+    const radial: LatheUv = (p, u) => new vec2(u, p.r / BASE_R)
     // Underside, inset foot, the shoulder under the rim.
     const underside: Bands = [
       [
@@ -719,7 +820,7 @@ export class LampModel {
         {r: BASE_R - 0.4, y: FOOT_H, nr: 0, ny: -1}
       ]
     ]
-    lathe(k, vec3.zero(), vec3.up(), underside, 48, steel)
+    lathe(k, vec3.zero(), vec3.up(), underside, 48, steel, radial)
     // Rim (rounded bottom and top edges) flowing into the gently domed top, up to the collar.
     const top: PP[] = [...roundBottom(BASE_R, FOOT_H, 0.4, 2), ...roundTop(BASE_R, RIM_TOP, RIM_ROUND, 5)]
     const R0 = BASE_R - RIM_ROUND
@@ -733,12 +834,12 @@ export class LampModel {
       const slope = (DH * P * Math.pow(s, P - 1)) / DR // dy/d(-r)
       top.push({r, y, nr: slope, ny: 1})
     }
-    lathe(k, vec3.zero(), vec3.up(), [top], 48, brushed)
+    lathe(k, vec3.zero(), vec3.up(), [top], 64, steel, radial)
     this.mesh(B, "Mesh", k, "steel", ORDER.base)
 
-    // Collar where the stem meets the base: two ridges and a short taper.
+    // Collar where the stem meets the base: two ridges and a short taper, turned (brushed round).
     const C = this.part(B, "LampCollar", new vec3(0, DOME_TOP, 0))
-    const ck = new MeshKit()
+    const ck = new UvKit()
     const y0 = DOME_TOP
     const cone = {nr: Math.cos(Math.atan2(0.6, 2.13)), ny: Math.sin(Math.atan2(0.6, 2.13))}
     lathe(
@@ -763,20 +864,24 @@ export class LampModel {
           {r: STEM_R, y: 3.0, nr: 0, ny: 1}
         ]
       ],
-      28,
-      col("steel")
+      32,
+      this.vcol("steel"),
+      aroundUv
     )
     this.mesh(C, "Mesh", ck, "steel", ORDER.collar)
   }
 
   private buildStem(): void {
     const S = this.part(this.root, "LampStem", new vec3(0, COLLAR_TOP, 0))
-    const k = new MeshKit()
+    const k = new UvKit()
     const top = SOCKET_Y0 + 0.6
-    lathe(k, vec3.zero(), vec3.up(), puck(STEM_R, COLLAR_TOP - 0.4, top, 0.06, 0, {bottom: false}), 20, col("steel"))
-    // Threaded nipple at the top, where the socket screws on.
-    lathe(k, vec3.zero(), vec3.up(), puck(0.42, top, top + 0.5, 0.05, 0, {bottom: false}), 14, col("chrome"))
+    // Brushed along its length: u = the turn, v = height.
+    lathe(k, vec3.zero(), vec3.up(), puck(STEM_R, COLLAR_TOP - 0.4, top, 0.06, 0, {bottom: false}), 20, this.vcol("steel"), (p, u) => new vec2(u * 0.25, p.y / HEIGHT))
     this.mesh(S, "Mesh", k, "steel", ORDER.stem)
+    // Threaded nipple at the top, where the socket screws on (bright plated, no grain).
+    const nk = new MeshKit()
+    lathe(nk, vec3.zero(), vec3.up(), puck(0.42, top, top + 0.5, 0.05, 0, {bottom: false}), 14, col("chrome"))
+    this.mesh(S, "Nipple", nk, "chrome", ORDER.stem)
   }
 
   // ------------------------------------------------------------------ shade: paper, rings, frame
@@ -784,64 +889,37 @@ export class LampModel {
   private buildShade(): void {
     const S = this.part(this.root, "LampShade", new vec3(0, SHADE_Y0, 0))
 
-    // Paper: rice paper on the measured spindle profile, with faint irregular horizontal crinkle
-    // bands (per-row shade and normal tilt, partial round the shade), from ring to ring.
+    // Paper: rice paper on the measured spindle profile, from ring to ring, a smooth surface whose
+    // fine crinkle is the LampPaper texture: u = the turn round the axis, v = height (0 at the bottom
+    // ring, 1 at the top), so its thin creases run round the shade.
     const P = this.part(S, "LampPaper", new vec3(0, (PAPER_Y0 + PAPER_Y1) / 2, 0))
-    const k = new MeshKit()
-    const SEG = 48
-    const rnd = prng(31)
-    const ys: number[] = []
     const yEnd = PAPER_Y1
-    for (let y = PAPER_Y0; y < yEnd - 0.5; y += 0.9 + rnd() * 1.4) ys.push(y)
-    ys.push(yEnd)
-    const paper = col("paper")
-    const cols = SEG + 1
-    const base = k.vertexCount
-    for (const y of ys) {
-      const crease = rnd() < 0.38
-      const amp = crease ? -(0.09 + rnd() * 0.1) : (rnd() - 0.5) * 0.08
-      const tilt = crease ? (rnd() < 0.5 ? -1 : 1) * (0.13 + rnd() * 0.12) : (rnd() - 0.5) * 0.1
-      const kf = 1 + Math.floor(rnd() * 5)
-      const ph = rnd() * TAU
-      const ph2 = rnd() * TAU
-      const R = lampShadeR(y)
-      const slope = shadeSlope(y)
-      for (let s = 0; s <= SEG; s++) {
-        const a = (s / SEG) * TAU
-        // Two lobed waves, so each band fades in and out irregularly round the shade.
-        const m = Math.min(1, Math.max(0, 0.5 + 0.35 * Math.sin(kf * a + ph) + 0.25 * Math.sin((kf + 2) * a + ph2)))
-        const d = new vec3(Math.cos(a), 0, Math.sin(a))
-        const r = R + (crease ? -0.04 * m : 0)
-        const n = d.add(new vec3(0, -slope + tilt * m, 0)).normalize()
-        k.vert(d.uniformScale(r).add(new vec3(0, y, 0)), n, scaleCol(paper, 1 + amp * (0.35 + 0.65 * m)))
+    const paperV = (y: number) => (y - PAPER_Y0) / (yEnd - PAPER_Y0)
+    const profile = (rOff: number, inward: boolean): PP[] => {
+      const out: PP[] = []
+      const N = 48
+      for (let i = 0; i <= N; i++) {
+        const y = PAPER_Y0 + ((yEnd - PAPER_Y0) * i) / N
+        out.push(inward ? {r: lampShadeR(y) + rOff, y, nr: -1, ny: shadeSlope(y)} : {r: lampShadeR(y) + rOff, y, nr: 1, ny: -shadeSlope(y)})
       }
+      return out
     }
-    for (let j = 0; j < ys.length - 1; j++)
-      for (let s = 0; s < SEG; s++) {
-        const a = base + j * cols + s
-        const b = a + cols
-        k.triOut(a, a + 1, b)
-        k.triOut(a + 1, b + 1, b)
-      }
-    this.mesh(P, "Outer", k, "paper", ORDER.paper)
+    const pk = new UvKit()
+    lathe(pk, vec3.zero(), vec3.up(), [profile(0, false)], 48, this.vcol("paper"), (p, u) => new vec2(u, paperV(p.y)))
+    this.mesh(P, "Outer", pk, "paper", ORDER.paper)
 
     // Inside of the paper (seen through the openings and from below once lifted).
-    const ik = new MeshKit()
-    const inner: PP[] = []
-    for (let i = 0; i <= 20; i++) {
-      const y = PAPER_Y0 + ((yEnd - PAPER_Y0) * i) / 20
-      inner.push({r: lampShadeR(y) - 0.05, y, nr: -1, ny: shadeSlope(y)})
-    }
-    lathe(ik, vec3.zero(), vec3.up(), [inner], 32, col("paperIn"))
+    const ik = new UvKit()
+    lathe(ik, vec3.zero(), vec3.up(), [profile(-0.05, true)], 32, this.vcol("paperIn"), (p, u) => new vec2(u, paperV(p.y)))
     this.mesh(P, "Inner", ik, "paperIn", ORDER.paperIn)
 
-    // Steel rings: a rolled band round each end of the paper, slightly proud of it.
+    // Steel rings: a rolled band round each end of the paper, slightly proud of it, brushed round.
     const ring = (name: string, y0: number) => {
       const yc = y0 + RING_H / 2
       const so = this.part(S, name, new vec3(0, yc, 0))
       const rp = lampShadeR(Math.min(PAPER_Y1, Math.max(PAPER_Y0, yc)))
-      const rk = new MeshKit()
-      lathe(rk, new vec3(0, y0, 0), vec3.up(), puck(rp + 0.38, 0, RING_H, 0.16, 0.16, {rIn: rp - 0.12, steps: 3}), 64, col("ring"))
+      const rk = new UvKit()
+      lathe(rk, new vec3(0, y0, 0), vec3.up(), puck(rp + 0.38, 0, RING_H, 0.16, 0.16, {rIn: rp - 0.12, steps: 3}), 64, this.vcol("ring"), aroundUv)
       this.mesh(so, "Mesh", rk, "ring", ORDER.ring)
     }
     ring("LampBottomRing", SHADE_Y0)
@@ -930,26 +1008,30 @@ export class LampModel {
     this.mesh(SB, "Screw", sk, "chrome", ORDER.screw)
     const nk = new MeshKit()
     lathe(nk, at(SCREW_TOP), vec3.up(), [[{r: 1.3, y: 0, nr: 0, ny: -1}, {r: 1.36, y: 0, nr: 1, ny: 0}, {r: 1.36, y: NECK_Y0 - SCREW_TOP, nr: 1, ny: 0}]], 24, col("dark"))
-    // Neck housing: white plastic flaring up to the glass, with a lip the envelope sits in.
+    // Housing: white plastic flaring from the screw to the glass (concave, as on an A60), its top a
+    // lip the envelope sits in.
     const neck: PP[] = []
-    for (let i = 0; i <= 8; i++) {
-      const s = i / 8
-      const y = NECK_Y0 + (NECK_Y1 - 0.3 - NECK_Y0) * s
-      const r = 1.45 + 1.22 * Math.pow(s, 1.6)
-      const dr = (1.22 * 1.6 * Math.pow(Math.max(s, 1e-3), 0.6)) / (NECK_Y1 - 0.3 - NECK_Y0)
+    // r = R0 + ΔR·s^NP, with NP chosen so its slope at the top is the glass flank's (smooth silhouette).
+    const NP = (GLASS_SLOPE * (NECK_Y1 - 0.1 - NECK_Y0)) / (NECK_R1 - 0.1 - NECK_R0)
+    for (let i = 0; i <= 10; i++) {
+      const s = i / 10
+      const y = NECK_Y0 + (NECK_Y1 - 0.1 - NECK_Y0) * s
+      const r = NECK_R0 + (NECK_R1 - 0.1 - NECK_R0) * Math.pow(s, NP)
+      const dr = ((NECK_R1 - 0.1 - NECK_R0) * NP * Math.pow(Math.max(s, 1e-3), NP - 1)) / (NECK_Y1 - 0.1 - NECK_Y0)
       neck.push({r, y: y - SCREW_TOP, nr: 1, ny: -dr})
     }
     neck.unshift({r: 1.36, y: NECK_Y0 - SCREW_TOP, nr: 0, ny: -1})
-    neck.splice(1, 0, {r: 1.45, y: NECK_Y0 - SCREW_TOP, nr: 0, ny: -1})
-    neck.push(...roundTop(2.72, NECK_Y1 - SCREW_TOP, 0.2, 3))
-    neck.push({r: 2.5, y: NECK_Y1 - SCREW_TOP, nr: 0, ny: 1})
+    neck.splice(1, 0, {r: NECK_R0, y: NECK_Y0 - SCREW_TOP, nr: 0, ny: -1})
+    neck.push(...roundTop(NECK_R1, NECK_Y1 - SCREW_TOP, 0.1, 3))
+    neck.push({r: BOARD_R, y: NECK_Y1 - SCREW_TOP, nr: 0, ny: 1})
     lathe(nk, at(SCREW_TOP), vec3.up(), [neck], 32, col("plastic"))
     this.mesh(SB, "Neck", nk, "plastic", ORDER.neck)
 
-    // LED board: an aluminium disc with a ring of phosphor-coated chips and four inner ones.
+    // LED board: an aluminium disc on the housing's top, with a ring of eight phosphor-coated chips
+    // and four inner ones (12).
     const LB = this.part(B, "LampLedBoard", at(BOARD_Y))
     const bk = new MeshKit()
-    lathe(bk, at(BOARD_Y), vec3.up(), puck(2.42, 0, 0.16, 0.04, 0, {bottom: false}), 32, col("board"))
+    lathe(bk, at(BOARD_Y), vec3.up(), puck(BOARD_R, 0, 0.16, 0.04, 0, {bottom: false}), 32, col("board"))
     this.mesh(LB, "Mesh", bk, "board", ORDER.board)
     const LC = this.part(LB, "LampLedChips", at(BOARD_Y + 0.16))
     const ck = new MeshKit()
@@ -964,28 +1046,24 @@ export class LampModel {
     }
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * TAU
-      chip(Math.cos(a) * 1.55, Math.sin(a) * 1.55, -a)
+      chip(Math.cos(a) * 1.35, Math.sin(a) * 1.35, -a)
     }
     for (let i = 0; i < 4; i++) {
       const a = (i / 4) * TAU + TAU / 8
-      chip(Math.cos(a) * 0.65, Math.sin(a) * 0.65, -a)
+      chip(Math.cos(a) * 0.55, Math.sin(a) * 0.55, -a)
     }
     this.mesh(LC, "Mesh", ck, "chip", ORDER.chips)
 
-    // Frosted envelope (A60): flares out of the neck to its widest, then a dome.
+    // Frosted envelope (A60): from the housing's lip a cone opens into the 6 cm sphere it is tangent
+    // to, round over the top. Its own part, so it lifts off the LED board in the take-apart.
     const G = this.part(B, "LampBulbGlass", at(GLASS_Y0))
     const gk = new MeshKit()
-    const g: PP[] = [{r: 2.48, y: 0, nr: 0, ny: -1}, {r: 2.62, y: 0, nr: 0, ny: -1}]
-    const EQ = 2.6
-    for (let i = 0; i <= 5; i++) {
-      const y = (EQ * i) / 5
-      const u = 1 - y / EQ
-      g.push({r: GLASS_R - 0.38 * u * u, y, nr: 1, ny: -(0.76 * u) / EQ})
-    }
-    const RT = GLASS_H - EQ
-    for (let i = 1; i <= 10; i++) {
-      const t = (i / 10) * (Math.PI / 2)
-      g.push({r: GLASS_R * Math.cos(t), y: EQ + RT * Math.sin(t), nr: Math.cos(t) / GLASS_R, ny: Math.sin(t) / RT})
+    const flank = {nr: 1, ny: -GLASS_SLOPE}
+    const g: PP[] = [{r: GLASS_R0 - 0.12, y: 0, nr: 0, ny: -1}, {r: GLASS_R0, y: 0, nr: 0, ny: -1}, {r: GLASS_R0, y: 0, ...flank}, {r: GLASS_RT, y: GLASS_YT, ...flank}]
+    const phiT = Math.asin((GLASS_YT - GLASS_YC) / GLASS_R)
+    for (let i = 1; i <= 18; i++) {
+      const phi = phiT + ((Math.PI / 2 - phiT) * i) / 18
+      g.push({r: GLASS_R * Math.cos(phi), y: GLASS_YC + GLASS_R * Math.sin(phi), nr: Math.cos(phi), ny: Math.sin(phi)})
     }
     lathe(gk, at(GLASS_Y0), vec3.up(), [g], 40, col("frost"))
     this.mesh(G, "Mesh", gk, "frost", ORDER.glass)

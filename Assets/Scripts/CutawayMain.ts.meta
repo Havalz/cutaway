@@ -28,6 +28,7 @@
   ExportUid: 00000000-0000-0000-0000-000000000000
   PackagePolicy: CanBeUnpacked
   ScriptInputsHidden:
+    bulbMarker: false
     cameraBodySize: false
     cameraFacing: false
     cameraMarker: false
@@ -55,7 +56,9 @@
     labelsUI: false
     lampBaseMarker: false
     lampMarker: false
+    lampPaperMaterial: false
     lampShellMaterial: false
+    lampSteelMaterial: false
     lampUI: false
     lensBagMarker: false
     modelMaterial: false
@@ -97,6 +100,7 @@
       cameraMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
       lampMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
       lampBaseMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      bulbMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
       cordStartMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
       tableMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
       tableTopHeight: -144.399994
@@ -108,6 +112,8 @@
       replicaShellMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
       recordPlayerShellMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
       lampShellMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
+      lampPaperMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
+      lampSteelMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
       heroLiftAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       heroBayonetAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       heroFlightAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
@@ -155,6 +161,7 @@
     - '// @input SceneObject cameraMarker {"hint":"Camera marker"}'
     - '// @input SceneObject lampMarker {"hint":"Lamp marker (the shade / bulb)"}'
     - '// @input SceneObject lampBaseMarker {"hint":"Lamp base marker (bottom of the pole)"}'
+    - "// @input SceneObject bulbMarker {\"hint\":\"Bulb marker: the real lamp's LED chips, low inside the shade on its socket (the explanation's x-ray window and chip bubble; the lamp marker stays the gaze target)\"}"
     - '// @input SceneObject cordStartMarker {"hint":"Where the lamp cord starts (wall outlet)"}'
     - '// @input SceneObject tableMarker {"hint":"Camera hero stage: the centre of the top surface of the round coffee table in front of the sofa. The table is surveyed by World Query hit test around it at launch"}'
     - '// @input float tableTopHeight = -144.4 {"hint":"Fallback table top (if hit testing finds no table): its height, world Y in cm (measured in the preview: -144.4)"}'
@@ -167,7 +174,9 @@
     - '// @input Asset.RenderMesh replicaLensMesh {"hint":"Replica lens mesh (Models/CameraReplica: Lens), pivot at the mount, pointing along +Z"}'
     - "// @input Asset.Material replicaShellMaterial {\"hint\":\"The replica's shell material (ReplicaShell slot: textures + 35% emissive lift + warm fresnel rim)\"}"
     - "// @input Asset.Material recordPlayerShellMaterial {\"hint\":\"The record player model's shell material (RecordPlayerShell slot: uber PBR, vertex colour as emissive lift, warm fresnel rim)\"}"
-    - "// @input Asset.Material lampShellMaterial {\"hint\":\"The lamp model's shell material (LampShell slot: uber PBR, vertex colour as emissive lift, warm fresnel rim; the paper uses it as is)\"}"
+    - "// @input Asset.Material lampShellMaterial {\"hint\":\"The lamp model's shell material (LampShell slot: uber PBR, vertex colour as emissive lift, warm fresnel rim)\"}"
+    - "// @input Asset.Material lampPaperMaterial {\"hint\":\"The lamp's paper (LampPaper: LampShell with the procedural rice-paper crinkle as base and emissive texture; the paper uses it as is)\"}"
+    - "// @input Asset.Material lampSteelMaterial {\"hint\":\"The lamp's steel (LampSteel: LampShell with the procedural brushed-steel texture, for the base, collar, stem and rings)\"}"
     - '// @input Component.AudioComponent heroLiftAudio {"hint":"Spatial AudioComponent: soft rising tone as the copy lifts off the camera"}'
     - '// @input Component.AudioComponent heroBayonetAudio {"hint":"Spatial AudioComponent: bayonet click where the lens mounts"}'
     - '// @input Component.AudioComponent heroFlightAudio {"hint":"Spatial AudioComponent: soft air sweep that follows the replica in flight"}'

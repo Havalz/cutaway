@@ -1309,11 +1309,13 @@ export class LampExplanation extends Explanation {
   readonly duration = LampExplanation.END + 0.25
 
   /**
-   * @param dot the lamp's dot (LampMarker), on the axis at the shade's widest point: the LED chip sits here
+   * @param dot the lamp's dot (LampMarker), on the axis at the shade's widest point (the gaze target)
    * @param base top centre of the base disc (LampBaseMarker)
    * @param outlet the wall outlet the cord comes from (CordStartMarker)
+   * @param bulbAt the real bulb's LED chips (BulbMarker), low inside the shade on the socket: the x-ray
+   *             window, the bulb drawn in it, the chip bubble and the light's origin sit here (the dot without it)
    */
-  constructor(ctx: ExplainContext, dot: vec3, base: vec3, outlet: vec3) {
+  constructor(ctx: ExplainContext, dot: vec3, base: vec3, outlet: vec3, bulbAt: vec3 | null = null) {
     super(ctx)
     this.energies = [ENERGY.signal, ENERGY.light]
     const B = LampExplanation.BEATS
@@ -1359,19 +1361,27 @@ export class LampExplanation extends Explanation {
         ? RB + (RM - RB) * Math.sin((Math.PI / 2) * clamp01((y - yShadeBot) / -yShadeBot))
         : RT + (RM - RT) * Math.cos((Math.PI / 2) * clamp01(y / yShadeTop))
 
+    // The real bulb: its LED chips, at (xB, yB, zB) in section coordinates (low inside the shade,
+    // on the room lamp's measured axis).
+    const chipAt = bulbAt ?? dot
+    const bLocal = secT.getInvertedWorldTransform().multiplyPoint(chipAt)
+    const xB = bLocal.x
+    const yB = bLocal.y
+    const zB = bLocal.z
+
     // ---------------- Beat 1: ghost shell on the column, the x-ray window, the cord's path ----------------
     this.cue(B[0], () => ctx.log("shell"))
     this.ghostShell("GhostShell", bounds.center, bounds.size, 0, B[0], {x: side, y: up, z: n})
 
-    // X-ray window on the paper around the bulb (thin rim, faint inner glow). It grows out of the dot.
-    const winC = new vec3(0, -1.5, 0)
-    const RW = Math.min(11, RM - 2)
-    const win = this.node("XrayWindow", vec3.zero(), sec)
+    // X-ray window on the paper around the bulb (thin rim, faint inner glow), inside the paper's
+    // outline there. It grows out of the bulb.
+    const winC = new vec3(xB, yB - 1.5, zB)
+    const RW = Math.max(6, Math.min(11, shadeR(winC.y) - 1))
+    const win = this.node("XrayWindow", winC, sec)
     win.getTransform().setLocalScale(vec3.one().uniformScale(1e-4))
     const winOpen = () => easeOutCubic(phase(this.t, B[0] + 0.15, B[0] + 0.5))
     this.tick(() => {
       const k = winOpen()
-      win.getTransform().setLocalPosition(winC.uniformScale(k))
       win.getTransform().setLocalScale(vec3.one().uniformScale(Math.max(1e-4, k)))
     })
     this.cue(B[0] + 0.15, () => ctx.log("cutaway"))
@@ -1386,7 +1396,7 @@ export class LampExplanation extends Explanation {
 
     // The LED bulb, drawn in section coordinates (the node undoes the window's offset): housing,
     // screw base and socket (structure, faint white), the LED board and its chip, the globe (light).
-    const bulb = this.node("Bulb", new vec3(-winC.x, -winC.y, 0.01), win)
+    const bulb = this.node("Bulb", new vec3(xB - winC.x, yB - winC.y, 0.01), win)
     const pl = (k: MeshKit, pts: number[][], w: number, c: vec4) => k.addPolylineXY(pts.map((p) => new vec2(p[0], p[1])), w, c)
     const structure = ink(UI_WHITE, 0.45)
     const bk = this.kit(STRUCT_GLOW)
@@ -1400,6 +1410,8 @@ export class LampExplanation extends Explanation {
     this.inkBeat(bulbParts.mat, 2, partsIn(0))
     const GC = new vec3(0, 2.6, 0)
     const GR = Math.sqrt(2.4 * 2.4 + 2.6 * 2.6)
+    // The globe's centre in section coordinates (the bulb node sits at the chips, yB below the dot).
+    const GCs = new vec3(xB, yB + GC.y, zB)
     const ga = Math.atan2(-2.6, 2.4)
     const gk = this.kit(1.6)
     gk.addArcXY(GC.x, GC.y, GR, LW, ga, Math.PI - ga, ink(LIGHT, 0.75), 48)
@@ -1410,8 +1422,8 @@ export class LampExplanation extends Explanation {
     // centre rod into the socket. It draws itself from the bulb back to the outlet.
     const toOutlet = flat(outlet.sub(base))
     const floorY = base.y - 1.1
-    const axisAt = (y: number) => new vec3(dot.x, y, dot.z)
-    const cordPts = [outlet, new vec3(outlet.x, floorY, outlet.z), axisAt(floorY).add(toOutlet.uniformScale(RM)), axisAt(base.y - 0.6), axisAt(dot.y - 10)]
+    const axisAt = (y: number) => new vec3(chipAt.x, y, chipAt.z)
+    const cordPts = [outlet, new vec3(outlet.x, floorY, outlet.z), axisAt(floorY).add(toOutlet.uniformScale(RM)), axisAt(base.y - 0.6), axisAt(chipAt.y - 4.5)]
     const cord = this.path("Cord", cordPts, hair * 0.6, ink(UI_WHITE, 0.45), hair * 1.6)
     this.inkBeat(cord.mat, 0)
     const cordIn = () => easeInOutCubic(phase(this.t, B[0] + 0.6, B[0] + 1.5))
@@ -1439,7 +1451,7 @@ export class LampExplanation extends Explanation {
     }
     const ba = (35 * Math.PI) / 180
     const globePt = new vec2(GC.x + GR * Math.cos(ba), GC.y + GR * Math.sin(ba))
-    this.cue(B[0] + 0.9, () => this.label("bulb", "LED bulb", outside(globePt.x, globePt.y, 0.75, 0.66, 1.4), toWorld(globePt.x, globePt.y)))
+    this.cue(B[0] + 0.9, () => this.label("bulb", "LED bulb", outside(globePt.x + xB, globePt.y + yB, 0.75, 0.66, 1.4), toWorld(globePt.x + xB, globePt.y + yB)))
     const cordMid = vec3.lerp(cordPts[1], cordPts[2], 0.5)
     this.cue(B[0] + 1.5, () => this.label("cord", "Cord", cordMid.add(side.uniformScale(-16)).add(up.uniformScale(12)), cordMid))
 
@@ -1508,10 +1520,10 @@ export class LampExplanation extends Explanation {
     // ---------------- Beat 3: magnify bubble at the LED chip ----------------
     // Cyan comes in along the board's traces; warm white light leaves the top of the chip.
     // Same apparent size as the camera's bubble from wherever the lamp is seen.
-    const S = Math.min(2.2, Math.max(1, cam.distance(dot) / 220))
+    const S = Math.min(2.2, Math.max(1, cam.distance(chipAt) / 220))
     const RS = 12 * S
-    const chipW = toWorld(0, 0.35)
-    const bubTarget = dot.add(side.uniformScale(RM + RS + 6)).add(up.uniformScale(RS * 0.3)).add(n.uniformScale(4))
+    const chipW = chipAt.add(up.uniformScale(0.35))
+    const bubTarget = chipAt.add(side.uniformScale(RM + RS + 6)).add(up.uniformScale(RS * 0.3)).add(n.uniformScale(4))
     const bub = this.magnifyBubble("ChipBubble", chipW, bubTarget, S, 2, B[2], B[3])
     this.cue(B[2], () => ctx.log("bubble"))
     const face = bub.face
@@ -1636,10 +1648,10 @@ export class LampExplanation extends Explanation {
     rayDegs.forEach((deg, i) => {
       const a = (deg * Math.PI) / 180
       const d = new vec3(Math.cos(a), Math.sin(a), 0)
-      const p0 = GC.add(d.uniformScale(GR + 0.3))
+      const p0 = GCs.add(d.uniformScale(GR + 0.3))
       let hit = p0
       for (let s = GR; s < 140; s += 0.25) {
-        const q = GC.add(d.uniformScale(s))
+        const q = GCs.add(d.uniformScale(s))
         hit = q
         if (Math.abs(q.x) >= shadeR(q.y) || q.y >= yShadeTop || q.y <= yShadeBot) break
       }
@@ -1688,10 +1700,10 @@ export class LampExplanation extends Explanation {
     // The whole column glows: warm white at 12% or less, brightest around the bulb, with the
     // paper's outline lit. It spreads up and down from the bulb as the rays land.
     const GLOW = B[3] + 0.5
-    const glowNode = this.node("ColumnGlow", new vec3(0, GC.y, -0.05), sec)
+    const glowNode = this.node("ColumnGlow", new vec3(0, GCs.y, -0.05), sec)
     const ck2 = this.kit(STRUCT_GLOW)
     const nz = new vec3(0, 0, 1)
-    const lv = (y: number) => 0.12 * (0.45 + 0.55 * Math.exp(-Math.pow((y - GC.y) / 38, 2)))
+    const lv = (y: number) => 0.12 * (0.45 + 0.55 * Math.exp(-Math.pow((y - GCs.y) / 38, 2)))
     const STEP = 2
     const HALO = 4.5
     for (let y = yShadeBot; y < yShadeTop - 0.01; y += STEP) {
@@ -1702,8 +1714,8 @@ export class LampExplanation extends Explanation {
       const c1 = ink(LIGHT, lv(y1))
       const e0 = ink(LIGHT, lv(y) * 0.45)
       const e1 = ink(LIGHT, lv(y1) * 0.45)
-      const ya = y - GC.y
-      const yb = y1 - GC.y
+      const ya = y - GCs.y
+      const yb = y1 - GCs.y
       for (const sgn of [-1, 1]) {
         const a = ck2.vert(new vec3(0, ya, 0), nz, c0)
         const b = ck2.vert(new vec3(sgn * r0, ya, 0), nz, e0)
@@ -1722,11 +1734,11 @@ export class LampExplanation extends Explanation {
     }
     for (const sgn of [-1, 1]) {
       const edge: vec2[] = []
-      for (let y = yShadeBot; y <= yShadeTop + 0.01; y += 1.5) edge.push(new vec2(sgn * shadeR(y), y - GC.y))
+      for (let y = yShadeBot; y <= yShadeTop + 0.01; y += 1.5) edge.push(new vec2(sgn * shadeR(y), y - GCs.y))
       ck2.addPolylineXY(edge, LWF, ink(LIGHT, 0.5))
     }
-    ck2.addLineXY(-RT, yShadeTop - GC.y, RT, yShadeTop - GC.y, LWF, ink(LIGHT, 0.35))
-    ck2.addLineXY(-RB, yShadeBot - GC.y, RB, yShadeBot - GC.y, LWF, ink(LIGHT, 0.35))
+    ck2.addLineXY(-RT, yShadeTop - GCs.y, RT, yShadeTop - GCs.y, LWF, ink(LIGHT, 0.35))
+    ck2.addLineXY(-RB, yShadeBot - GCs.y, RB, yShadeBot - GCs.y, LWF, ink(LIGHT, 0.35))
     const glowMesh = this.flat(glowNode, "ColumnGlowMesh", ck2)
     const spread = () => easeOutCubic(phase(this.t, GLOW, GLOW + 1.0))
     this.inkBeat(glowMesh.mat, 4, () => clamp01((this.t - GLOW) / 0.4) * (this.t < B[4] ? 1 : 1 - 0.2 * easeInOutCubic((this.t - B[4]) / 1.2)))

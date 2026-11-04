@@ -22,7 +22,7 @@ export function buildLampModel(offset: vec3, place?: {at: vec3; scale: number; y
   const cam = WorldCameraFinderProvider.getInstance().getComponent()
   const layer = LayerSet.makeUnique()
   cam.renderLayer = cam.renderLayer.union(layer)
-  const m = new LampModel({parent: main.getSceneObject(), shellMat: main.lampShellMaterial, layer})
+  const m = new LampModel({parent: main.getSceneObject(), shellMat: main.lampShellMaterial, paperMat: main.lampPaperMaterial ?? null, steelMat: main.lampSteelMaterial ?? null, layer})
   const tr = m.root.getTransform()
   tr.setWorldPosition(place ? place.at : ROOM_LAMP.origin.add(offset))
   tr.setWorldRotation(place ? quat.angleAxis((place.yawDeg * Math.PI) / 180, vec3.up()) : quat.quatIdentity())
