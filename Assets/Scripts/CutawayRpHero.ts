@@ -266,6 +266,8 @@ export class RecordPlayerHero {
   private apart: RpApart | null = null
   /** The take-apart value the parts follow: the slider's, rate-limited, and 0 until it hovers. */
   private sEff = 0
+  /** Put it back: waiting for the arm, the platter and the parts before it lifts. */
+  private retWaiting = false
   private lookByRmv = new Map<RenderMeshVisual, Look>()
   /** The tonearm in the hand: where its handle and the hand were at the grab, the yaw then, the hand's vertical travel. */
   private armGrab: {h0: vec3; q0: vec3 | null; accum: vec3; dy: number; ang0: number; yaw0: number} | null = null
@@ -345,12 +347,16 @@ export class RecordPlayerHero {
       this.physics.freeze()
     }
     this.grab = null
+    this.armGrab = null
     this.pose = "lift"
     this.retFrom = {rot: this.replica.getTransform().getWorldRotation(), h: this.h}
     this.state = "returning"
     this.t = 0
+    // First the arm goes back to its rest and the platter stops (and any parts gather); then it flies.
+    this.retWaiting = true
+    if (this.deck) this.deck.toRest(true)
     this.ctx.rail.setMode("none")
-    this.ctx.caption(null)
+    this.showCaption(-1)
     this.ctx.log("rp:putBack")
   }
 
@@ -361,6 +367,7 @@ export class RecordPlayerHero {
     if (this.apart) this.apart.hideLabels()
     this.apart = null
     this.sEff = 0
+    this.retWaiting = false
     this.lookByRmv.clear()
     this.deck = null
     this.armGrab = null
@@ -1274,7 +1281,19 @@ export class RecordPlayerHero {
   // =====================================================================================
 
   private updateReturn(dt: number): void {
-    void dt
+    if (this.retWaiting) {
+      this.t = 0
+      // The parts gather (twice the take-apart rate) while the arm returns and the platter stops.
+      this.sEff = Math.max(0, this.sEff - 2 * APART_RATE * dt)
+      if (this.apart) this.apart.update(dt, this.sEff, pitchToFreq(this.ctx.rail.getValue("pitch")))
+      const stopped = !this.deck || this.deck.stopped
+      if (!stopped || this.sEff > 0 || (this.sound && this.sound.isOn)) return
+      this.retWaiting = false
+      this.retFrom = {rot: this.replica.getTransform().getWorldRotation(), h: this.h}
+      // Straight into the lift: the wait was its pause.
+      this.t = RET_READY
+      this.ctx.log("rp:ready")
+    }
     const t = this.t
     const tr = this.replica.getTransform()
     const from = this.retFrom

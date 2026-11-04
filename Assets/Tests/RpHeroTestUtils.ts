@@ -84,9 +84,11 @@ export function expectRpGone(main: CutawayMain): void {
   const rp = getRp(main)
   check(rp.state === "none", `stage state is ${rp.state}`)
   check(rp.getReplica() === null, "the copy is still there")
-  for (const n of ["RpStage", "RpReplica", "RpThread", "RpBubble", "RpRings", "RpCone", "RpTrail"]) {
+  for (const n of ["RpStage", "RpReplica", "RpSound", "RpThread", "RpBubble", "RpRing0", "RpCone", "RpTrail", "RpArmGrab", "RpGrab", "RpTurnGrab"]) {
     check(findSceneObjectByName(n) === undefined, `${n} is still in the scene`)
   }
+  const labels = main.labelsUI.shownIds().filter((id) => id.startsWith("rp_"))
+  check(labels.length === 0, () => `labels still shown: ${labels.join(", ")}`)
   const rail = main.getRpRailVisual()
   check(!!rail && !(rail.apart || rail.loudness || rail.pitch || rail.putBack), () => `the rail still shows: ${JSON.stringify(rail)}`)
   const tone = main.getRpTone()

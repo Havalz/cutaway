@@ -24,6 +24,8 @@ export const RP_CUE_CM = 0.9
 const HELD_MIN_CM = 0.25
 const SPIN_UP_S = 1.0
 const SPIN_DOWN_S = 1.6
+/** Put it back: the platter is braked to a stop sooner. */
+const BRAKE_S = 0.8
 const CUE_DOWN_S = 0.5
 const LIFT_UP_S = 0.15
 const RETURN_S = 0.6
@@ -58,6 +60,7 @@ export class RpDeck {
   private spinT = 0
   private spinFrom = 0
   private spinTarget = 0
+  private spinDownS = SPIN_DOWN_S
   private events: DeckEvent[] = []
 
   constructor(private model: RecordPlayerModel) {
@@ -118,6 +121,11 @@ export class RpDeck {
 
   get atRest(): boolean {
     return this.mode === "rest"
+  }
+
+  /** On its rest with the platter still (Put it back waits for this). */
+  get stopped(): boolean {
+    return this.mode === "rest" && this.omega === 0
   }
 
   /** Platter speed in rpm. */
@@ -186,13 +194,15 @@ export class RpDeck {
     return "rest"
   }
 
-  /** Back to its rest from anywhere (Put it back, a release off the record). */
-  toRest(): void {
+  /** Back to its rest from anywhere (a release off the record; Put it back with `brake`). */
+  toRest(brake: boolean = false): void {
     if (this.mode === "playing" || this.mode === "lowering") {
       const was = this.mode === "playing"
       this.stopPlatter()
       if (was) this.events.push("liftoff")
     }
+    if (brake && this.omega > 0) this.stopPlatter(BRAKE_S)
+    if (this.mode === "rest") return
     this.mode = "returning"
     const lift = Math.max(this.lift, this.yaw < -1e-4 ? RP_CUE_CM * 0.6 : 0)
     this.anim = {from: {yaw: this.yaw, lift: lift}, to: {yaw: 0, lift: 0}, t: 0, dur: this.yaw < -1e-4 || this.lift > 1e-4 ? RETURN_S : 0.01}
@@ -266,7 +276,7 @@ export class RpDeck {
         const k = Math.min(1, this.spinT / SPIN_UP_S)
         this.omega = this.spinFrom + (this.spinTarget - this.spinFrom) * (1 - Math.pow(1 - k, 3))
       } else {
-        const k = Math.min(1, this.spinT / SPIN_DOWN_S)
+        const k = Math.min(1, this.spinT / this.spinDownS)
         this.omega = this.spinFrom * Math.pow(1 - k, 2)
       }
     }
@@ -285,10 +295,11 @@ export class RpDeck {
     this.spinT = 0
   }
 
-  private stopPlatter(): void {
+  private stopPlatter(dur: number = SPIN_DOWN_S): void {
     this.spinFrom = this.omega
     this.spinTarget = 0
     this.spinT = 0
+    this.spinDownS = dur
   }
 
   private apply(): void {

@@ -31,6 +31,7 @@ import {R4RpSoundScenario} from "./R4RpSoundScenario"
 import {R5RpSlidersScenario} from "./R5RpSlidersScenario"
 import {R6RpLiftScenario} from "./R6RpLiftScenario"
 import {R7RpApartScenario} from "./R7RpApartScenario"
+import {R8RpPutBackResetScenario} from "./R8RpPutBackResetScenario"
 import {RpCaptureScenario} from "./RpCaptureScenario"
 
 @component
@@ -66,6 +67,7 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "r5-rp-sliders", typename: R5RpSlidersScenario.getTypeName()},
     {id: "r6-rp-lift", typename: R6RpLiftScenario.getTypeName()},
     {id: "r7-rp-apart", typename: R7RpApartScenario.getTypeName()},
+    {id: "r8-rp-put-back-reset", typename: R8RpPutBackResetScenario.getTypeName()},
     {id: "helper-rp-capture", typename: RpCaptureScenario.getTypeName(), parameters: {beat: "rest", extraMs: ""}},
     {id: "helper-rp-model", typename: RpModelScenario.getTypeName(), parameters: {dx: "", dz: "", interior: "", hide: "", at: "", scale: "", yaw: ""}},
     {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer", step: "", untilPhase: "", extraMs: "", layout: ""}}
