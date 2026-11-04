@@ -61,6 +61,7 @@
     needleMarker: false
     powerUpAudio: false
     recordPlayerMarker: false
+    recordPlayerShellMaterial: false
     recordPlayerUI: false
     replicaBodyMesh: false
     replicaLensMesh: false
@@ -102,6 +103,7 @@
       replicaBodyMesh: !<reference.RenderMesh> 00000000-0000-0000-0000-000000000000
       replicaLensMesh: !<reference.RenderMesh> 00000000-0000-0000-0000-000000000000
       replicaShellMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
+      recordPlayerShellMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
       heroLiftAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       heroBayonetAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       heroFlightAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
@@ -158,6 +160,7 @@
     - '// @input Asset.RenderMesh replicaBodyMesh {"hint":"Replica body mesh (Models/CameraReplica: Body), pivot at the lens mount, 14 cm wide at scale 1"}'
     - '// @input Asset.RenderMesh replicaLensMesh {"hint":"Replica lens mesh (Models/CameraReplica: Lens), pivot at the mount, pointing along +Z"}'
     - "// @input Asset.Material replicaShellMaterial {\"hint\":\"The replica's shell material (ReplicaShell slot: textures + 35% emissive lift + warm fresnel rim)\"}"
+    - "// @input Asset.Material recordPlayerShellMaterial {\"hint\":\"The record player model's shell material (RecordPlayerShell slot: uber PBR, vertex colour as emissive lift, warm fresnel rim)\"}"
     - '// @input Component.AudioComponent heroLiftAudio {"hint":"Spatial AudioComponent: soft rising tone as the copy lifts off the camera"}'
     - '// @input Component.AudioComponent heroBayonetAudio {"hint":"Spatial AudioComponent: bayonet click where the lens mounts"}'
     - '// @input Component.AudioComponent heroFlightAudio {"hint":"Spatial AudioComponent: soft air sweep that follows the replica in flight"}'

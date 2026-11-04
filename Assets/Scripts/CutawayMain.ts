@@ -128,6 +128,11 @@ export class CutawayMain extends BaseScriptComponent {
 
   @input
   @allowUndefined
+  @hint("The record player model's shell material (RecordPlayerShell slot: uber PBR, vertex colour as emissive lift, warm fresnel rim)")
+  recordPlayerShellMaterial: Material
+
+  @input
+  @allowUndefined
   @hint("Spatial AudioComponent: soft rising tone as the copy lifts off the camera")
   heroLiftAudio: AudioComponent
 
