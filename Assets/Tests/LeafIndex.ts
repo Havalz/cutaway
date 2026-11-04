@@ -26,6 +26,9 @@ import {R0ModelScenario} from "./R0ModelScenario"
 import {RpModelScenario} from "./RpModelScenario"
 import {R1RpLaunchScenario} from "./R1RpLaunchScenario"
 import {R2RpMoveTurnScenario} from "./R2RpMoveTurnScenario"
+import {R3RpNeedleScenario} from "./R3RpNeedleScenario"
+import {R4RpSoundScenario} from "./R4RpSoundScenario"
+import {R6RpLiftScenario} from "./R6RpLiftScenario"
 
 @component
 export class LeafIndex extends BaseScriptComponent {
@@ -55,6 +58,9 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "r0-rp-model", typename: R0ModelScenario.getTypeName()},
     {id: "r1-rp-launch", typename: R1RpLaunchScenario.getTypeName()},
     {id: "r2-rp-move-turn", typename: R2RpMoveTurnScenario.getTypeName()},
+    {id: "r3-rp-needle", typename: R3RpNeedleScenario.getTypeName()},
+    {id: "r4-rp-sound", typename: R4RpSoundScenario.getTypeName()},
+    {id: "r6-rp-lift", typename: R6RpLiftScenario.getTypeName()},
     {id: "helper-rp-model", typename: RpModelScenario.getTypeName(), parameters: {dx: "", dz: "", interior: "", hide: "", at: "", scale: "", yaw: ""}},
     {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer", step: "", untilPhase: "", extraMs: "", layout: ""}}
   ]

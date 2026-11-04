@@ -116,6 +116,8 @@ export const RP_GEOM = {
   coverHalfW: COVER_HW,
   coverDepth: COVER_D,
   coverOpenDeg: COVER_OPEN,
+  /** The S-arm's centreline in the lift frame (x, z), pivot to headshell joint. */
+  armPath: ARM_PATH.map(([x, z]) => new vec2(x, z)),
   motor: new vec3(MOTOR_X, 2.6, MOTOR_Z),
   subPlatterR: 5.42,
   pulleyR: 0.48,

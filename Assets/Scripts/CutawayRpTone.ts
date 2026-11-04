@@ -99,6 +99,11 @@ export class RpTone {
     return {freq: this.f, gain: this.g, targetFreq: this.targetF, targetGain: this.targetG, playing: this.isOn, frames: this.frames, samples: this.samples, lastAsk: this.lastAsk}
   }
 
+  /** Where the sound comes from: the spatial audio source's world position. */
+  position(): vec3 | null {
+    return this.audio ? this.audio.getSceneObject().getTransform().getWorldPosition() : null
+  }
+
   /** The last block of samples sent to the output (tests measure its frequency). */
   getLastBlock(): Float32Array | null {
     return this.lastBuf

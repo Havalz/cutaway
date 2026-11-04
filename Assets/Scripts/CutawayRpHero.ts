@@ -19,11 +19,13 @@ import {setFade, spawnMesh, TrailRibbon} from "./CutawayGeometry"
 import {TableSurface} from "./CutawayHeroSurface"
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
 import {RecordPlayerModel, RP_GEOM} from "./CutawayRecordPlayerModel"
+import {DeckEvent, RP_CUE_CM, RpDeck} from "./CutawayRpDeck"
 import {RpPhysics} from "./CutawayRpPhysics"
 import {RpRail} from "./CutawayRpRail"
+import {pitchToFreq, RpSoundInfo, RpSoundShow} from "./CutawayRpSound"
 import {RpTone} from "./CutawayRpTone"
 import {arcControl, bezier, clampFoot, clearOfHead, contactGlowKit, DEG, fitScale, flatDir, footprint, Footprint, footprintOutlineXY, footRadius, footReach, hoverDiscKit, hullLowestY, placeGlowAndDisc, unclampFoot} from "./CutawayStageKit"
-import {ENERGY, ink} from "./CutawayStyle"
+import {ENERGY, ink, keyWord} from "./CutawayStyle"
 import {clamp01, easeInOutCubic, easeOutCubic} from "./CutawayTween"
 
 export type RpSound = "lift" | "flight" | "land" | "tap" | "part" | "crackle"
@@ -133,6 +135,17 @@ const RET_END = RET_FLY1 + 0.7
 
 const LIGHT = ENERGY.light
 
+/** Captions, one line each (recordplayer-hero.md §2). */
+const CAPTIONS = [
+  "Lift the arm and place the needle on the record.",
+  keyWord("The needle rides the wiggle and *shakes*.", ENERGY.motion),
+  keyWord("A magnet and coils turn that shaking into *signal*.", ENERGY.signal),
+  keyWord("The speaker pushes *air*. That's the sound you hear.", ENERGY.motion)
+]
+/** Defaults for the sliders when the record first plays: comfortable, and 440 Hz. */
+const LOUDNESS_DEFAULT = 0.6
+const PITCH_DEFAULT = 2 / 3
+
 /** Which look group a part belongs to (its nearest named ancestor in this list). */
 const GROUPS: {[part: string]: string} = {
   RpDustCover: "cover",
@@ -241,7 +254,12 @@ export class RecordPlayerHero {
   private lastDrop: {bounce: number; settle: number; restGap: number; tiltDeg: number} | null = null
   private lastPivot: vec3 | null = null
   private speed = 0
-  private grabs: {slide: SceneObject; turn: SceneObject} | null = null
+  private grabs: {slide: SceneObject; turn: SceneObject; arm: SceneObject} | null = null
+  private deck: RpDeck | null = null
+  private sound: RpSoundShow | null = null
+  /** The tonearm in the hand: where its handle and the hand were at the grab, the yaw then, the hand's vertical travel. */
+  private armGrab: {h0: vec3; q0: vec3 | null; accum: vec3; dy: number; ang0: number; yaw0: number} | null = null
+  private captionStage = -1
   private grab: {kind: "slide" | "turn"; p0: vec3; usePlane: boolean; foot0: vec3; yaw0: number; angPrev: number; turned: number; accum: vec3} | null = null
   private contactGlow: SceneObject | null = null
   private contactGlowMat: Material | null = null
@@ -326,6 +344,12 @@ export class RecordPlayerHero {
 
   /** Reset: remove everything instantly, from any state. */
   clear(): void {
+    if (this.sound) this.sound.clear()
+    this.sound = null
+    this.deck = null
+    this.armGrab = null
+    this.captionStage = -1
+    this.ctx.tone.stop()
     if (this.root) this.root.destroy()
     this.root = null
     this.model = null
@@ -358,6 +382,7 @@ export class RecordPlayerHero {
         this.updateLanded(dt)
         break
       case "returning":
+        this.updateDeck(dt)
         this.updateReturn(dt)
         break
     }
@@ -426,6 +451,33 @@ export class RecordPlayerHero {
   }
 
   /** The direction the tonearm side (+X) faces, flat (world). */
+  getDeck(): RpDeck | null {
+    return this.state === "none" ? null : this.deck
+  }
+
+  getSoundInfo(): RpSoundInfo | null {
+    return this.sound ? this.sound.getInfo() : null
+  }
+
+  /** A part of the copy by name ("RpPlatter", "RpTonearm", …). */
+  getPart(name: string): SceneObject | null {
+    return this.model ? this.model.parts[name] ?? null : null
+  }
+
+  /** The record's top surface at the platter axis (world). */
+  recordTopWorld(): vec3 {
+    return this.replica.getTransform().getWorldTransform().multiplyPoint(new vec3(G.axis.x, G.recordTop, G.axis.y))
+  }
+
+  /** The tonearm's pivot (world), for tests. */
+  pivotWorldForTest(): vec3 {
+    return this.pivotWorld()
+  }
+
+  getCaptionStage(): number {
+    return this.captionStage
+  }
+
   getArmSide(): vec3 {
     return this.state === "none" ? vec3.zero() : flatDir(this.replica.getTransform().getWorldRotation().multiplyVec3(new vec3(1, 0, 0)))
   }
@@ -453,6 +505,12 @@ export class RecordPlayerHero {
     this.model = new RecordPlayerModel({parent: root, shellMat: this.ctx.shellMat, glowMat: this.ctx.glowMat, layer: this.layer})
     this.replica = this.model.root
     this.replica.name = "RpReplica"
+    // Built while the model is still at the origin, unrotated, at scale 1 (the deck reads its stylus tip then).
+    this.deck = new RpDeck(this.model)
+    this.sound = new RpSoundShow(root, this.ctx.glowMat, () => this.ctx.camPos(), () => this.ctx.speaker(), this.ctx.tone, {
+      log: (p) => this.ctx.log(p),
+      caption: (stage) => this.showCaption(stage)
+    })
     this.buildLooks()
     this.buildGlowAndDisc()
   }
@@ -710,6 +768,9 @@ export class RecordPlayerHero {
       this.landedAt = getTime()
       this.ctx.rail.setMode("rest")
       this.ctx.rail.setValue("apart", 0)
+      this.ctx.rail.setValue("loudness", LOUDNESS_DEFAULT)
+      this.ctx.rail.setValue("pitch", PITCH_DEFAULT)
+      this.showCaption(0)
       this.ctx.log("rp:landed")
     }
   }
@@ -796,6 +857,150 @@ export class RecordPlayerHero {
     this.shellFill = easeOutCubic(this.t / T_FILL)
     this.shellRim = 0.9 + (0.3 - 0.9) * this.shellFill
     this.updatePose(dt, true)
+    this.updateDeck(dt)
+  }
+
+  // =====================================================================================
+  // The record plays: the tonearm, the platter and the sound in the room
+  // =====================================================================================
+
+  /** Every frame on the table: the deck's mechanics, what they set off, and the sound in the room. */
+  private updateDeck(dt: number): void {
+    const deck = this.deck
+    if (!deck) return
+    deck.update(dt)
+    for (const e of deck.takeEvents()) this.onDeckEvent(e)
+    if (this.sound) this.sound.update(dt, this.soundParams())
+  }
+
+  private onDeckEvent(e: DeckEvent): void {
+    switch (e) {
+      case "touchdown": {
+        const tip = this.stylusWorld()
+        this.ctx.sound("crackle", tip)
+        this.ctx.log("rp:needleDown")
+        this.ctx.rail.setMode("play")
+        this.sound.start(this.threadPoints(), tip)
+        break
+      }
+      case "liftoff":
+        if (this.sound) this.sound.stop()
+        if (this.state === "landed") {
+          this.ctx.rail.setMode("rest")
+          this.showCaption(0)
+        }
+        this.ctx.log("rp:lift")
+        break
+      case "rested":
+        this.ctx.log("rp:armRest")
+        if (this.state === "landed") this.showCaption(0)
+        break
+    }
+  }
+
+  /** Loudness and pitch from the rail, the platter's speed, where the stylus is. */
+  private soundParams(): {loudness: number; freq: number; speedRatio: number; stylus: vec3; stylusR: number} {
+    const rail = this.ctx.rail
+    const deck = this.deck
+    return {
+      loudness: rail.getValue("loudness"),
+      freq: pitchToFreq(rail.getValue("pitch")),
+      speedRatio: deck ? deck.speedRatio : 0,
+      stylus: this.stylusWorld(),
+      stylusR: deck ? deck.radiusAt(deck.yaw) : 0
+    }
+  }
+
+  /** The stylus tip in world space (from the model's own stylus transform). */
+  stylusWorld(): vec3 {
+    return this.model ? this.model.stylusTip() : vec3.zero()
+  }
+
+  /**
+   * The signal's way from the cartridge to the real speaker: back along the arm to its pivot, down
+   * the pivot into the plinth, under the platter to the side that faces the speaker (where the
+   * deck's wires run), out of the deck and across the room in a soft arc to the speaker.
+   */
+  private threadPoints(): vec3[] {
+    const tr = this.replica.getTransform()
+    const m = tr.getWorldTransform()
+    const pts: vec3[] = [this.stylusWorld()]
+    pts.push(this.model.parts["RpCartridge"].getTransform().getWorldPosition())
+    const lift = this.model.parts["RpTonearmLift"].getTransform().getWorldTransform()
+    const path = G.armPath
+    for (let i = path.length - 1; i >= 0; i--) pts.push(lift.multiplyPoint(new vec3(path[i].x, 0, path[i].y)))
+    const P = G.pivot
+    const low = 1.6
+    pts.push(m.multiplyPoint(new vec3(P.x, low, P.z)))
+    // Inside the plinth toward the speaker, to its edge.
+    const sp = this.ctx.speaker()
+    const inv = tr.getInvertedWorldTransform()
+    const spM = inv.multiplyPoint(sp)
+    let d = new vec2(spM.x - P.x, spM.z - P.z)
+    d = d.length > 1e-4 ? d.normalize() : new vec2(-1, 0)
+    const hw = G.plinthHalf.x
+    const hd = G.plinthHalf.y
+    const tx = d.x > 1e-6 ? (hw - P.x) / d.x : d.x < -1e-6 ? (-hw - P.x) / d.x : 1e9
+    const tz = d.y > 1e-6 ? (hd - P.z) / d.y : d.y < -1e-6 ? (-hd - P.z) / d.y : 1e9
+    const te = Math.min(tx, tz)
+    const edge = m.multiplyPoint(new vec3(P.x + d.x * te, low, P.z + d.y * te))
+    const out = m.multiplyPoint(new vec3(P.x + d.x * (te + 1.2), low, P.z + d.y * (te + 1.2)))
+    pts.push(edge, out)
+    // Across the room: a soft arc that rises over the gap and comes down to the speaker.
+    const dist = out.distance(sp)
+    const c = vec3.lerp(out, sp, 0.5).add(new vec3(0, 0.18 * dist + 12, 0))
+    for (let i = 1; i <= 40; i++) pts.push(bezier(out, c, sp, i / 40))
+    return pts
+  }
+
+  /** The caption for a stage of the story (0 = place the needle; 1–3 while it plays), above the rail. */
+  private showCaption(stage: number): void {
+    this.captionStage = stage
+    const rows = this.ctx.rail.getMode() === "play" ? 2 : 1
+    this.ctx.caption(stage >= 0 && stage < CAPTIONS.length ? CAPTIONS[stage] : null, this.captionAnchor(rows))
+  }
+
+  private canArm(): boolean {
+    return this.state === "landed" && this.pose === "rest" && !this.grab && !!this.deck
+  }
+
+  private onArmStart(p: vec3 | null): void {
+    if (!this.canArm() || this.armGrab) return
+    const deck = this.deck
+    const h0 = this.grabs.arm.getTransform().getWorldPosition()
+    const piv = this.pivotWorld()
+    const rel = h0.sub(piv)
+    this.armGrab = {h0, q0: p, accum: vec3.zero(), dy: 0, ang0: Math.atan2(rel.x, rel.z), yaw0: deck.yaw}
+    deck.grab()
+    this.ctx.log("rp:armGrab")
+  }
+
+  private onArmUpdate(p: vec3 | null, dv: vec3 | null): void {
+    const g = this.armGrab
+    if (!g || !this.deck) return
+    const d = dv ?? vec3.zero()
+    g.accum = g.accum.add(d)
+    g.dy += d.y
+    // Where the hand has carried the finger lift: the hand's travel on the drag plane since the grab.
+    const target = g.q0 && p ? g.h0.add(p.sub(g.q0)) : g.h0.add(g.accum)
+    const rel = target.sub(this.pivotWorld())
+    if (Math.sqrt(rel.x * rel.x + rel.z * rel.z) < 1) return
+    let da = Math.atan2(rel.x, rel.z) - g.ang0
+    while (da > Math.PI) da -= Math.PI * 2
+    while (da < -Math.PI) da += Math.PI * 2
+    this.deck.hold(g.yaw0 + da, RP_CUE_CM + g.dy / this.scale)
+  }
+
+  private onArmEnd(): void {
+    if (!this.armGrab || !this.deck || this.hold) return
+    this.armGrab = null
+    const r = this.deck.release()
+    this.ctx.log(r === "drop" ? "rp:armDrop" : "rp:armReturn")
+  }
+
+  /** The tonearm's pivot (world). */
+  private pivotWorld(): vec3 {
+    return this.replica.getTransform().getWorldTransform().multiplyPoint(G.pivot)
   }
 
   // =====================================================================================
@@ -825,17 +1030,40 @@ export class RecordPlayerHero {
     // Box axes in the handle's frame: x across the deck, y along its front, z up.
     const slide = make("RpGrab", "slide", new vec3(BOX_SIZE.x * S + 1.5, BOX_SIZE.z * S + 1.5, BOX_SIZE.y * S + 1.5))
     const turn = make("RpTurnGrab", "turn", new vec3(2 * G.coverHalfW * S + 1.5, 5.7 * S + 2, G.coverDepth * S))
-    this.grabs = {slide, turn}
+    // The tonearm, by its finger lift: a small handle round the headshell that follows it.
+    const arm = this.node(this.root, "RpArmGrab", vec3.zero())
+    const acol = arm.createComponent("Physics.ColliderComponent") as ColliderComponent
+    const abox = Shape.createBoxShape()
+    abox.size = new vec3(4.5 * S, 4.5 * S, 3.6 * S)
+    acol.shape = abox
+    acol.debugDrawEnabled = false
+    const ai = arm.createComponent(Interactable.getTypeName()) as Interactable
+    ai.enableInstantDrag = true
+    ai.onDragStart.add((e) => this.onArmStart(e.interactor.planecastPoint))
+    ai.onDragUpdate.add((e) => this.onArmUpdate(e.interactor.planecastPoint, e.dragVector))
+    ai.onDragEnd.add(() => this.onArmEnd())
+    this.grabs = {slide, turn, arm}
     this.syncGrabs()
     this.ctx.log("rp:grabReady")
   }
 
   private canGrab(): boolean {
-    return this.state === "landed" && this.pose !== "fly" && this.pose !== "lift"
+    // Not while the record plays or the arm is off its rest (a real deck isn't shoved mid-play).
+    return this.state === "landed" && this.pose !== "fly" && this.pose !== "lift" && !this.armGrab && (!this.deck || this.deck.atRest)
   }
 
   private syncGrabs(): void {
     if (!this.grabs) return
+    const armOn = this.canArm() || !!this.armGrab
+    this.grabs.arm.enabled = armOn
+    if (armOn && !this.armGrab) {
+      // Round the finger lift and the cartridge, level, turned with the copy.
+      const a = this.model.parts["RpFingerLift"].getTransform().getWorldPosition()
+      const b = this.model.parts["RpCartridge"].getTransform().getWorldPosition()
+      const at = this.grabs.arm.getTransform()
+      at.setWorldPosition(vec3.lerp(a, b, 0.5))
+      at.setWorldRotation(quat.lookAt(vec3.up(), flatDir(this.replica.getTransform().getWorldRotation().multiplyVec3(vec3.forward()))))
+    }
     const on = this.canGrab()
     this.grabs.slide.enabled = on
     this.grabs.turn.enabled = on
