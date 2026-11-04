@@ -98,7 +98,7 @@ const BELT_Y = 6.15
 // Finishes
 // =====================================================================================
 
-export type Finish = "shell" | "band" | "rubber" | "silver" | "chrome" | "vinyl" | "label" | "tube" | "dark" | "glass" | "copper" | "magnet" | "wire"
+export type Finish = "shell" | "band" | "rubber" | "silver" | "ring" | "chrome" | "vinyl" | "label" | "tube" | "dark" | "glass" | "copper" | "magnet" | "wire"
 
 interface FinishSpec {
   albedo: vec3
@@ -106,24 +106,34 @@ interface FinishSpec {
   roughness: number
   rim: number
   rimExp: number
+  /**
+   * The emissive lift (vertex colour). On an additive display a dark part lifted by 35% of its own
+   * albedo emits almost nothing, so the room shows through it and it reads as a hole. Dark finishes
+   * carry their own lift: enough light to read as a solid dark grey surface, still darker than the
+   * silver parts. Defaults to the albedo.
+   */
+  emit?: number
 }
 
 const grey = (v: number) => new vec3(v, v, v)
 
 /**
  * Base colours sampled from the reference, lifted so dark parts read as dark grey on an additive
- * display. "shell" is the RecordPlayerShell asset itself (its own values; the plinth's top plate).
+ * display. Two tones as in the reference: a bright silver top plate ("shell", the RecordPlayerShell
+ * asset's own values) over a dark grey base band; the platter's metal ring brighter and shinier; the
+ * record dark grey with a soft sheen on its grooves.
  */
 const FINISH: Record<Finish, FinishSpec> = {
-  shell: {albedo: grey(0.62), metallic: 0.35, roughness: 0.42, rim: 0.3, rimExp: 2.5},
-  band: {albedo: grey(0.22), metallic: 0.1, roughness: 0.55, rim: 0.45, rimExp: 2.5},
-  rubber: {albedo: grey(0.2), metallic: 0, roughness: 0.8, rim: 0.4, rimExp: 2.5},
-  silver: {albedo: grey(0.68), metallic: 0.45, roughness: 0.35, rim: 0.35, rimExp: 2.5},
-  chrome: {albedo: grey(0.76), metallic: 0.7, roughness: 0.2, rim: 0.45, rimExp: 2.5},
-  vinyl: {albedo: grey(0.19), metallic: 0.15, roughness: 0.28, rim: 0.5, rimExp: 2.5},
-  label: {albedo: new vec3(0.66, 0.64, 0.6), metallic: 0, roughness: 0.6, rim: 0.3, rimExp: 2.5},
+  shell: {albedo: grey(0.86), metallic: 0.5, roughness: 0.3, rim: 0.32, rimExp: 2.5},
+  band: {albedo: grey(0.12), metallic: 0.15, roughness: 0.45, rim: 0.7, rimExp: 2.0, emit: 0.32},
+  rubber: {albedo: grey(0.14), metallic: 0, roughness: 0.8, rim: 0.5, rimExp: 2.2, emit: 0.32},
+  silver: {albedo: grey(0.72), metallic: 0.45, roughness: 0.35, rim: 0.35, rimExp: 2.5},
+  ring: {albedo: grey(0.96), metallic: 0.85, roughness: 0.12, rim: 0.6, rimExp: 2.2},
+  chrome: {albedo: grey(0.8), metallic: 0.7, roughness: 0.2, rim: 0.45, rimExp: 2.5},
+  vinyl: {albedo: grey(0.14), metallic: 0.3, roughness: 0.2, rim: 0.5, rimExp: 2.5, emit: 0.34},
+  label: {albedo: new vec3(0.7, 0.68, 0.64), metallic: 0, roughness: 0.6, rim: 0.3, rimExp: 2.5},
   tube: {albedo: new vec3(0.88, 0.87, 0.84), metallic: 0.3, roughness: 0.3, rim: 0.4, rimExp: 2.5},
-  dark: {albedo: grey(0.28), metallic: 0.25, roughness: 0.45, rim: 0.45, rimExp: 2.5},
+  dark: {albedo: grey(0.2), metallic: 0.25, roughness: 0.45, rim: 0.5, rimExp: 2.5, emit: 0.4},
   glass: {albedo: grey(0.08), metallic: 0, roughness: 0.1, rim: 0.7, rimExp: 3},
   copper: {albedo: new vec3(0.85, 0.52, 0.32), metallic: 0.6, roughness: 0.35, rim: 0.4, rimExp: 2.5},
   magnet: {albedo: grey(0.42), metallic: 0.5, roughness: 0.3, rim: 0.4, rimExp: 2.5},
@@ -136,7 +146,11 @@ const LIFT = 0.62
 /** Glass edge accents (glow material). */
 const EDGE_GLOW = new vec4(0.42, 0.4, 0.35, 1)
 
-const col = (f: Finish) => new vec4(FINISH[f].albedo.x, FINISH[f].albedo.y, FINISH[f].albedo.z, 1)
+const col = (f: Finish) => {
+  const s = FINISH[f]
+  const e = s.emit
+  return e !== undefined ? new vec4(e, e, e, 1) : new vec4(s.albedo.x, s.albedo.y, s.albedo.z, 1)
+}
 const rgb = (r: number, g: number, b: number) => new vec4(r, g, b, 1)
 
 /**
@@ -788,9 +802,9 @@ export class RecordPlayerModel {
         [{r: 15.8, y: floor, nr: 0, ny: 1}, {r: 0, y: floor, nr: 0, ny: 1}]
       ],
       96,
-      col("silver")
+      col("ring")
     )
-    this.mesh(PT, "Body", k, "silver", ORDER.platter)
+    this.mesh(PT, "Body", k, "ring", ORDER.platter)
 
     // Strobe dots: one fine row of 180 raised dots round the edge.
     const dots = new MeshKit()
@@ -864,16 +878,18 @@ export class RecordPlayerModel {
       bead.push({r: REC_R - h / 2 + (h / 2) * Math.cos(t), y: h / 2 + (h / 2) * Math.sin(t), nr: Math.cos(t), ny: Math.sin(t)})
     }
     lathe(k, vec3.zero(), vec3.up(), [[{r: HOLE_R, y: 0, nr: 0, ny: -1}, {r: REC_R - h / 2, y: 0, nr: 0, ny: -1}], bead, [{r: REC_R - h / 2, y: h, nr: 0, ny: 1}, {r: 14.6, y: h, nr: 0, ny: 1}], [{r: HOLE_R, y: h, nr: -1, ny: 0}, {r: HOLE_R, y: 0, nr: -1, ny: 0}]], SEG, col("vinyl"))
-    // Grooves: fine rings whose normals tilt in and out (the sheen), with four quiet gaps between tracks.
+    // Grooves: fine rings whose normals tilt in and out, so the key light catches them as a soft
+    // sheen, with four quiet gaps between tracks. Their lift sits around the vinyl's own.
     const gaps = [12.4, 10.5, 8.9, 7.3]
+    const v0 = FINISH.vinyl.emit
     let r = 14.6
     let n = 0
     while (r > 5.6 + 1e-3) {
       const gap = gaps.some((g) => Math.abs(r - g) < 0.13)
       const w = gap ? 0.34 : 0.25
       const r2 = Math.max(5.6, r - w)
-      const tilt = gap ? 0 : (n % 2 === 0 ? 1 : -1) * 0.1
-      const c = gap ? 0.3 : n % 2 === 0 ? 0.26 : 0.17
+      const tilt = gap ? 0 : (n % 2 === 0 ? 1 : -1) * 0.2
+      const c = gap ? v0 + 0.02 : n % 2 === 0 ? v0 + 0.07 : v0 - 0.05
       lathe(k, vec3.zero(), vec3.up(), [[{r, y: h, nr: tilt, ny: 1}, {r: r2, y: h, nr: tilt, ny: 1}]], SEG, rgb(c, c, c))
       r = r2
       n++

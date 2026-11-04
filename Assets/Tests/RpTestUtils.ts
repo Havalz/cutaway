@@ -10,8 +10,11 @@ import {getMain} from "./CutawayTestUtils"
 const f2 = (v: number) => v.toFixed(2)
 const fv = (v: vec3) => `${f2(v.x)},${f2(v.y)},${f2(v.z)}`
 
-/** Build the model with its footprint centre at the real deck's plus `offset` (world cm), unrotated. */
-export function buildRpModel(offset: vec3): RecordPlayerModel {
+/**
+ * Build the model with its footprint centre at the real deck's plus `offset` (world cm), unrotated;
+ * or, with `place`, at that world point, turned `yawDeg` about +Y and scaled `scale`.
+ */
+export function buildRpModel(offset: vec3, place?: {at: vec3; scale: number; yawDeg: number}): RecordPlayerModel {
   const main = getMain()
   if (!main.recordPlayerShellMaterial) throw new Error("CutawayMain.recordPlayerShellMaterial is not wired")
   const old = findSceneObjectByName("RpModel")
@@ -21,9 +24,9 @@ export function buildRpModel(offset: vec3): RecordPlayerModel {
   cam.renderLayer = cam.renderLayer.union(layer)
   const m = new RecordPlayerModel({parent: main.getSceneObject(), shellMat: main.recordPlayerShellMaterial, glowMat: main.glowMaterial, layer})
   const tr = m.root.getTransform()
-  tr.setWorldPosition(ROOM_DECK.origin.add(offset))
-  tr.setWorldRotation(quat.quatIdentity())
-  tr.setWorldScale(vec3.one())
+  tr.setWorldPosition(place ? place.at : ROOM_DECK.origin.add(offset))
+  tr.setWorldRotation(place ? quat.angleAxis((place.yawDeg * Math.PI) / 180, vec3.up()) : quat.quatIdentity())
+  tr.setWorldScale(vec3.one().uniformScale(place ? place.scale : 1))
   return m
 }
 
@@ -48,5 +51,12 @@ export function reportRpModel(m: RecordPlayerModel): RpMeasure {
   print(`rp-model: plinth W ${f2(plinth.x)} top ${f2(plinth.y)} D ${f2(plinth.z)} | room ${f2(R.plinth.x)} ${f2(R.plinth.y)} ${f2(R.plinth.z)} | diff ${pct(plinth.x, R.plinth.x)} ${pct(plinth.y, R.plinth.y)} ${pct(plinth.z, R.plinth.z)}`)
   const shelfY = m.root.getTransform().getWorldPosition().y
   print(`rp-model: stylus tip ${f2(m.stylusTip().y - shelfY)} cm above the shelf (record surface 7.60)`)
+  // World points for the room's markers and the station outline (meaningful when built on the deck, dx 0).
+  const wm = m.root.getTransform().getWorldTransform()
+  const deck = m.bounds((p) => p !== "RpDustCover")
+  const rec = m.parts["RpRecord"].getTransform().getWorldPosition()
+  const recTop = m.parts["RpRecordLabel"].getTransform().getWorldPosition()
+  print(`rp-model: world stylus tip ${fv(m.stylusTip())} | platter centre on the record ${fv(new vec3(rec.x, recTop.y, rec.z))}`)
+  print(`rp-model: world deck without cover: centre ${fv(wm.multiplyPoint(deck.min.add(deck.max).uniformScale(0.5)))} size ${fv(deck.size)}`)
   return {overall: all.size, plinth, tris: t.total}
 }

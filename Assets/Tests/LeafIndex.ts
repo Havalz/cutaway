@@ -51,7 +51,7 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "p8-hero-clean-up", typename: P8CleanUpScenario.getTypeName()},
     {id: "helper-hero-layout", typename: HeroLayoutScenario.getTypeName()},
     {id: "r0-rp-model", typename: R0ModelScenario.getTypeName()},
-    {id: "helper-rp-model", typename: RpModelScenario.getTypeName(), parameters: {dx: "", dz: "", interior: "", hide: ""}},
+    {id: "helper-rp-model", typename: RpModelScenario.getTypeName(), parameters: {dx: "", dz: "", interior: "", hide: "", at: "", scale: "", yaw: ""}},
     {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer", step: "", untilPhase: "", extraMs: "", layout: ""}}
   ]
 }

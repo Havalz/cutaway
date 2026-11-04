@@ -381,7 +381,9 @@ export class RecordPlayerExplanation extends Explanation {
     this.ghostShell("GhostShell", bounds.center, bounds.size, 0, B[0])
     const P = new vec3(platter.x, needle.y + 0.3, platter.z)
     const toNeedle = new vec3(needle.x - P.x, 0, needle.z - P.z)
-    const Rg = Math.max(6, toNeedle.length)
+    // The groove ring runs under the stylus, but stays on the record (14.2 cm, its outer groove)
+    // when the arm is parked on its rest beside it, as in the room.
+    const Rg = Math.min(14.2, Math.max(6, toNeedle.length))
     const Rp = Rg + 1.8
     const spin = this.node("Platter", P)
     const disc = this.node("PlatterDisc", vec3.zero(), spin)
