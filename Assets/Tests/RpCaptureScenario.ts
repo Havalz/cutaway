@@ -43,12 +43,16 @@ export class RpCaptureScenario extends Scenario {
         await sleep(1400)
         break
       case "pitch_low":
+        // Loud enough that the rings read; held when the newest 3.1 m ring is 1–1.6 m out.
         await play()
+        rail.setValue("loudness", 0.9)
         rail.setValue("pitch", freqToPitch(110))
         await waitUntil(() => rp.getSoundInfo().rings.length >= 2, 5000)
+        await waitUntil(() => rp.getSoundInfo().rings.some((r) => r.radius >= 100 && r.radius <= 160), 5000)
         break
       case "pitch_high":
         await play()
+        rail.setValue("loudness", 0.9)
         rail.setValue("pitch", freqToPitch(880))
         await sleep(1600)
         break

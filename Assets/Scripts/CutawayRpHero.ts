@@ -26,6 +26,7 @@ import {RpRail, SliderKey} from "./CutawayRpRail"
 import {pitchToFreq, RpSoundInfo, RpSoundShow} from "./CutawayRpSound"
 import {RpTone} from "./CutawayRpTone"
 import {arcControl, bezier, clampFoot, clearOfHead, contactGlowKit, DEG, fitScale, flatDir, footprint, Footprint, footprintOutlineXY, footRadius, footReach, hoverDiscKit, hullLowestY, placeGlowAndDisc, unclampFoot} from "./CutawayStageKit"
+import {hull2, meshBoxes, polyGap, toView, viewFrame} from "./CutawayLayout"
 import {ENERGY, ink, keyWord} from "./CutawayStyle"
 import {clamp01, easeInOutCubic, easeOutCubic} from "./CutawayTween"
 
@@ -144,6 +145,11 @@ const CAPTIONS = [
   keyWord("The speaker pushes *air*. That's the sound you hear.", ENERGY.motion),
   keyWord("Wiggle a magnet near a coil, and *current* flows.", ENERGY.signal)
 ]
+/**
+ * Half the width of the widest caption, in caption design units: centred text runs about 0.34
+ * units a character at the caption's size (measured), plus a little margin.
+ */
+const CAPTION_HALF_W = Math.min(10.5, (0.34 * Math.max(...CAPTIONS.map((c) => c.replace(/<[^>]*>/g, "").length)) + 1) / 2)
 /** Taken apart: the caption for the live detail. */
 const CAPTION_APART = 4
 /** How fast the parts follow the "Take apart" slider (slider units per second), as the camera. */
@@ -268,10 +274,23 @@ export class RecordPlayerHero {
   private sEff = 0
   /** Put it back: waiting for the arm, the platter and the parts before it lifts. */
   private retWaiting = false
+  /**
+   * Which side of the copy the rail stands on, as the user sees it (+1 right, −1 left), and its extra
+   * step outwards (cm), so it and its caption stay clear of the copy and inside the view.
+   */
+  private railSide = 1
+  private railShift = 0
+  private railShiftTarget = 0
+  /** And its extra step towards the user (cm). */
+  private railFwd = 0
+  private railFwdTarget = 0
+  private railCheckT = 0
   private lookByRmv = new Map<RenderMeshVisual, Look>()
   /** The tonearm in the hand: where its handle and the hand were at the grab, the yaw then, the hand's vertical travel. */
   private armGrab: {h0: vec3; q0: vec3 | null; accum: vec3; dy: number; ang0: number; yaw0: number} | null = null
   private captionStage = -1
+  /** Where the caption was last placed (it is re-placed when the rail moves). */
+  private captionAt: vec3 | null = null
   private grab: {kind: "slide" | "turn"; p0: vec3; usePlane: boolean; foot0: vec3; yaw0: number; angPrev: number; turned: number; accum: vec3} | null = null
   private contactGlow: SceneObject | null = null
   private contactGlowMat: Material | null = null
@@ -368,6 +387,13 @@ export class RecordPlayerHero {
     this.apart = null
     this.sEff = 0
     this.retWaiting = false
+    this.railSide = 1
+    this.railShift = 0
+    this.railShiftTarget = 0
+    this.railFwd = 0
+    this.railFwdTarget = 0
+    this.railCheckT = 0
+    this.captionAt = null
     this.lookByRmv.clear()
     this.deck = null
     this.armGrab = null
@@ -547,7 +573,12 @@ export class RecordPlayerHero {
       glowMat: this.ctx.glowMat,
       camPos: () => this.ctx.camPos(),
       stageCenter: () => this.stageCenter(),
-      railBoxes: () => (this.ctx.rail.isVisible() ? this.ctx.rail.getBoxes() : []),
+      // The rail as one outline (its labels, tracks, knobs and pills together): no part label slips
+      // into the gaps between its rows.
+      railBoxes: () => {
+        const boxes = this.ctx.rail.isVisible() ? this.ctx.rail.getBoxes() : []
+        return boxes.length ? [([] as vec3[]).concat(...boxes)] : []
+      },
       setGroup: (g, fill, fade) => {
         const gl = this.groupLook[g]
         if (gl) {
@@ -592,10 +623,13 @@ export class RecordPlayerHero {
       const mat = m.rmv.mainMaterial.clone()
       m.rmv.mainMaterial = mat
       const pass = mat.mainPass
-      const look: Look = {rmv: m.rmv, mat, base: pass.baseColor, emis: 0, rim: 0, accent: m.accent, group, depthWrite: true, twoSided: false}
+      // The open dust cover is a tall box of glass: drawn additively its edges pile up, so it is toned down.
+      const dim = group === "cover" && !m.accent ? 0.6 : 1
+      const b = pass.baseColor
+      const look: Look = {rmv: m.rmv, mat, base: new vec4(b.x * dim, b.y * dim, b.z * dim, b.w), emis: 0, rim: 0, accent: m.accent, group, depthWrite: true, twoSided: false}
       if (!m.accent) {
-        look.emis = pass.emissiveIntensity
-        look.rim = pass.rimIntensity
+        look.emis = pass.emissiveIntensity * dim
+        look.rim = pass.rimIntensity * (0.5 + 0.5 * dim)
         look.depthWrite = pass.depthWrite
         look.twoSided = pass.twoSided
       }
@@ -833,6 +867,8 @@ export class RecordPlayerHero {
     if (this.firstRest) {
       this.firstRest = false
       this.landedAt = getTime()
+      this.snapRailShift("rest")
+      this.placeRail()
       this.ctx.rail.setMode("rest")
       this.ctx.rail.setValue("apart", 0)
       this.ctx.rail.setValue("loudness", LOUDNESS_DEFAULT)
@@ -1048,7 +1084,9 @@ export class RecordPlayerHero {
   private showCaption(stage: number): void {
     this.captionStage = stage
     const rows = this.ctx.rail.getMode() === "play" ? 2 : 1
-    this.ctx.caption(stage >= 0 && stage < CAPTIONS.length ? CAPTIONS[stage] : null, this.captionAnchor(rows))
+    const at = this.captionAnchor(rows)
+    this.captionAt = stage >= 0 ? at : null
+    this.ctx.caption(stage >= 0 && stage < CAPTIONS.length ? CAPTIONS[stage] : null, at)
   }
 
   private canArm(): boolean {
@@ -1340,17 +1378,131 @@ export class RecordPlayerHero {
 
   private placeRail(): void {
     if (this.state !== "landed" && !(this.state === "returning" && this.ctx.rail.isVisible())) return
+    if (this.state === "landed") this.updateRailShift(getDeltaTime())
     this.ctx.rail.place(this.railAnchor())
   }
 
-  /** The rail: beside the copy on the user's side, in front of the tonearm and to its right. */
+  /**
+   * Keep the rail and its caption clear of the copy as the user sees it: a few times a second, while
+   * nothing is held and the copy is assembled, find the place that clears every visible mesh of the
+   * copy (findRailShift) and glide there; the caption follows once the rail settles.
+   */
+  private updateRailShift(dt: number): void {
+    this.railCheckT -= dt
+    // Never under a finger, and not while the parts are out: the rail keeps its place while a slider
+    // is held or the copy is apart (the part labels are laid out around it and its caption).
+    const settled = !this.ctx.rail.isDragging() && this.sEff <= 0.001 && this.ctx.rail.getValue("apart") <= 0.001 && this.pose === "rest"
+    if (this.railCheckT <= 0 && this.ctx.rail.isVisible() && settled) {
+      this.railCheckT = 0.25
+      const want = this.findRailShift()
+      if (want.side !== this.railSide) {
+        // The other side: jump there (gliding across would sweep the rail through the copy).
+        this.railSide = want.side
+        this.railShift = want.shift
+        this.railFwd = want.fwd
+      }
+      this.railShiftTarget = want.shift
+      this.railFwdTarget = want.fwd
+    }
+    const k = 1 - Math.exp(-Math.max(0, dt) / 0.12)
+    this.railShift += (this.railShiftTarget - this.railShift) * k
+    this.railFwd += (this.railFwdTarget - this.railFwd) * k
+    if (Math.abs(this.railShiftTarget - this.railShift) < 0.05) this.railShift = this.railShiftTarget
+    if (Math.abs(this.railFwdTarget - this.railFwd) < 0.05) this.railFwd = this.railFwdTarget
+    // Once the rail has settled somewhere new, the caption moves with it (one cross-fade).
+    if (this.captionStage >= 0 && this.captionAt && this.railShift === this.railShiftTarget && this.railFwd === this.railFwdTarget) {
+      const want = this.captionAnchor(this.ctx.rail.getMode() === "play" ? 2 : 1)
+      if (want.distance(this.captionAt) > 2) this.showCaption(this.captionStage)
+    }
+  }
+
+  /** Snap the rail's place now (on landing, before the rail and caption appear). */
+  private snapRailShift(mode: "rest" | "play"): void {
+    const want = this.findRailShift(mode)
+    this.railSide = want.side
+    this.railShift = this.railShiftTarget = want.shift
+    this.railFwd = this.railFwdTarget = want.fwd
+    this.railCheckT = 0.25
+    print(`Cutaway: rp rail on the ${want.side > 0 ? "right" : "left"}, ${want.shift} cm further out and ${want.fwd} cm nearer (reaches ${want.reach.toFixed(1)} cm from the copy's centre in view)`)
+  }
+
+  /**
+   * Where the rail stands. For each side of the copy and each step towards the user (0–36 cm), the
+   * smallest step out (0–90 cm in 3 cm steps) at which the rail's full layout and its caption clear
+   * the copy's meshes from the user's eye; of those, the most compact: the one whose farthest corner
+   * is nearest the copy's centre in view, so it stays close to where the user is looking (the
+   * current side keeps it unless the other is clearly closer). The copy faces its tonearm to the
+   * user, so its open dust cover stands tall on the user's right: there the caption would sit on the
+   * cover, and the rail usually stands on the left. Both face the eye at a constant apparent size,
+   * so their outlines are rectangles in view: the rail's sliders and pill span x −8.5…8.5 and
+   * y −7…4.8 design units (11 with the Pitch row); the caption, centred below its top centre, is as
+   * wide as its longest line (CAPTION_HALF_W) and about 5 tall.
+   */
+  private findRailShift(mode: "rest" | "play" = this.ctx.rail.getMode() === "play" ? "play" : "rest"): {side: number; shift: number; fwd: number; reach: number} {
+    const none = {side: this.railSide, shift: 0, fwd: 0, reach: 0}
+    const eye = this.ctx.camPos()
+    const F = viewFrame(eye, this.stageCenter())
+    const copy: {h: vec2[]; x0: number; x1: number; y0: number; y1: number}[] = []
+    for (const b of meshBoxes(this.replica)) {
+      const h = hull2(b.map((q) => toView(F, q)))
+      copy.push({h, x0: Math.min(...h.map((q) => q.x)), x1: Math.max(...h.map((q) => q.x)), y0: Math.min(...h.map((q) => q.y)), y1: Math.max(...h.map((q) => q.y))})
+    }
+    if (!copy.length) return none
+    const rows = mode === "play" ? 2 : 1
+    const top = rows > 1 ? 10.5 : 4.3
+    const unitAt = (p: vec3, k: number) => (k * F.D) / Math.max(1, p.sub(eye).dot(F.f))
+    const rect = (c: vec2, u: number, x0: number, x1: number, y0: number, y1: number) => [new vec2(c.x + u * x0, c.y + u * y0), new vec2(c.x + u * x1, c.y + u * y0), new vec2(c.x + u * x1, c.y + u * y1), new vec2(c.x + u * x0, c.y + u * y1)]
+    // Clear of every mesh by 1 view unit (boxes far from the rectangle are skipped cheaply).
+    const clearOf = (r: vec2[]) => {
+      const x0 = Math.min(r[0].x, r[2].x) - 1
+      const x1 = Math.max(r[0].x, r[2].x) + 1
+      const y0 = Math.min(r[0].y, r[2].y) - 1
+      const y1 = Math.max(r[0].y, r[2].y) + 1
+      return copy.every((m) => m.x1 < x0 || m.x0 > x1 || m.y1 < y0 || m.y0 > y1 || polyGap(r, m.h) >= 1)
+    }
+    const savedSide = this.railSide
+    const saved = this.railShift
+    const savedFwd = this.railFwd
+    const dd = this.ctx.labels.getDesignDistance()
+    const best = new Map<number, {side: number; shift: number; fwd: number; reach: number}>()
+    for (const side of [1, -1]) {
+      this.railSide = side
+      for (let fwd = 0; fwd <= 36; fwd += 6) {
+        this.railFwd = fwd
+        for (let shift = 0; shift <= 90; shift += 3) {
+          this.railShift = shift
+          const a = this.railAnchor()
+          const ca = this.captionAnchor(rows)
+          const shapes = [
+            rect(toView(F, a), unitAt(a, RpRail.scaleAt(a, eye)), -8.5, 8.5, -7, top + 0.5),
+            rect(toView(F, ca), unitAt(ca, Math.min(6, Math.max(0.3, ca.distance(eye) / dd))), -CAPTION_HALF_W, CAPTION_HALF_W, -4.8, 0.3)
+          ]
+          if (!shapes.every(clearOf)) continue
+          let reach = 0
+          for (const h of shapes) for (const q of h) reach = Math.max(reach, q.length)
+          const b = best.get(side)
+          if (!b || reach < b.reach - 0.5) best.set(side, {side, shift, fwd, reach})
+          break
+        }
+      }
+    }
+    this.railSide = savedSide
+    this.railShift = saved
+    this.railFwd = savedFwd
+    const mine = best.get(savedSide)
+    const other = best.get(-savedSide)
+    if (mine && (!other || mine.reach <= other.reach + 5)) return mine
+    return other || none
+  }
+
+  /** The rail: beside the copy on the user's side, in front of it and to the side `railSide` picks. */
   private railAnchor(): vec3 {
     const c = this.stageCenter()
     const head = this.ctx.camPos()
     const toUser = flatDir(head.sub(c))
     const right = toUser.uniformScale(-1).cross(vec3.up()).normalize()
     const reach = G.plinthHalf.x * this.scale
-    return c.add(toUser.uniformScale(reach + 13)).add(right.uniformScale(reach + 4)).add(new vec3(0, 2, 0))
+    return c.add(toUser.uniformScale(reach + 13 + this.railFwd)).add(right.uniformScale(this.railSide * (reach + 4 + this.railShift))).add(new vec3(0, 2, 0))
   }
 
   /** The caption sits right above the rail; `rows` = slider rows showing above "Put it back". */
