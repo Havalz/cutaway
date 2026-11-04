@@ -3401,6 +3401,7 @@
       replicaLensMesh: !<reference.RenderMesh> 0ce30d7a-4844-4ab7-8ee3-ac17bb2eecd7
       replicaShellMaterial: !<reference.Material> 3caf7b48-6761-4d3f-a155-9e5aaa4070f6
       recordPlayerShellMaterial: !<reference.Material> 2cffe35e-b56e-4ee4-9ba0-5299707754c4
+      lampShellMaterial: !<reference.Material> 91748b52-291f-4ad7-8e8c-7718cf59d631
       heroLiftAudio: !<reference.AudioComponent> 49d592bb-f36f-4e5b-9eca-da91086497d3
       heroBayonetAudio: !<reference.AudioComponent> 37bc3485-5bc6-48e3-95a0-b3c47b4b9173
       heroFlightAudio: !<reference.AudioComponent> cdd90f4e-64d3-4299-b6a2-373444021987

@@ -137,6 +137,11 @@ export class CutawayMain extends BaseScriptComponent {
 
   @input
   @allowUndefined
+  @hint("The lamp model's shell material (LampShell slot: uber PBR, vertex colour as emissive lift, warm fresnel rim; the paper uses it as is)")
+  lampShellMaterial: Material
+
+  @input
+  @allowUndefined
   @hint("Spatial AudioComponent: soft rising tone as the copy lifts off the camera")
   heroLiftAudio: AudioComponent
 
