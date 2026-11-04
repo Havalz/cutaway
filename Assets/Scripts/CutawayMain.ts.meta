@@ -67,6 +67,8 @@
     replicaLensMesh: false
     replicaShellMaterial: false
     resetUI: false
+    rpToneAudio: false
+    rpToneOutput: false
     scanAudio: false
     shelfY: false
     speakerMarker: false
@@ -115,6 +117,8 @@
       heroMirrorAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       heroShutterAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       heroPrintAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
+      rpToneAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
+      rpToneOutput: !<reference.AudioTrackAsset> 00000000-0000-0000-0000-000000000000
       glowMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
       modelMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
       chimeAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
@@ -172,6 +176,10 @@
     - '// @input Component.AudioComponent heroMirrorAudio {"hint":"Spatial AudioComponent: mirror lift (MirrorClick.wav)"}'
     - '// @input Component.AudioComponent heroShutterAudio {"hint":"Spatial AudioComponent: two-part shutter sound"}'
     - '// @input Component.AudioComponent heroPrintAudio {"hint":"Spatial AudioComponent: the print sliding out"}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"group_start", "label":"Record player hero stage (Bring it closer)"}'
+    - "// @input Component.AudioComponent rpToneAudio {\"hint\":\"Spatial AudioComponent at the speaker marker: the record's tone, synthesized live through an Audio Output track\"}"
+    - '// @input Asset.AudioTrackAsset rpToneOutput {"hint":"Audio Output asset (RpToneOutput) the tone is written into, sample by sample"}'
     - '// @ui {"widget":"group_end"}'
     - '// @ui {"widget":"group_start", "label":"Effects"}'
     - '// @input Asset.Material glowMaterial {"hint":"Additive glow material (lines of light, rays, rings)"}'

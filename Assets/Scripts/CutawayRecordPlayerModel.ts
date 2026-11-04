@@ -94,6 +94,34 @@ const MOTOR_X = -15.5
 const MOTOR_Z = -7.5
 const BELT_Y = 6.15
 
+/** The model's layout for the hero stage (model space, cm at 1x). */
+export const RP_GEOM = {
+  plinthHalf: new vec2(PL_HW, PL_HD),
+  plinthCorner: 0.9,
+  topY: TOP_Y,
+  feet: [new vec2(-19.4, -14.5), new vec2(19.4, -14.5), new vec2(-19.4, 14.5), new vec2(19.4, 14.5)],
+  footSole: 1.85,
+  /** Platter axis (x, z), the record's top surface, its radius, the grooved band and the label. */
+  axis: new vec2(AXIS_X, AXIS_Z),
+  recordTop: REC_Y1,
+  recordR: REC_R,
+  grooveOuter: 14.6,
+  grooveInner: 5.6,
+  labelR: LABEL_R,
+  platterR: PLATTER_R,
+  /** Tonearm yaw and lift pivot. */
+  pivot: new vec3(PIVOT_X, ARM_Y, PIVOT_Z),
+  /** Dust cover: hinge line and its open size. */
+  hinge: new vec3(0, HINGE_Y, HINGE_Z),
+  coverHalfW: COVER_HW,
+  coverDepth: COVER_D,
+  coverOpenDeg: COVER_OPEN,
+  motor: new vec3(MOTOR_X, 2.6, MOTOR_Z),
+  subPlatterR: 5.42,
+  pulleyR: 0.48,
+  beltY: BELT_Y
+}
+
 // =====================================================================================
 // Finishes
 // =====================================================================================
@@ -546,6 +574,11 @@ export class RecordPlayerModel {
 
   partList(): RpPartInfo[] {
     return Object.keys(this.parts).map((name) => ({name, so: this.parts[name], interior: this.interiorSos.indexOf(this.parts[name]) >= 0}))
+  }
+
+  /** Every mesh: its visual, the part it belongs to, and whether it is interior or a glow accent. */
+  meshList(): {rmv: RenderMeshVisual; part: string; interior: boolean; accent: boolean; tris: number}[] {
+    return this.meshes.slice()
   }
 
   destroy(): void {

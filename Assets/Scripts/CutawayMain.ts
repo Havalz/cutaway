@@ -8,6 +8,10 @@ import {CameraHero, HeroSound} from "./CutawayHero"
 import {TableSurface, TableSurveyor} from "./CutawayHeroSurface"
 import {CutawayHeroUI} from "./CutawayHeroUI"
 import {ENERGY} from "./CutawayStyle"
+import {RpTone} from "./CutawayRpTone"
+import {RecordPlayerHero, RpSound} from "./CutawayRpHero"
+import {RpRail, RpRailVisual} from "./CutawayRpRail"
+import {RP_GEOM} from "./CutawayRecordPlayerModel"
 
 export type StationKey = "recordPlayer" | "camera" | "lamp"
 export type StationState = "idle" | "chip" | "questions" | "playing" | "explained"
@@ -187,6 +191,18 @@ export class CutawayMain extends BaseScriptComponent {
   heroPrintAudio: AudioComponent
   @ui.group_end
 
+  @ui.group_start("Record player hero stage (Bring it closer)")
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent at the speaker marker: the record's tone, synthesized live through an Audio Output track")
+  rpToneAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Audio Output asset (RpToneOutput) the tone is written into, sample by sample")
+  rpToneOutput: AudioTrackAsset
+  @ui.group_end
+
   @ui.group_start("Effects")
   @input
   @hint("Additive glow material (lines of light, rays, rings)")
@@ -269,6 +285,9 @@ export class CutawayMain extends BaseScriptComponent {
   private hero: CameraHero | null = null
   private surveyor: TableSurveyor | null = null
   private surface: TableSurface | null = null
+  private rpHero: RecordPlayerHero | null = null
+  private rpRail: RpRail | null = null
+  private rpTone: RpTone | null = null
 
   onAwake(): void {
     this.stations = [
@@ -304,7 +323,104 @@ export class CutawayMain extends BaseScriptComponent {
     this.resetUI.onResetPressed.add(() => this.resetAll())
     this.resetUI.onPinch.add((p) => this.playAt("tick", this.tickAudio, p))
     this.setupHero()
+    this.setupRpHero()
     print("Cutaway ready: 3 stations")
+  }
+
+  // ---------------- Record player hero stage ----------------
+
+  private rpAudio(s: RpSound): AudioComponent | null {
+    const map: {[k in RpSound]: AudioComponent} = {
+      lift: this.heroLiftAudio,
+      flight: this.heroFlightAudio,
+      land: this.heroLandAudio,
+      tap: this.heroTapAudio,
+      part: this.heroPartAudio,
+      crackle: this.crackleAudio
+    }
+    return map[s] ?? null
+  }
+
+  /** The real deck's footprint centre on the shelf: the record player marker sits on the platter centre, on the record. */
+  private rpRealOrigin(): vec3 {
+    const m = this.pos(this.recordPlayerMarker)
+    return m.sub(new vec3(RP_GEOM.axis.x, RP_GEOM.recordTop, RP_GEOM.axis.y))
+  }
+
+  private setupRpHero(): void {
+    if (!this.recordPlayerShellMaterial || !this.tableMarker || !this.surveyor) {
+      print("Cutaway: record player hero stage is not wired (shell material, table marker, camera stage's surveyor)")
+      return
+    }
+    const camProvider = WorldCameraFinderProvider.getInstance()
+    this.rpRail = new RpRail(this.sceneObject, this.glowMaterial)
+    this.rpTone = new RpTone(this.rpToneAudio ?? null, this.rpToneOutput ?? null)
+    print("Cutaway: rp tone " + (this.rpTone.ok ? "live synthesis through the Audio Output" : "unavailable: " + this.rpTone.why))
+    this.rpHero = new RecordPlayerHero({
+      parent: this.sceneObject,
+      glowMat: this.glowMaterial,
+      shellMat: this.recordPlayerShellMaterial,
+      labels: this.labelsUI,
+      rail: this.rpRail,
+      tone: this.rpTone,
+      camPos: () => this.camPos(),
+      camera: camProvider.getComponent(),
+      realOrigin: () => this.rpRealOrigin(),
+      realRotation: quat.quatIdentity(),
+      speaker: () => this.pos(this.speakerMarker),
+      surface: () => this.surface ?? this.fallbackSurface(),
+      survey: (done) => {
+        const fb = this.fallbackSurface()
+        this.surface = fb
+        this.surveyor.survey(this.pos(this.tableMarker), fb, (s) => {
+          this.surface = s
+          done(s)
+        })
+      },
+      matter: this.heroMatter ?? null,
+      sound: (s, p) => {
+        const a = this.rpAudio(s)
+        if (a) this.playAt("rp_" + s, a, p)
+        else this.soundLog.push({name: "rp_" + s, time: getTime(), position: p})
+      },
+      moveSound: (s, p) => {
+        const a = this.rpAudio(s)
+        if (a) a.getSceneObject().getTransform().setWorldPosition(p)
+      },
+      log: (p) => this.log(p),
+      caption: (text, at) => this.labelsUI.setCaption(text, at)
+    })
+    this.rpRail.onPutBack = () => this.rpHero.putBack()
+    this.rpRail.onPinch = (p) => this.playAt("tick", this.tickAudio, p)
+    this.recordPlayerUI.onCloserPressed.add(() => this.launchRp())
+  }
+
+  /**
+   * "Bring it closer" (the record player's pill or its second question). One copy on the table at a
+   * time: if the camera's copy is out, it is sent home first through the camera's own Reset path.
+   */
+  private launchRp(): void {
+    const i = this.index("recordPlayer")
+    const s = this.stations[i]
+    if (!this.rpHero || this.running) return
+    if (this.rpHero.isOut) {
+      if (s.mode === "questions") this.setMode(i, "rest")
+      return
+    }
+    this.phaseLog = []
+    if (this.hero && this.hero.isOut) {
+      this.hero.clear()
+      this.log("rp:cameraHome")
+    }
+    if (!s.explained) {
+      s.explained = true
+      s.ui.setEnergies([ENERGY.motion, ENERGY.signal])
+    }
+    s.armed = false
+    this.setMode(i, "rest")
+    s.ui.setCloser(false)
+    this.log("rp:start")
+    this.rpHero.launch()
   }
 
   // ---------------- Camera hero stage ----------------
@@ -396,6 +512,10 @@ export class CutawayMain extends BaseScriptComponent {
       if (s.mode === "questions") this.setMode(i, "rest")
       return
     }
+    if (this.rpHero && this.rpHero.isOut) {
+      this.rpHero.clear()
+      this.log("hero:recordPlayerHome")
+    }
     // The stage follows the camera's explanation: the camera keeps (or gets) its explained dot.
     if (!s.explained) {
       s.explained = true
@@ -425,6 +545,10 @@ export class CutawayMain extends BaseScriptComponent {
       this.launchHero()
       return
     }
+    if (s.key === "recordPlayer" && q === 1 && this.rpHero) {
+      this.launchRp()
+      return
+    }
     this.startExplanation(i, q)
   }
 
@@ -442,6 +566,7 @@ export class CutawayMain extends BaseScriptComponent {
   /** Clears every explained dot and returns all three objects to idle. */
   resetAll(): void {
     if (this.hero) this.hero.clear()
+    if (this.rpHero) this.rpHero.clear()
     if (this.running) {
       this.running.exp.hideLabels()
       this.running.root.destroy()
@@ -630,15 +755,17 @@ export class CutawayMain extends BaseScriptComponent {
     }
     if (this.surveyor) this.surveyor.update()
     if (this.hero) this.hero.update(dt)
+    if (this.rpHero) this.rpHero.update(dt)
     this.updateCloser()
     this.updateGaze()
   }
 
-  /** The camera's "Bring it closer" pill: under the camera once it is explained and idle. */
+  /** The "Bring it closer" pills: under the camera / the record player once explained and idle. */
   private updateCloser(): void {
     const s = this.stations[this.index("camera")]
-    if (!s || !s.ui.hasCloser) return
-    s.ui.setCloser(!!this.hero && s.explained && s.mode === "rest" && !this.running && !this.hero.isOut)
+    if (s && s.ui.hasCloser) s.ui.setCloser(!!this.hero && s.explained && s.mode === "rest" && !this.running && !this.hero.isOut)
+    const r = this.stations[this.index("recordPlayer")]
+    if (r && r.ui.hasCloser) r.ui.setCloser(!!this.rpHero && r.explained && r.mode === "rest" && !this.running && !this.rpHero.isOut)
   }
 
   private updateGaze(): void {
@@ -800,5 +927,27 @@ export class CutawayMain extends BaseScriptComponent {
 
   getTablePosition(): vec3 {
     return this.tableMarker ? this.pos(this.tableMarker) : vec3.zero()
+  }
+
+  /** The record player hero stage (null if it is not wired). */
+  getRpHero(): RecordPlayerHero | null {
+    return this.rpHero
+  }
+
+  getRpTone(): RpTone | null {
+    return this.rpTone
+  }
+
+  getRpRail(): RpRail | null {
+    return this.rpRail
+  }
+
+  /** Test hook: true freezes the record player stage's timeline (for screenshots of one step). */
+  setHoldRp(v: boolean): void {
+    if (this.rpHero) this.rpHero.hold = v
+  }
+
+  getRpRailVisual(): RpRailVisual | null {
+    return this.rpRail ? this.rpRail.getVisual() : null
   }
 }
