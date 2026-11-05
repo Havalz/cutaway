@@ -21,7 +21,7 @@ import {setFade, spawnMesh, TrailRibbon} from "./CutawayGeometry"
 import {TableSurface} from "./CutawayHeroSurface"
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
 import {boxCorners, hull2, polyGap, toView, viewFrame} from "./CutawayLayout"
-import {kelvinToWarmth, LAMP_K_DEFAULT, LampLight, LampLightInfo, LampLightTimes, warmthToKelvin} from "./CutawayLampLight"
+import {kelvinToWarmth, LAMP_K_DEFAULT, LampLight, LampLightInfo, LampLightTimes, RAYS_FROM, SHADE_LIFT_CM, warmthToKelvin} from "./CutawayLampLight"
 import {LAMP_GEOM, LampModel} from "./CutawayLampModel"
 import {LampPhysics} from "./CutawayLampPhysics"
 import {LampRail, LampSliderKey} from "./CutawayLampRail"
@@ -120,7 +120,8 @@ export const LAMP_CAPTIONS = {
   press: "Press the switch on the cord.",
   flow: "Electric energy flows up the cord.",
   chip: "The chip glows blue. A coating turns it white.",
-  glow: "The paper scatters it into a soft glow."
+  glow: "The paper scatters it into a soft glow.",
+  harsh: "Without the paper, all the light comes from one tiny point. That's harsh light."
 }
 /**
  * Half the width of the widest caption, in caption design units: centred text runs about 0.34
@@ -135,6 +136,10 @@ const BUTTON_LATCH = 0.16
 /** How much brighter the LED chips and the frosted envelope's emissive get when lit (× the light's colour). */
 const CHIP_GLOW = 2.4
 const GLASS_GLOW = 1.7
+/** The shade leaves its seat (a rustle) once lifted this far (world cm). */
+const SHADE_LEFT_CM = 0.5
+/** Released, the shade is lowered back onto its seat over this long (from the full 25 cm; less from lower). */
+const SHADE_SETTLE_S = 0.34
 
 interface Look {
   rmv: RenderMeshVisual
@@ -246,7 +251,7 @@ export class LampHero {
   private caption: string | null = null
   /** Where the caption was last placed (it is re-placed when the rail moves). */
   private captionAt: vec3 | null = null
-  private grab: {kind: "slide" | "turn"; p0: vec3; usePlane: boolean; foot0: vec3; yaw0: number; angPrev: number; turned: number; accum: vec3} | null = null
+  private grab: {kind: "slide" | "turn" | "lift"; p0: vec3; usePlane: boolean; foot0: vec3; yaw0: number; angPrev: number; turned: number; accum: vec3; lift0: number; dy: number} | null = null
   private contactGlow: SceneObject | null = null
   private contactGlowMat: Material | null = null
   private disc: SceneObject | null = null
@@ -263,6 +268,15 @@ export class LampHero {
   private buttonFrom = 0
   private buttonDepth = 0
   private buttonOn = false
+  // The shade: its lift off the seat (world cm), its seat (local), being lowered back after release
+  private shadeLift = 0
+  private shadeRest: vec3 | null = null
+  private shadeLeft = false
+  private settle: {t: number; from: number; dur: number} | null = null
+  private shadeReleasedAt = -1
+  /** The "harsh light" caption is up (the shade lifted past RAYS_FROM); the light's own last caption. */
+  private harsh = false
+  private lightCaption: string | null = null
 
   constructor(private ctx: LampContext) {
     ctx.rail.onChange = (k, v) => this.onSlider(k, v)
@@ -328,6 +342,7 @@ export class LampHero {
       if (this.pose === "drop") this.toRest(true)
       this.physics.freeze()
     }
+    if (this.grab && this.grab.kind === "lift") this.lowerShade()
     this.grab = null
     this.pose = "lift"
     this.retFrom = {rot: this.replica.getTransform().getWorldRotation(), h: this.h}
@@ -354,6 +369,13 @@ export class LampHero {
     this.buttonFrom = 0
     this.buttonDepth = 0
     this.buttonOn = false
+    this.shadeLift = 0
+    this.shadeRest = null
+    this.shadeLeft = false
+    this.settle = null
+    this.shadeReleasedAt = -1
+    this.harsh = false
+    this.lightCaption = null
     this.sEff = 0
     this.retWaiting = false
     this.railSide = 1
@@ -491,6 +513,11 @@ export class LampHero {
     return this.buttonDepth
   }
 
+  /** The shade's lift off its seat (world cm, 0 … 25), whether the hand holds it, and whether it is being lowered back. */
+  getShade(): {lift: number; held: boolean; settling: boolean; releasedAt: number} {
+    return {lift: this.shadeLift, held: !!this.grab && this.grab.kind === "lift", settling: !!this.settle, releasedAt: this.shadeReleasedAt}
+  }
+
   /** The colour temperature the Warmth slider asks for (K). */
   getKelvin(): number {
     return warmthToKelvin(this.ctx.rail.getValue("warmth"))
@@ -538,6 +565,7 @@ export class LampHero {
     this.buildLooks()
     this.buildGlowAndDisc()
     this.buttonRest = this.model.parts["LampSwitchButton"].getTransform().getLocalPosition()
+    this.shadeRest = this.model.parts["LampShade"].getTransform().getLocalPosition()
     const model = this.model
     this.light = new LampLight({
       parent: root,
@@ -556,7 +584,9 @@ export class LampHero {
       log: (p) => this.ctx.log(p),
       caption: (stage) => {
         if (this.state !== "landed") return
-        this.showCaption(stage === 1 ? LAMP_CAPTIONS.flow : stage === 2 ? LAMP_CAPTIONS.chip : LAMP_CAPTIONS.glow)
+        this.lightCaption = stage === 1 ? LAMP_CAPTIONS.flow : stage === 2 ? LAMP_CAPTIONS.chip : LAMP_CAPTIONS.glow
+        // While the shade is off, the harsh-light caption stays; the light's own comes back with the shade.
+        if (!this.harsh) this.showCaption(this.lightCaption)
       }
     })
   }
@@ -830,7 +860,12 @@ export class LampHero {
 
   /** Whether the stage wants to hover (the take-apart step). */
   private wantHover(): boolean {
-    return this.state === "landed" && this.ctx.rail.getValue("apart") > 0.001 && !this.grab
+    return this.state === "landed" && this.ctx.rail.getValue("apart") > 0.001 && !this.grab && this.shadeSeated()
+  }
+
+  /** The shade on its seat (not lifted, held or being lowered). */
+  private shadeSeated(): boolean {
+    return this.shadeLift <= 0 && !this.settle && !(this.grab && this.grab.kind === "lift")
   }
 
   private startRise(): void {
@@ -904,6 +939,44 @@ export class LampHero {
     this.sEff = Math.abs(target - this.sEff) <= step ? target : this.sEff + Math.sign(target - this.sEff) * step
     this.updatePose(dt, this.sEff <= 0.001)
     this.updateButton(dt)
+    this.updateShade(dt)
+  }
+
+  /**
+   * The shade: held, it sits at the hand's lift; released, it is lowered back onto its seat (and
+   * lands exactly on it, with a rustle). Only its height changes: it stays level and on the axis.
+   * Past RAYS_FROM of the lift the harsh-light caption shows; seated again, the light's own returns.
+   */
+  private updateShade(dt: number): void {
+    if (this.settle) {
+      const st = this.settle
+      st.t += dt
+      const u = clamp01(st.t / st.dur)
+      this.shadeLift = st.from * (1 - easeInOutCubic(u))
+      if (u >= 1) {
+        this.shadeLift = 0
+        this.settle = null
+        if (this.shadeLeft && this.model) this.ctx.sound("rustle", this.shadeCenter())
+        this.shadeLeft = false
+        this.ctx.log("lamp:shadeSeated")
+      }
+    }
+    if (this.model && this.shadeRest) this.model.parts["LampShade"].getTransform().setLocalPosition(this.shadeRest.add(new vec3(0, this.shadeLift / this.scale, 0)))
+    const k = this.shadeLift / SHADE_LIFT_CM
+    const on = this.lightOn && this.state === "landed"
+    if (on && !this.harsh && k > RAYS_FROM) {
+      this.harsh = true
+      this.showCaption(LAMP_CAPTIONS.harsh)
+      this.ctx.log("lamp:harsh")
+    } else if (this.harsh && (!on || k < 0.05)) {
+      this.harsh = false
+      if (on) this.showCaption(this.lightCaption ?? LAMP_CAPTIONS.glow)
+    }
+  }
+
+  /** The shade's middle (world), where its rustle comes from. */
+  private shadeCenter(): vec3 {
+    return this.model.parts["LampShade"].getTransform().getWorldTransform().multiplyPoint(new vec3(0, SHADE_MID.y - G.shadeSeatY, 0))
   }
 
   /** A slider moved: everything it drives, in the same frame. */
@@ -911,9 +984,9 @@ export class LampHero {
     if (k === "warmth") this.ctx.rail.setLabel("warmth", "Warmth  " + Math.round(warmthToKelvin(v)) + " K")
   }
 
-  /** What the light follows each frame: the rail's Brightness and Warmth, the shade's lift (step 4). */
+  /** What the light follows each frame: the rail's Brightness and Warmth, the shade's lift (0..1). */
   private lightParams(): {brightness: number; kelvin: number; lift: number} {
-    return {brightness: this.ctx.rail.getValue("brightness"), kelvin: this.getKelvin(), lift: 0}
+    return {brightness: this.ctx.rail.getValue("brightness"), kelvin: this.getKelvin(), lift: this.shadeLift / SHADE_LIFT_CM}
   }
 
   /** The lit bulb: its LED chips and frosted envelope glow in the light's colour. */
@@ -1017,20 +1090,43 @@ export class LampHero {
     tt.setWorldRotation(q)
   }
 
+  /** While the lamp is on (standing, whole), the shade's grab lifts the shade instead of turning the lamp. */
+  private canLift(): boolean {
+    return this.state === "landed" && this.pose === "rest" && this.lightOn && this.sEff <= 0.001
+  }
+
   private onGrabStart(kind: "slide" | "turn", p: vec3 | null): void {
     if (!this.canGrab() || this.grab || !this.physics) return
+    if (kind === "turn" && this.canLift()) {
+      // Caught on its way down: it lifts from where it is.
+      this.settle = null
+      this.grab = {kind: "lift", p0: vec3.zero(), usePlane: false, foot0: this.foot, yaw0: this.yaw, angPrev: 0, turned: 0, accum: vec3.zero(), lift0: this.shadeLift, dy: 0}
+      this.ctx.log("lamp:shadeGrab")
+      return
+    }
     if (this.pose === "drop") this.toRest(true)
     const handle = kind === "slide" ? this.grabs.slide : this.grabs.turn
     const p0 = p ?? handle.getTransform().getWorldPosition()
     const rel = p0.sub(this.foot)
     const ang = Math.atan2(rel.x, rel.z)
-    this.grab = {kind, p0, usePlane: !!p, foot0: this.unclampFoot(this.foot, this.rot()), yaw0: this.yaw, angPrev: ang, turned: 0, accum: vec3.zero()}
+    this.grab = {kind, p0, usePlane: !!p, foot0: this.unclampFoot(this.foot, this.rot()), yaw0: this.yaw, angPrev: ang, turned: 0, accum: vec3.zero(), lift0: 0, dy: 0}
     this.ctx.log("lamp:grab")
   }
 
   private onGrabUpdate(p: vec3 | null, dv: vec3 | null): void {
     const g = this.grab
     if (!g) return
+    if (g.kind === "lift") {
+      // Straight up and down with the hand (world cm), from the seat to 25 cm above it.
+      g.dy += dv ? dv.y : 0
+      this.shadeLift = Math.max(0, Math.min(SHADE_LIFT_CM, g.lift0 + g.dy))
+      if (!this.shadeLeft && this.shadeLift > SHADE_LEFT_CM) {
+        this.shadeLeft = true
+        this.ctx.sound("rustle", this.shadeCenter())
+        this.ctx.log("lamp:shadeLift")
+      }
+      return
+    }
     let q = g.usePlane ? p : null
     if (!q) {
       g.accum = g.accum.add(dv ?? vec3.zero())
@@ -1056,9 +1152,28 @@ export class LampHero {
 
   private onGrabEnd(): void {
     if (!this.grab || this.hold) return
+    const kind = this.grab.kind
     this.grab = null
+    if (kind === "lift") {
+      this.shadeReleasedAt = getTime()
+      this.lowerShade()
+      this.ctx.log("lamp:shadeRelease")
+      return
+    }
     this.ctx.log("lamp:release")
     if (this.pose === "rest") this.startDrop()
+  }
+
+  /** Lower the shade back onto its seat (quicker from lower down). */
+  private lowerShade(): void {
+    if (this.shadeLift <= 0) {
+      this.shadeLift = 0
+      this.settle = null
+      this.shadeLeft = false
+      return
+    }
+    const k = this.shadeLift / SHADE_LIFT_CM
+    this.settle = {t: 0, from: this.shadeLift, dur: SHADE_SETTLE_S * (0.55 + 0.45 * k)}
   }
 
   /**
@@ -1159,7 +1274,7 @@ export class LampHero {
 
   /** Whether everything that must stop before the flight home has stopped (the light, the parts). */
   private readyToFly(): boolean {
-    return this.sEff <= 0 && (!this.light || this.light.isOff)
+    return this.sEff <= 0 && (!this.light || this.light.isOff) && this.shadeLift <= 0 && !this.settle
   }
 
   private updateReturn(dt: number): void {
@@ -1168,6 +1283,7 @@ export class LampHero {
       // The parts gather (twice the take-apart rate) while the light fades.
       this.sEff = Math.max(0, this.sEff - 2 * APART_RATE * dt)
       this.updateButton(dt)
+      this.updateShade(dt)
       if (!this.readyToFly()) return
       this.retWaiting = false
       this.retFrom = {rot: this.replica.getTransform().getWorldRotation(), h: this.h}

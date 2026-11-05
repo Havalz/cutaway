@@ -13,6 +13,11 @@
  *      base and up its stem; its shade fills with the same glow and a warm pool lies on the floor.
  * Off: the pulses stop, the bubble closes and everything fades over 0.4 s.
  *
+ * Lifting the shade (§3, the lift 0..1 over 25 cm): the paper moves away from the bulb, so its glow
+ * falls and moves down to its bottom edge; the bare bulb shows as a small bright point, and above
+ * 60% of the lift thin sharp rays leave it; the pool on the table shrinks and brightens and its
+ * edge turns crisp (a small source casts a sharp edge). Nothing goes dark: only edges and rays change.
+ *
  * Every level is computed each frame from (Brightness, Warmth): Brightness scales the pulses (rate,
  * density and strength), the LED, the shade glow, the pools and the real lamp, and 0 looks the same
  * as off. Warmth sets the colour of all emitted light by kelvinToRgb (Kang et al. 2002, below).
@@ -102,6 +107,21 @@ export function shadeGlowAt(y: number): number {
   return 1 / (1 + d * d)
 }
 
+/** How far the shade lifts off its seat (world cm, lamp-hero.md §3). */
+export const SHADE_LIFT_CM = 25
+/** The rays leave the bare bulb only above this share of the lift. */
+export const RAYS_FROM = 0.6
+
+/**
+ * The paper's glow at its own height y (model, seated) with the shade lifted liftM model cm: the
+ * same falloff from the bulb, now further away; once the bulb is below the paper's bottom edge only
+ * the light through the bottom opening reaches it (falling off with the gap).
+ */
+export function shadeGlowLifted(y: number, liftM: number): number {
+  const gap = Math.max(0, G.paperY0 + liftM - G.bulbCenterY) / 12
+  return shadeGlowAt(y + liftM) / (1 + gap * gap)
+}
+
 // =====================================================================================
 // Timing and look
 // =====================================================================================
@@ -133,6 +153,9 @@ const REAL_GAIN = 0.42
 const POOL_GAIN = 0.4
 const FLOOR_GAIN = 0.45
 const BLOOM_GAIN = 0.05
+const RAYS_GAIN = 0.9
+/** The bare bulb's rays at full extent (world cm; each 65–100% of this). */
+const RAY_LEN = 12
 
 const SIGNAL = ENERGY.signal
 const CHIP_BLUE = new vec4(0.25, 0.5, 1, 1)
@@ -202,6 +225,14 @@ export interface LampLightInfo {
   /** The shade's glow (× Brightness) and its profile: level with the bulb, at the top, at the bottom ring. */
   shadeGlow: number
   shadeProfile: {bulb: number; top: number; bottom: number}
+  /** The paper's brightest row now (1 seated; falls as the shade lifts away from the bulb). */
+  shadePeak: number
+  /** The shade's lift (0 seated … 1 at 25 cm), the bare bulb's rays (level × Brightness, 0 up to RAYS_FROM) and how far out they reach (0..1). */
+  lift: number
+  rays: number
+  raysExtent: number
+  /** The bare bulb's point of light (× Brightness). */
+  bulbPoint: number
   /** The shade glow's drawn colour (its material colour over its level). */
   miniColor: vec3
   /** The pool on the table: level, radius (cm) and edge width (fraction of the radius). */
@@ -450,6 +481,166 @@ class CometCloud {
   }
 }
 
+/**
+ * The copy's paper glow: a lathe just outside the paper (`pad` cm, model space), whose strength per
+ * row follows shadeGlowLifted for the shade's current lift (recomputed only when the lift changes).
+ */
+class ShadeGlowMesh {
+  readonly so: SceneObject
+  readonly mat: Material
+  private mb: MeshBuilder
+  private ys: number[] = []
+  private pos: vec3[] = []
+  private nrm: vec3[] = []
+  private last = -1
+  private static ROWS = 44
+  private static SEG = 48
+
+  constructor(parent: SceneObject, name: string, material: Material, pad: number) {
+    const R = ShadeGlowMesh.ROWS
+    const N = ShadeGlowMesh.SEG
+    this.mb = newBuilder()
+    const data: number[] = []
+    for (let j = 0; j <= R; j++) {
+      const y = G.paperY0 + ((G.paperY1 - G.paperY0) * j) / R
+      this.ys.push(y)
+      const r = lampShadeR(y) + pad
+      for (let s = 0; s <= N; s++) {
+        const a = (s / N) * Math.PI * 2
+        const n = new vec3(Math.cos(a), 0, Math.sin(a))
+        const p = new vec3(n.x * r, y, n.z * r)
+        this.pos.push(p)
+        this.nrm.push(n)
+        data.push(p.x, p.y, p.z, n.x, n.y, n.z, 0, 0, 0, 0)
+      }
+    }
+    this.mb.appendVerticesInterleaved(data)
+    const idx: number[] = []
+    for (let j = 0; j < R; j++)
+      for (let s = 0; s < N; s++) {
+        const a = j * (N + 1) + s
+        const b = a + N + 1
+        idx.push(a, a + 1, b, a + 1, b + 1, b)
+      }
+    this.mb.appendIndices(idx)
+    this.mb.updateMesh()
+    const sp = attach(parent, name, this.mb, material)
+    this.so = sp.so
+    this.mat = sp.mat
+    this.update(0)
+  }
+
+  /** The glow for the shade lifted liftM model cm. */
+  update(liftM: number): void {
+    // Small changes are skipped, but seated is always exact.
+    if (Math.abs(liftM - this.last) < 0.05 && (liftM > 0 || this.last === 0)) return
+    this.last = liftM
+    const N = ShadeGlowMesh.SEG
+    for (let j = 0; j < this.ys.length; j++) {
+      // The material blends Add with source alpha: (√g, √g) lands as g.
+      const g = Math.sqrt(shadeGlowLifted(this.ys[j], liftM))
+      for (let s = 0; s <= N; s++) {
+        const i = j * (N + 1) + s
+        const p = this.pos[i]
+        const n = this.nrm[i]
+        this.mb.setVertexInterleaved(i, [p.x, p.y, p.z, n.x, n.y, n.z, g, g, g, g])
+      }
+    }
+    this.mb.updateMesh()
+  }
+
+  /** The paper's brightest point now: level with the bulb, or its bottom edge once the bulb is below it (1 seated). */
+  peak(): number {
+    const liftM = Math.max(0, this.last)
+    return shadeGlowLifted(Math.max(G.paperY0, Math.min(G.paperY1, G.bulbCenterY - liftM)), liftM)
+  }
+}
+
+/**
+ * The bare bulb's rays (the shade lifted): thin sharp lines leaving the bulb in every direction
+ * but straight down into its own base, each a camera-facing ribbon hot at the glass, fading to
+ * nothing at its tip. `extent` (0..1) grows them out from the bulb.
+ */
+class RayBurst {
+  readonly so: SceneObject
+  readonly mat: Material
+  private mb: MeshBuilder
+  private dirs: vec3[] = []
+  private lens: number[] = []
+  private phase: number[] = []
+  private static ROWS = [
+    {u: 0, k: 1},
+    {u: 0.3, k: 0.55},
+    {u: 1, k: 0}
+  ]
+
+  constructor(parent: SceneObject, name: string, material: Material) {
+    // A Fibonacci sphere, less the cone under the bulb (its base and the socket block it).
+    const M = 46
+    for (let i = 0; i < M; i++) {
+      const y = 1 - (2 * (i + 0.5)) / M
+      if (y < -0.62) continue
+      const r = Math.sqrt(1 - y * y)
+      const a = i * Math.PI * (3 - Math.sqrt(5))
+      this.dirs.push(new vec3(Math.cos(a) * r, y, Math.sin(a) * r))
+      this.lens.push(0.65 + 0.35 * hash01(i + 7))
+      this.phase.push(hash01(i + 31) * Math.PI * 2)
+    }
+    const P = PROFILE.length
+    const R = RayBurst.ROWS.length
+    this.mb = newBuilder()
+    const data: number[] = []
+    for (let i = 0; i < this.dirs.length * R * P; i++) data.push(0, 0, 0, 0, 0, 1, 0, 0, 0, 0)
+    this.mb.appendVerticesInterleaved(data)
+    const idx: number[] = []
+    for (let c = 0; c < this.dirs.length; c++)
+      for (let r = 0; r < R - 1; r++)
+        for (let k = 0; k < P - 1; k++) {
+          const a = c * R * P + r * P + k
+          const b = a + P
+          idx.push(a, b, b + 1, a, b + 1, a + 1)
+        }
+    this.mb.appendIndices(idx)
+    this.mb.updateMesh()
+    const sp = attach(parent, name, this.mb, material)
+    this.so = sp.so
+    this.mat = sp.mat
+  }
+
+  get count(): number {
+    return this.dirs.length
+  }
+
+  /** From the glass (r0 from `c`, world) out to `len` cm at full extent. */
+  update(c: vec3, r0: number, len: number, eye: vec3, extent: number, t: number): void {
+    const P = PROFILE.length
+    const rows = RayBurst.ROWS
+    const ext = clamp01(extent)
+    for (let i = 0; i < this.dirs.length; i++) {
+      const d = this.dirs[i]
+      const L = len * this.lens[i] * (0.35 + 0.65 * ext)
+      // A faint, slow shimmer along each ray (never dark).
+      const tw = 0.82 + 0.18 * Math.sin(t * 2.1 + this.phase[i])
+      for (let r = 0; r < rows.length; r++) {
+        const p = c.add(d.uniformScale(r0 + L * rows[r].u))
+        const v = eye.sub(p)
+        let side = d.cross(v)
+        side = side.length > 1e-6 ? side.normalize() : vec3.right()
+        const nn = v.length > 1e-6 ? v.normalize() : vec3.forward()
+        const w = (0.16 + (0.035 - 0.16) * rows[r].u) * Math.max(1, v.length / 90)
+        for (let q = 0; q < P; q++) {
+          const pr = PROFILE[q]
+          const x = p.add(side.uniformScale(pr.o * w))
+          // (√I, √I) lands as I.
+          const k = Math.sqrt(Math.max(0, rows[r].k * pr.k * tw * ext))
+          this.mb.setVertexInterleaved((i * rows.length + r) * P + q, [x.x, x.y, x.z, nn.x, nn.y, nn.z, k, k, k, k])
+        }
+      }
+    }
+    this.mb.updateMesh()
+  }
+}
+
 /** The paper's glow as a lathe just outside the paper (`pad` cm), its strength following shadeGlowAt. */
 function shadeGlowKit(pad: number, rows: number = 44, seg: number = 48): MeshKit {
   const k = new MeshKit()
@@ -692,7 +883,9 @@ export class LampLight {
   private halo: PathRibbon | null = null
   private bubble: LedBubble | null = null
   private shadeGlow: SceneObject | null = null
+  private shadeMesh: ShadeGlowMesh | null = null
   private shadeMat: Material | null = null
+  private rays: RayBurst | null = null
   private bloom: SceneObject | null = null
   private bloomMat: Material | null = null
   private tablePool: PoolMesh | null = null
@@ -759,7 +952,9 @@ export class LampLight {
     if (this.shadeGlow) this.shadeGlow.destroy()
     this.root = null
     this.shadeGlow = null
+    this.shadeMesh = null
     this.shadeMat = null
+    this.rays = null
     this.bloom = null
     this.bloomMat = null
     this.core = null
@@ -806,18 +1001,18 @@ export class LampLight {
     // The shade's glow: a lathe just outside the paper, under the paper part (it lifts with it).
     const paper = this.ctx.model.parts["LampPaper"]
     const piv = this.ctx.model.pivot("LampPaper")
-    const sg = spawnMesh(paper, "LampShadeGlow", shadeGlowKit(0.18).build(), glow, piv.uniformScale(-1))
-    sg.mat.mainPass.twoSided = true
-    sg.rmv.setRenderOrder(ORDER)
-    this.shadeGlow = sg.so
-    this.shadeMat = sg.mat
-    // The bare bulb's point of light (hidden by the paper while the shade is on).
+    this.shadeMesh = new ShadeGlowMesh(paper, "LampShadeGlow", glow, 0.18)
+    this.shadeMesh.so.getTransform().setLocalPosition(piv.uniformScale(-1))
+    this.shadeGlow = this.shadeMesh.so
+    this.shadeMat = this.shadeMesh.mat
+    // The bare bulb's point of light (hidden by the paper while the shade is on) and its rays.
     const bk = new MeshKit(1.5)
     bk.addSparkXY(0, 0, 0.5, ink(UI_WHITE, 1), 24)
     const bl = spawnMesh(root, "LampBulbPoint", bk.build(), glow)
     bl.rmv.setRenderOrder(ORDER)
     this.bloom = bl.so
     this.bloomMat = bl.mat
+    this.rays = new RayBurst(root, "LampRays", glow)
     this.tablePool = new PoolMesh(root, "LampTablePool", glow)
     // The thread and the real lamp.
     this.threadHalo = new PathRibbon(root, "LampThreadGlow", glow, 56, ink(SIGNAL, 0.22))
@@ -836,7 +1031,7 @@ export class LampLight {
     this.realBloom = rb.so
     this.realBloomMat = rb.mat
     this.floorPool = new PoolMesh(root, "LampFloorPool", glow)
-    for (const m of [this.core.mat, this.halo.mat, this.shadeMat, this.bloomMat, this.tablePool.mat, this.threadCore.mat, this.threadHalo.mat, this.realMat, this.realBloomMat, this.floorPool.mat]) setFade(m, 0)
+    for (const m of [this.core.mat, this.halo.mat, this.shadeMat, this.bloomMat, this.rays.mat, this.tablePool.mat, this.threadCore.mat, this.threadHalo.mat, this.realMat, this.realBloomMat, this.floorPool.mat]) setFade(m, 0)
   }
 
   // =====================================================================================
@@ -925,17 +1120,29 @@ export class LampLight {
     this.ctx.setBulbGlow(led, color)
     const glowRamp = lit ? easeOutCubic((this.t - this.tBulb) / GLOW_RAMP) : 0
     const shade = glowRamp * b * env
+    // The shade's lift: the paper moves away from the bulb (its glow falls and moves down to the
+    // bottom edge); the bare bulb shows as a small bright point and, above RAYS_FROM, sharp rays.
+    const lift = clamp01(p.lift)
+    const liftM = (lift * SHADE_LIFT_CM) / Math.max(1e-3, S)
+    if (this.shadeMesh) this.shadeMesh.update(liftM)
     if (this.shadeMat) tint(this.shadeMat, color, shade * SHADE_GAIN)
+    const bulbW = M.multiplyPoint(new vec3(0, G.bulbCenterY, 0))
+    const point = led * (1 + 0.5 * lift)
     if (this.bloom && this.bloomMat) {
-      const c = M.multiplyPoint(new vec3(0, G.bulbCenterY, 0))
-      const toCam = cam.sub(c).normalize()
+      const toCam = cam.sub(bulbW).normalize()
       const tr = this.bloom.getTransform()
-      tr.setWorldPosition(c.add(toCam.uniformScale(G.bulbR * S + 0.25)))
+      tr.setWorldPosition(bulbW.add(toCam.uniformScale(G.bulbR * S + 0.25)))
       tr.setWorldRotation(faceToward(toCam))
       tr.setWorldScale(vec3.one().uniformScale(S * 2.2))
-      tint(this.bloomMat, color, led)
+      tint(this.bloomMat, color, point)
     }
-    const lift = clamp01(p.lift)
+    const raysExt = easeInOut(clamp01((lift - RAYS_FROM) / (1 - RAYS_FROM)))
+    const rays = raysExt * led
+    if (this.rays) {
+      if (rays > 1e-4) this.rays.update(bulbW, G.bulbR * S + 0.08, RAY_LEN, cam, raysExt, this.t)
+      this.rays.so.enabled = rays > 1e-4
+      tint(this.rays.mat, color, rays * RAYS_GAIN)
+    }
     const poolR = POOL_R + (POOL_R_BARE - POOL_R) * lift
     const poolEdge = 0.9 + (0.12 - 0.9) * lift
     const poolLevel = glowRamp * b * env * (1 + 0.8 * lift)
@@ -1060,7 +1267,16 @@ export class LampLight {
       photonsYellow: this.bubble ? this.bubble.yellowN : 0,
       coatingShare: share,
       shadeGlow: shade,
-      shadeProfile: {bulb: shadeGlowAt(G.bulbCenterY), top: shadeGlowAt(G.paperY1), bottom: shadeGlowAt(G.paperY0)},
+      shadeProfile: {
+        bulb: shadeGlowLifted(Math.max(G.paperY0, Math.min(G.paperY1, G.bulbCenterY - liftM)), liftM),
+        top: shadeGlowLifted(G.paperY1, liftM),
+        bottom: shadeGlowLifted(G.paperY0, liftM)
+      },
+      shadePeak: this.shadeMesh ? this.shadeMesh.peak() : 1,
+      lift,
+      rays,
+      raysExtent: raysExt,
+      bulbPoint: point,
       miniColor: tintOf(this.shadeMat),
       tablePool: {level: poolLevel, radius: poolR, edge: poolEdge},
       threadFront: Lt > 0 ? tf / Lt : 0,
@@ -1135,6 +1351,11 @@ export class LampLight {
       coatingShare: coatingShare(LAMP_K_DEFAULT),
       shadeGlow: 0,
       shadeProfile: {bulb: 1, top: shadeGlowAt(G.paperY1), bottom: shadeGlowAt(G.paperY0)},
+      shadePeak: 1,
+      lift: 0,
+      rays: 0,
+      raysExtent: 0,
+      bulbPoint: 0,
       miniColor: vec3.zero(),
       tablePool: {level: 0, radius: POOL_R, edge: 0.9},
       threadFront: 0,

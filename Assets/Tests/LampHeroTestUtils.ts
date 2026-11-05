@@ -87,7 +87,7 @@ export const LAMP_STAGE_OBJECTS = ["LampStage", "LampReplica", "LampTrail", "Lam
 
 /** Every object the light makes (none may be left once it is off). */
 export function lampLightObjects(): string[] {
-  return ["LampLight", "LampCurrent", "LampCurrentGlow", "LampShadeGlow", "LampBulbPoint", "LampTablePool", "LampBubble", "LampBubbleLeader", "LampThread", "LampThreadGlow", "LampRealGlow", "LampRealBloom", "LampFloorPool"]
+  return ["LampLight", "LampCurrent", "LampCurrentGlow", "LampShadeGlow", "LampBulbPoint", "LampRays", "LampTablePool", "LampBubble", "LampBubbleLeader", "LampThread", "LampThreadGlow", "LampRealGlow", "LampRealBloom", "LampFloorPool"]
 }
 
 /** Pinch the copy's foot switch. */
