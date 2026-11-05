@@ -900,11 +900,12 @@ export class CameraHero {
     this.captionHoldT = 0
     this.sharpK = 0
     this.head0 = this.ctx.camPos()
+    const real = this.realPose()
     const rb = this.ctx.realBounds()
-    this.realCenter = rb.center
     const facing = flatDir(this.ctx.realFacing)
-    this.rStart = quat.lookAt(facing, vec3.up())
-    this.pStart = this.realCenter.sub(this.rStart.multiplyVec3(BODY_CENTER))
+    this.realCenter = rb.center
+    this.rStart = real.rotation
+    this.pStart = real.position
     const bag = this.ctx.bag()
     this.pMeet = this.clearOfHead(vec3.lerp(this.realCenter, bag, 0.5).add(new vec3(0, 30, 0)), 40)
     this.surf = this.ctx.surface()
@@ -3780,6 +3781,12 @@ export class CameraHero {
     const toUser = flatDir(head.sub(c))
     const right = toUser.uniformScale(-1).cross(vec3.up()).normalize()
     return c.add(toUser.uniformScale(34)).add(right.uniformScale(42)).add(new vec3(0, -8, 0))
+  }
+
+  /** Where the copy's body sits when it lies exactly on the real camera (scale 1). */
+  realPose(): {position: vec3; rotation: quat} {
+    const rotation = quat.lookAt(flatDir(this.ctx.realFacing), vec3.up())
+    return {position: this.ctx.realBounds().center.sub(rotation.multiplyVec3(BODY_CENTER)), rotation}
   }
 
   /** World centre of the assembled body (where the thread and trail attach). */

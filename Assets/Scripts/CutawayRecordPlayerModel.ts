@@ -512,6 +512,8 @@ export interface RecordPlayerModelCtx {
   glowMat: Material
   /** Render layer for the model and its lights (the camera must render it). */
   layer: LayerSet
+  /** Only the deck's and the dust cover's geometry, for a halo: no materials, no lights, nothing else. */
+  shellOnly?: boolean
 }
 
 export interface RpPartInfo {
@@ -541,9 +543,14 @@ export class RecordPlayerModel {
 
   constructor(private ctx: RecordPlayerModelCtx) {
     this.layer = ctx.layer
+    this.root = this.node(ctx.parent, "RpModel", vec3.zero())
+    if (ctx.shellOnly) {
+      this.buildPlinth()
+      this.buildDustCover()
+      return
+    }
     this.glow = ctx.glowMat.clone()
     this.glow.mainPass.twoSided = true
-    this.root = this.node(ctx.parent, "RpModel", vec3.zero())
     this.buildLightRig()
     this.buildPlinth()
     this.buildDustCover()
@@ -657,8 +664,10 @@ export class RecordPlayerModel {
     const so = this.node(part, part.name + suffix, vec3.zero())
     const rmv = so.createComponent("Component.RenderMeshVisual") as RenderMeshVisual
     rmv.mesh = k.build()
-    rmv.mainMaterial = f === "glow" ? this.glow : this.mat(f)
-    rmv.setRenderOrder(order)
+    if (!this.ctx.shellOnly) {
+      rmv.mainMaterial = f === "glow" ? this.glow : this.mat(f)
+      rmv.setRenderOrder(order)
+    }
     let interior = false
     let p: SceneObject | null = part
     while (p) {

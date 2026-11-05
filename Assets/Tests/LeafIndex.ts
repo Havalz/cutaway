@@ -48,6 +48,8 @@ import {U2SlidersScenario} from "./U2SlidersScenario"
 import {U3CaptionScenario} from "./U3CaptionScenario"
 import {U3StatesScenario} from "./U3StatesScenario"
 import {U4RailInViewScenario} from "./U4RailInViewScenario"
+import {U5HalosScenario} from "./U5HalosScenario"
+import {HelperUiCaptureScenario} from "./HelperUiCaptureScenario"
 
 @component
 export class LeafIndex extends BaseScriptComponent {
@@ -100,6 +102,8 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "u3-ui-states", typename: U3StatesScenario.getTypeName()},
     {id: "u3-ui-caption", typename: U3CaptionScenario.getTypeName()},
     {id: "u4-rail-in-view", typename: U4RailInViewScenario.getTypeName()},
+    {id: "u5-halos", typename: U5HalosScenario.getTypeName()},
+    {id: "helper-ui-capture", typename: HelperUiCaptureScenario.getTypeName(), parameters: {beat: "halo", station: "recordPlayer", extraMs: ""}},
     {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer", step: "", untilPhase: "", extraMs: "", layout: ""}}
   ]
 }

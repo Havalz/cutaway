@@ -29,13 +29,10 @@
   PackagePolicy: CanBeUnpacked
   ScriptInputsHidden:
     apartLabel: false
-    designDistance: false
     focusLabel: false
     glowMaterial: false
     photoLabel: false
     putBackLabel: false
-    rowHeight: false
-    sliderWidth: false
   ScriptTypesHidden:
     {}
   ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
@@ -46,9 +43,6 @@
     []
   DefaultScriptInputs:
     - glowMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
-      sliderWidth: !<float> 16.000000
-      rowHeight: 3.200000
-      designDistance: !<float> 110.000000
       apartLabel: Take apart
       focusLabel: Focus
       putBackLabel: Put it back
@@ -59,12 +53,7 @@
   InputLines:
     - '// @ui {"widget":"label", "label":"Cutaway — camera hero control rail (Take apart / Focus / Take a photo / Put it back)"}'
     - '// @ui {"widget":"separator"}'
-    - '// @ui {"widget":"group_start", "label":"Style (matches the chips)"}'
     - '// @input Asset.Material glowMaterial {"hint":"Additive glow material for strokes (the one the chips use)"}'
-    - '// @input float sliderWidth = 16 {"hint":"Slider track width at the design scale (cm)", "widget":"slider", "min":10, "max":24, "step":0.5}'
-    - '// @input float rowHeight = 3.2 {"hint":"Row height at the design scale (cm): slider knob and pill height", "widget":"slider", "min":2.4, "max":5, "step":0.1}'
-    - '// @input float designDistance = 110 {"hint":"Distance (cm) at which the rail is shown 1:1, as for the chips", "widget":"slider", "min":60, "max":200, "step":5}'
-    - '// @ui {"widget":"group_end"}'
     - '// @ui {"widget":"group_start", "label":"Labels"}'
     - '// @input string apartLabel = "Take apart" {"hint":"Label above the take-apart slider"}'
     - '// @input string focusLabel = "Focus" {"hint":"Label above the focus slider"}'

@@ -41,6 +41,7 @@
     gazeEnterDeg: false
     gazeExitDeg: false
     glowMaterial: false
+    haloMaterial: false
     heroBayonetAudio: false
     heroFlightAudio: false
     heroLandAudio: false
@@ -109,6 +110,7 @@
       tableTopHeight: -144.399994
       tableRadius: !<float> 45.000000
       lensBagMarker: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      haloMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
       heroUI: !<MappingBased.AssignableType_6> 00000000-0000-0000-0000-000000000000
       replicaBodyMesh: !<reference.RenderMesh> 00000000-0000-0000-0000-000000000000
       replicaLensMesh: !<reference.RenderMesh> 00000000-0000-0000-0000-000000000000
@@ -174,6 +176,7 @@
     - "// @input float tableRadius = 45 {\"hint\":\"Fallback table top: radius in cm, centred on the table marker (the oval top's inscribed circle: 45)\"}"
     - "// @input SceneObject lensBagMarker {\"hint\":\"Camera hero stage: the lens inside its bag next to the camera on the console. The replica's lens rises out of here\"}"
     - '// @ui {"widget":"group_end"}'
+    - "// @input Asset.Material haloMaterial {\"hint\":\"The halo's fresnel-rim material (Materials/CutawayHalo)\"}"
     - '// @ui {"widget":"group_start", "label":"Camera hero stage (Bring it closer)"}'
     - '// @input AssignableType_6 heroUI {"hint":"Control rail beside the replica (Take apart / Focus / Take a photo / Put it back)"}'
     - '// @input Asset.RenderMesh replicaBodyMesh {"hint":"Replica body mesh (Models/CameraReplica: Body), pivot at the lens mount, 14 cm wide at scale 1"}'

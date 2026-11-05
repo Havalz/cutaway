@@ -580,6 +580,8 @@ export interface LampModelCtx {
   steelMat?: Material | null
   /** Render layer for the model and its lights (the camera must render it). */
   layer: LayerSet
+  /** Only the base's, stem's and shade's geometry, for a halo: no materials, no lights, nothing else. */
+  shellOnly?: boolean
 }
 
 export interface LampPartInfo {
@@ -615,6 +617,12 @@ export class LampModel {
     this.layer = ctx.layer
     this.root = this.node(ctx.parent, "LampModel", vec3.zero())
     this.pivots["LampModel"] = vec3.zero()
+    if (ctx.shellOnly) {
+      this.buildBase()
+      this.buildStem()
+      this.buildShade()
+      return
+    }
     this.buildLightRig()
     this.buildBase()
     this.buildStem()
@@ -817,8 +825,10 @@ export class LampModel {
     const so = this.node(part, part.name + suffix, off)
     const rmv = so.createComponent("Component.RenderMeshVisual") as RenderMeshVisual
     rmv.mesh = k.build()
-    rmv.mainMaterial = this.mat(f)
-    rmv.setRenderOrder(order)
+    if (!this.ctx.shellOnly) {
+      rmv.mainMaterial = this.mat(f)
+      rmv.setRenderOrder(order)
+    }
     let interior = false
     let p: SceneObject | null = part
     while (p) {

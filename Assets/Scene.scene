@@ -683,9 +683,6 @@
   Enabled: true
   ScriptAsset: !<reference> 9a4d166a-cbf0-4bed-8784-2e18fbd3aeef
   ScriptInputsDefault:
-    sliderWidth: true
-    rowHeight: true
-    designDistance: true
     apartLabel: true
     focusLabel: true
     putBackLabel: true
@@ -695,9 +692,6 @@
   ScriptInputs:
     "":
       glowMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
-      sliderWidth: !<float> 16.000000
-      rowHeight: 3.200000
-      designDistance: !<float> 110.000000
       apartLabel: Take apart
       focusLabel: Focus
       putBackLabel: Put it back
@@ -3512,6 +3506,7 @@
       tableTopHeight: -144.399994
       tableRadius: !<float> 45.000000
       lensBagMarker: !<reference.SceneObject> b3398625-79cb-430b-863b-ddad67007e65
+      haloMaterial: !<reference.Material> 71414f14-4019-4c0e-bcec-2312e9851084
       heroUI: !<MappingBased.AssignableType_6> 1ffd1e08-12d1-4be1-a375-589fba7f0fe1
       replicaBodyMesh: !<reference.RenderMesh> 2508b8a9-5ac5-44fb-813d-a015107373dd
       replicaLensMesh: !<reference.RenderMesh> 0ce30d7a-4844-4ab7-8ee3-ac17bb2eecd7

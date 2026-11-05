@@ -79,6 +79,11 @@ export function opaque(c: vec3): vec4 {
   return new vec4(c.x, c.y, c.z, 1)
 }
 
+/** Four numbers a shader takes as one parameter. */
+export function packed(a: number, b: number, c: number, d: number): vec4 {
+  return new vec4(a, b, c, d)
+}
+
 /** A vertex that takes all its colour from its material (see setTint). */
 export const VERTEX_WHITE = new vec4(1, 1, 1, 1)
 
@@ -153,6 +158,33 @@ export function ink(c: vec4, k: number): vec4 {
  */
 export function lit(c: vec4, level: number): vec4 {
   return ink(c, Math.sqrt(Math.max(0, level)))
+}
+
+/** The halo on a real object: landed light levels and timing (polish-pass.md §2). */
+export const HALO = {
+  /** Ink at its brightest, where the surface turns away from the eye. */
+  rim: 0.35,
+  /** While the object's stage 1 explanation plays. */
+  running: 0.15,
+  /** While its copy is on the table: the origin the thread arrives into. */
+  origin: 0.1,
+  /** The ring on the surface under it, when the rim is at full level. */
+  contact: 0.12,
+  fadeS: 0.25,
+  /** One halo clears this fast when another is waiting. */
+  switchS: 0.12,
+  glintS: 0.5,
+  glintLevel: 0.8,
+  /** Half the glint's height (cm). */
+  glintWidth: 1.2,
+  /** Higher keeps the light closer to the silhouette: flat faces seen at a grazing angle stay dark. */
+  power: 7,
+  /** The lamp is all curves, so its rim can run wider and still never wash a face. */
+  powerRound: 3.5,
+  /** How far normals lean out from the object's centre (none: a true fresnel on the real normals). */
+  lean: 0,
+  /** Above the surface, so the ring never fights it (cm). */
+  ringLift: 0.3
 }
 
 // ---- Typography: one typeface (UI Kit default), two sizes only. ----

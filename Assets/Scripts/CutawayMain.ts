@@ -7,13 +7,14 @@ import {easeIn} from "./CutawayTween"
 import {CameraHero, HeroSound} from "./CutawayHero"
 import {TableSurface, TableSurveyor} from "./CutawayHeroSurface"
 import {CutawayHeroUI} from "./CutawayHeroUI"
-import {ENERGY} from "./CutawayStyle"
+import {ENERGY, HALO} from "./CutawayStyle"
 import {RpTone} from "./CutawayRpTone"
 import {RecordPlayerHero, RpSound} from "./CutawayRpHero"
 import {RpRail, RpRailVisual} from "./CutawayRpRail"
 import {RP_GEOM} from "./CutawayRecordPlayerModel"
 import {LampHero, LampSound} from "./CutawayLampHero"
 import {LampRail, LampRailVisual} from "./CutawayLampRail"
+import {cameraShell, HaloInfo, HaloKey, Halos, lampShell, recordPlayerShell} from "./CutawayHalo"
 import {ROOM_LAMP} from "./CutawayLampModel"
 
 export type StationKey = "recordPlayer" | "camera" | "lamp"
@@ -120,6 +121,11 @@ export class CutawayMain extends BaseScriptComponent {
   @hint("Camera hero stage: the lens inside its bag next to the camera on the console. The replica's lens rises out of here")
   lensBagMarker: SceneObject
   @ui.group_end
+
+  @input
+  @allowUndefined
+  @hint("The halo's fresnel-rim material (Materials/CutawayHalo)")
+  haloMaterial: Material
 
   @ui.group_start("Camera hero stage (Bring it closer)")
   @input
@@ -323,6 +329,7 @@ export class CutawayMain extends BaseScriptComponent {
   private hero: CameraHero | null = null
   private surveyor: TableSurveyor | null = null
   private surface: TableSurface | null = null
+  private halos: Halos | null = null
   private rpHero: RecordPlayerHero | null = null
   private rpRail: RpRail | null = null
   private rpTone: RpTone | null = null
@@ -365,7 +372,49 @@ export class CutawayMain extends BaseScriptComponent {
     this.setupHero()
     this.setupRpHero()
     this.setupLampHero()
+    this.setupHalos()
     print("Cutaway ready: 3 stations")
+  }
+
+  // ---------------- Halos ----------------
+
+  private setupHalos(): void {
+    if (!this.haloMaterial || !this.glowMaterial) {
+      print("Cutaway: halos are not wired (halo material)")
+      return
+    }
+    this.halos = new Halos(this.sceneObject, this.haloMaterial, this.glowMaterial)
+    const holder = this.sceneObject
+    const layer = this.sceneObject.layer
+    if (this.hero) this.halos.add("camera", () => cameraShell(this.replicaBodyMesh, this.hero.realPose()))
+    if (this.rpHero) this.halos.add("recordPlayer", () => recordPlayerShell({parent: holder, shellMat: this.recordPlayerShellMaterial, glowMat: this.glowMaterial, layer, origin: this.rpRealOrigin()}))
+    if (this.lampHero) this.halos.add("lamp", () => lampShell({parent: holder, shellMat: this.lampShellMaterial, paperMat: this.lampPaperMaterial ?? null, steelMat: this.lampSteelMaterial ?? null, layer, origin: ROOM_LAMP.origin}))
+  }
+
+  /**
+   * One halo at a time. An explanation dims its object's; otherwise the gazed object's chip brings
+   * its halo up; otherwise an object whose copy is out keeps a faint one, as the origin.
+   */
+  private updateHalos(dt: number): void {
+    if (!this.halos) return
+    let key: HaloKey | null = null
+    let level = 0
+    if (this.running) {
+      key = this.stations[this.running.index].key
+      level = HALO.running
+    } else {
+      const out: HaloKey | null = this.hero && this.hero.isOut ? "camera" : this.rpHero && this.rpHero.isOut ? "recordPlayer" : this.lampHero && this.lampHero.isOut ? "lamp" : null
+      const gazed = this.stations.find((s) => !s.explained && (s.mode === "chip" || s.mode === "questions"))
+      if (gazed && gazed.key !== out) {
+        key = gazed.key
+        level = HALO.rim
+      } else if (out) {
+        key = out
+        level = HALO.origin
+      }
+    }
+    this.halos.want(key, level)
+    this.halos.update(dt)
   }
 
   // ---------------- Record player hero stage ----------------
@@ -911,6 +960,7 @@ export class CutawayMain extends BaseScriptComponent {
     if (this.lampHero) this.lampHero.update(dt)
     this.updateCloser()
     this.updateGaze()
+    this.updateHalos(dt)
   }
 
   /** The "Bring it closer" pills: under the camera / the record player once explained and idle. */
@@ -1075,6 +1125,10 @@ export class CutawayMain extends BaseScriptComponent {
   /** Test hook: true freezes the hero stage's timeline (for screenshots of one step). */
   setHoldHero(v: boolean): void {
     if (this.hero) this.hero.hold = v
+  }
+
+  getHaloInfo(): HaloInfo | null {
+    return this.halos ? this.halos.info() : null
   }
 
   getHeroRail(): CutawayHeroUI | null {
