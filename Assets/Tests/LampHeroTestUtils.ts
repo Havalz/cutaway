@@ -83,7 +83,7 @@ export async function waitLampHome(main: CutawayMain): Promise<void> {
 }
 
 /** Every object the lamp stage makes (none may be left once it is gone). */
-export const LAMP_STAGE_OBJECTS = ["LampStage", "LampReplica", "LampTrail", "LampGrab", "LampTurnGrab", "LampSwitchGrab", "LampContactGlow", "LampHoverDisc", ...lampLightObjects()]
+export const LAMP_STAGE_OBJECTS = ["LampStage", "LampReplica", "LampTrail", "LampGrab", "LampTurnGrab", "LampSwitchGrab", "LampContactGlow", "LampHoverDisc", "LampDriverWave", "LampDriverFlat", ...lampLightObjects()]
 
 /** Every object the light makes (none may be left once it is off). */
 export function lampLightObjects(): string[] {

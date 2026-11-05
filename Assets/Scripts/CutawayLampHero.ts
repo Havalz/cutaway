@@ -20,6 +20,7 @@ import {Interactable} from "SpectaclesInteractionKit.lspkg/Components/Interactio
 import {setFade, spawnMesh, TrailRibbon} from "./CutawayGeometry"
 import {TableSurface} from "./CutawayHeroSurface"
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
+import {LampApart, LampApartInfo} from "./CutawayLampApart"
 import {boxCorners, hull2, polyGap, toView, viewFrame} from "./CutawayLayout"
 import {kelvinToWarmth, LAMP_K_DEFAULT, LampLight, LampLightInfo, LampLightTimes, RAYS_FROM, SHADE_LIFT_CM, warmthToKelvin} from "./CutawayLampLight"
 import {LAMP_GEOM, LampModel} from "./CutawayLampModel"
@@ -122,7 +123,8 @@ export const LAMP_CAPTIONS = {
   chip: "The chip glows blue. A coating turns it white.",
   glow: "The paper scatters it into a soft glow.",
   harsh: "Without the paper, all the light comes from one tiny point. That's harsh light.",
-  warm: "More coating, warmer light."
+  warm: "More coating, warmer light.",
+  driver: "The driver turns wall power into steady current."
 }
 /**
  * Half the width of the widest caption, in caption design units: centred text runs about 0.34
@@ -284,6 +286,14 @@ export class LampHero {
   private pendingLight = false
   private captionHoldUntil = -1
   private warmCaptionDone = false
+  /** The take-apart (§5), the cord's rest place, and whether the cord stays on the table while the copy is up (hover). */
+  private apart: LampApart | null = null
+  private cordRest: vec3 | null = null
+  private cordDown = false
+  /** How far the copy is above its rest on the table while the cord stays down (world cm). */
+  private cordDrop = 0
+  /** The driver's caption is up (apart, live, lit). */
+  private driverCap = false
 
   constructor(private ctx: LampContext) {
     ctx.rail.onChange = (k, v) => this.onSlider(k, v)
@@ -352,6 +362,8 @@ export class LampHero {
     if (this.grab && this.grab.kind === "lift") this.lowerShade()
     this.grab = null
     this.pose = "lift"
+    if (this.apart) this.apart.hideLabels()
+    this.driverCap = false
     this.retFrom = {rot: this.replica.getTransform().getWorldRotation(), h: this.h}
     this.state = "returning"
     this.t = 0
@@ -386,6 +398,12 @@ export class LampHero {
     this.pendingLight = false
     this.captionHoldUntil = -1
     this.warmCaptionDone = false
+    if (this.apart) this.apart.hideLabels()
+    this.apart = null
+    this.cordRest = null
+    this.cordDown = false
+    this.cordDrop = 0
+    this.driverCap = false
     this.sEff = 0
     this.retWaiting = false
     this.railSide = 1
@@ -528,8 +546,19 @@ export class LampHero {
     return {lift: this.shadeLift, held: !!this.grab && this.grab.kind === "lift", settling: !!this.settle, releasedAt: this.shadeReleasedAt}
   }
 
+  /** The take-apart's state (null before the copy is built). */
+  getApart(): LampApartInfo | null {
+    return this.apart && this.state !== "none" ? this.apart.getInfo() : null
+  }
+
+  /** How far the copy is above its rest with the cord left on the table (world cm). */
+  getCordDrop(): number {
+    return this.cordDrop
+  }
+
   /** The colour temperature the Warmth slider asks for (K). */
   getKelvin(): number {
+
     return warmthToKelvin(this.ctx.rail.getValue("warmth"))
   }
 
@@ -572,6 +601,26 @@ export class LampHero {
     this.replica = this.model.root
     this.replica.name = "LampReplica"
     if (!this.foot0) this.foot0 = {pts: this.model.floorOutline(), center: vec2.zero()}
+    this.cordRest = this.model.parts["LampCord"].getTransform().getLocalPosition()
+    // Built while the copy is still at the origin, unrotated, at scale 1 (it records every part's rest).
+    this.apart = new LampApart(this.model, {
+      labels: this.ctx.labels,
+      parent: root,
+      glowMat: this.ctx.glowMat,
+      camPos: () => this.ctx.camPos(),
+      stageCenter: () => this.stageCenter(),
+      // The rail as one outline (its labels, tracks, knobs and pills together): no part label slips
+      // into the gaps between its rows.
+      railBoxes: () => {
+        const boxes = this.ctx.rail.isVisible() ? this.ctx.rail.getBoxes() : []
+        return boxes.length ? [([] as vec3[]).concat(...boxes)] : []
+      },
+      groupSolid: (g) => this.groupSolid(g),
+      meshSolid: (rmv) => this.meshSolid(rmv),
+      driverSide: () => -this.railSide,
+      partSound: (p) => this.ctx.sound("part", p),
+      log: (p) => this.ctx.log(p)
+    })
     this.buildLooks()
     this.buildGlowAndDisc()
     this.buttonRest = this.model.parts["LampSwitchButton"].getTransform().getLocalPosition()
@@ -596,8 +645,9 @@ export class LampHero {
         if (this.state !== "landed") return
         this.lightCaption = stage === 1 ? LAMP_CAPTIONS.flow : stage === 2 ? LAMP_CAPTIONS.chip : LAMP_CAPTIONS.glow
         // While the shade is off the harsh-light caption stays (the light's own comes back with the
-        // shade), and the Warmth caption is held a moment before the story moves on.
-        if (this.harsh || this.t < this.captionHoldUntil) this.pendingLight = true
+        // shade), the driver's stays while it is apart, and the Warmth caption is held a moment
+        // before the story moves on.
+        if (this.harsh || this.driverCap || this.t < this.captionHoldUntil) this.pendingLight = true
         else this.showCaption(this.lightCaption)
       }
     })
@@ -608,6 +658,23 @@ export class LampHero {
     so.setParent(parent)
     so.getTransform().setLocalPosition(localPos)
     return so
+  }
+
+  /** A look group drawn solid (filled in and not faded). */
+  private groupSolid(g: string): boolean {
+    const gl = this.groupLook[g]
+    return this.shellFill * (gl ? gl.fill : 1) >= 0.95 && this.globalFade * (gl ? gl.fade : 1) >= 0.95
+  }
+
+  /** A mesh as the user sees it: solid (true), an outline or ghost (false), or not drawn (null). */
+  private meshSolid(rmv: RenderMeshVisual): boolean | null {
+    const l = this.lookByRmv.get(rmv)
+    if (!l || !rmv.getSceneObject().isEnabledInHierarchy) return null
+    const gl = this.groupLook[l.group]
+    const fill = this.shellFill * (gl ? gl.fill : 1)
+    const fade = this.globalFade * (gl ? gl.fade : 1)
+    if (fill >= 0.95 && fade >= 0.95) return true
+    return fade > 0.05 ? false : null
   }
 
   private glowMat(): Material {
@@ -846,6 +913,9 @@ export class LampHero {
     this.restGap = Math.max(0, Math.min(0.2, gap))
     this.h = this.restGap
     this.pose = "rest"
+    // Standing again: the cord is back in its place on the copy (it lay on the table all along).
+    this.cordDown = false
+    this.updateCord()
     this.poseT = 0
     this.holdK = 0
     this.applyPose()
@@ -884,6 +954,8 @@ export class LampHero {
     this.pose = "rise"
     this.poseT = 0
     this.h0 = this.h
+    // The cord and the foot switch stay on the table while the copy hovers.
+    this.cordDown = true
     this.ctx.log("lamp:rise")
   }
 
@@ -952,6 +1024,38 @@ export class LampHero {
     this.updatePose(dt, this.sEff <= 0.001)
     this.updateButton(dt)
     this.updateShade(dt)
+    this.updateCord()
+    this.updateApart(dt, true)
+  }
+
+  /**
+   * The cord and switch stay on the table while the copy is up for the take-apart: the cord is
+   * lowered (in the copy's space) by however far the copy is above its rest; `k` < 1 lifts it back
+   * into place (put back).
+   */
+  private updateCord(k: number = 1): void {
+    if (!this.model || !this.cordRest) return
+    let down = 0
+    if (this.cordDown && this.surf) down = Math.max(0, this.replica.getTransform().getWorldPosition().y - (this.surf.height + this.restGap)) * clamp01(k)
+    this.cordDrop = down
+    this.model.parts["LampCord"].getTransform().setLocalPosition(this.cordRest.add(new vec3(0, -down / this.scale, 0)))
+  }
+
+  /** The parts, the driver's live detail and its caption (the lamp on while apart). */
+  private updateApart(dt: number, labels: boolean): void {
+    if (!this.apart) return
+    const lit = this.light && this.light.isOn ? this.light.getInfo().led : 0
+    this.apart.update(dt, this.sEff, lit, labels)
+    const want = labels && this.state === "landed" && this.apart.live && this.lightOn && lit > 0.05
+    if (want && !this.driverCap) {
+      this.driverCap = true
+      this.showCaption(LAMP_CAPTIONS.driver)
+      this.ctx.log("lamp:driverCaption")
+    } else if (!want && this.driverCap) {
+      this.driverCap = false
+      this.pendingLight = false
+      if (this.state === "landed") this.showCaption(this.lightOn ? (this.lightCaption ?? LAMP_CAPTIONS.glow) : LAMP_CAPTIONS.press)
+    }
   }
 
   /**
@@ -984,7 +1088,7 @@ export class LampHero {
       this.harsh = false
       this.pendingLight = false
       if (on) this.showCaption(this.lightCaption ?? LAMP_CAPTIONS.glow)
-    } else if (this.pendingLight && on && !this.harsh && this.t >= this.captionHoldUntil) {
+    } else if (this.pendingLight && on && !this.harsh && !this.driverCap && this.t >= this.captionHoldUntil) {
       this.pendingLight = false
       if (this.lightCaption) this.showCaption(this.lightCaption)
     }
@@ -1008,9 +1112,13 @@ export class LampHero {
     }
   }
 
-  /** What the light follows each frame: the rail's Brightness and Warmth, the shade's lift (0..1). */
-  private lightParams(): {brightness: number; kelvin: number; lift: number} {
-    return {brightness: this.ctx.rail.getValue("brightness"), kelvin: this.getKelvin(), lift: this.shadeLift / SHADE_LIFT_CM}
+  /**
+   * What the light follows each frame: the rail's Brightness and Warmth, the shade's lift (0..1), and
+   * how far the copy is from standing whole on the table (the take-apart, or up off the table with
+   * the cord left down: the light on the cord and the shade's fade over its first 4 cm).
+   */
+  private lightParams(): {brightness: number; kelvin: number; lift: number; apart: number} {
+    return {brightness: this.ctx.rail.getValue("brightness"), kelvin: this.getKelvin(), lift: this.shadeLift / SHADE_LIFT_CM, apart: Math.max(this.sEff, 0.15 * clamp01(this.cordDrop / 4))}
   }
 
   /** The lit bulb: its LED chips and frosted envelope glow in the light's colour. */
@@ -1096,14 +1204,17 @@ export class LampHero {
     const on = this.canGrab()
     this.grabs.slide.enabled = on
     this.grabs.turn.enabled = on
-    this.grabs.sw.enabled = this.state === "landed" && this.pose === "rest" && !this.grab
+    // The foot switch works standing and while the copy hovers (the switch stays on the table).
+    const p = this.pose
+    this.grabs.sw.enabled = this.state === "landed" && (p === "rest" || p === "rise" || p === "hover" || p === "descend") && !this.grab
     const tr = this.replica.getTransform()
     const m = tr.getWorldTransform()
     const q = quat.lookAt(vec3.up(), flatDir(tr.getWorldRotation().multiplyVec3(vec3.forward())))
-    if (this.grabs.sw.enabled) {
+    if (this.grabs.sw.enabled && this.model) {
+      const swt = this.model.parts["LampSwitch"].getTransform()
       const st = this.grabs.sw.getTransform()
-      st.setWorldPosition(m.multiplyPoint(G.switchAt.add(new vec3(0, G.switchHalf.y, 0))))
-      st.setWorldRotation(quat.lookAt(vec3.up(), flatDir(tr.getWorldRotation().multiplyVec3(new vec3(-Math.sin(G.switchDeg * DEG), 0, Math.cos(G.switchDeg * DEG))))))
+      st.setWorldPosition(swt.getWorldTransform().multiplyPoint(new vec3(0, G.switchHalf.y, 0)))
+      st.setWorldRotation(quat.lookAt(vec3.up(), flatDir(swt.getWorldRotation().multiplyVec3(vec3.forward()))))
     }
     if (this.grab || !on) return
     const gt = this.grabs.slide.getTransform()
@@ -1220,6 +1331,7 @@ export class LampHero {
       this.light.turnOff()
       this.pendingLight = false
       this.captionHoldUntil = -1
+      this.driverCap = false
       this.ctx.rail.setMode("rest")
       this.showCaption(LAMP_CAPTIONS.press)
       this.ctx.log("lamp:off")
@@ -1310,6 +1422,8 @@ export class LampHero {
       this.sEff = Math.max(0, this.sEff - 2 * APART_RATE * dt)
       this.updateButton(dt)
       this.updateShade(dt)
+      this.updateCord()
+      this.updateApart(dt, false)
       if (!this.readyToFly()) return
       this.retWaiting = false
       this.retFrom = {rot: this.replica.getTransform().getWorldRotation(), h: this.h}
@@ -1323,10 +1437,16 @@ export class LampHero {
       // Whole again: it lifts 3 cm off the table (0.25 s), then flies home.
       this.h = from.h + PUTBACK_LIFT_CM * easeOutCubic((t - RET_READY) / (RET_FLY0 - RET_READY))
       this.applyPose()
+      // The cord left on the table comes back up into its place as it lifts.
+      this.updateCord(1 - easeOutCubic(clamp01((t - RET_READY) / (RET_FLY0 - RET_READY))))
       this.retPos = tr.getWorldPosition()
       this.shellFill = 1
       this.shellRim = 0.3
     } else if (t < RET_FLY1) {
+      if (this.cordDown) {
+        this.cordDown = false
+        this.updateCord()
+      }
       const u = easeInOutCubic((t - RET_FLY0) / (RET_FLY1 - RET_FLY0))
       tr.setWorldPosition(bezier(this.retPos ?? this.pLand, this.ctrl, this.pMeet, u))
       tr.setWorldRotation(quat.slerp(from.rot, this.rStart, u))

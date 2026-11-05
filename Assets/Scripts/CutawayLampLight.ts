@@ -181,6 +181,8 @@ export interface LampLightParams {
   kelvin: number
   /** The shade's lift, 0 (seated) … 1 (25 cm up): step 4. */
   lift: number
+  /** The copy lifted off the table or taken apart (0 whole on the table … 1): the parts of the light that live on the whole lamp fade. */
+  apart: number
 }
 
 export interface LampLightCtx {
@@ -306,7 +308,7 @@ function attach(parent: SceneObject, name: string, mb: MeshBuilder, material: Ma
  * A ribbon of light through world points that turns its flat side to the eye at every point (so a
  * path that runs away from the viewer stays a line), with a width and a strength per point.
  */
-class PathRibbon {
+export class PathRibbon {
   readonly so: SceneObject
   readonly mat: Material
   private mb: MeshBuilder
@@ -1076,6 +1078,9 @@ export class LampLight {
     const b = clamp01(p.brightness)
     // Brightness 0 looks the same as off.
     const vis = easeInOut(b / 0.06)
+    // Lifted off the table or taken apart: the current on the cord, the shade's glow, the pool, the
+    // rays and the bubble belong to the whole lamp standing there, so they fade (the bulb stays lit).
+    const whole = 1 - easeInOut(clamp01(p.apart / 0.15))
     const color = kelvinToRgb(p.kelvin)
     const share = coatingShare(p.kelvin)
     const cam = this.ctx.camPos()
@@ -1130,7 +1135,7 @@ export class LampLight {
       if (s < 0 || s > front) continue
       packets.push(this.pointAt(pts, s / S))
     }
-    const pulseLevel = env * vis
+    const pulseLevel = env * vis * whole
     if (this.core && this.halo) {
       this.core.update(pts, cam, width, alpha)
       this.halo.update(pts, cam, wHalo, alpha)
@@ -1149,19 +1154,22 @@ export class LampLight {
     const lift = clamp01(p.lift)
     const liftM = (lift * SHADE_LIFT_CM) / Math.max(1e-3, S)
     if (this.shadeMesh) this.shadeMesh.update(liftM)
-    if (this.shadeMat) tint(this.shadeMat, color, shade * SHADE_GAIN)
-    const bulbW = M.multiplyPoint(new vec3(0, G.bulbCenterY, 0))
+    if (this.shadeMat) tint(this.shadeMat, color, shade * SHADE_GAIN * whole)
+    // The bulb's centre (the envelope's, where its parts really are) and, taken apart, the bare chips.
+    const model = this.ctx.model
+    const glassW = model.parts["LampBulbGlass"].getTransform().getWorldTransform().multiplyPoint(new vec3(0, G.bulbCenterY - model.pivot("LampBulbGlass").y, 0))
+    const bulbW = vec3.lerp(glassW, model.ledCenter(), 1 - whole)
     const point = led * (1 + 0.5 * lift)
     if (this.bloom && this.bloomMat) {
       const toCam = cam.sub(bulbW).normalize()
       const tr = this.bloom.getTransform()
-      tr.setWorldPosition(bulbW.add(toCam.uniformScale(G.bulbR * S + 0.25)))
+      tr.setWorldPosition(bulbW.add(toCam.uniformScale((G.bulbR * whole + 0.3 * (1 - whole)) * S + 0.25)))
       tr.setWorldRotation(faceToward(toCam))
       tr.setWorldScale(vec3.one().uniformScale(S * 2.2))
       tint(this.bloomMat, color, point)
     }
     const raysExt = easeInOut(clamp01((lift - RAYS_FROM) / (1 - RAYS_FROM)))
-    const rays = raysExt * led
+    const rays = raysExt * led * whole
     if (this.rays) {
       if (rays > 1e-4) this.rays.update(bulbW, G.bulbR * S + 0.08, RAY_LEN, cam, raysExt, this.t)
       this.rays.so.enabled = rays > 1e-4
@@ -1169,7 +1177,7 @@ export class LampLight {
     }
     const poolR = POOL_R + (POOL_R_BARE - POOL_R) * lift
     const poolEdge = 0.9 + (0.12 - 0.9) * lift
-    const poolLevel = glowRamp * b * env * (1 + 0.8 * lift)
+    const poolLevel = glowRamp * b * env * (1 + 0.8 * lift) * whole
     if (this.tablePool) {
       const s = this.ctx.surface()
       const f = this.ctx.foot()
@@ -1182,7 +1190,7 @@ export class LampLight {
     if (lit) {
       open = easeOutCubic((this.t - this.tBulb) / BUBBLE_OPEN)
       if (this.phase === "fading") open *= 1 - easeIn((this.t - this.tFade) / BUBBLE_CLOSE)
-      open *= vis
+      open *= vis * whole
       if (!this.bubble && this.root) {
         this.bubble = new LedBubble(this.root, this.ctx.glowMat, this.ctx.model.ledCenter(), cam)
         this.ctx.log("lamp:bubble")
@@ -1294,7 +1302,7 @@ export class LampLight {
       coatingShare: share,
       coatColor: this.bubble ? this.bubble.coatColor : coatingColor(p.kelvin),
       bubbleColor: this.bubble ? this.bubble.whiteColor() : vec3.zero(),
-      shadeGlow: shade,
+      shadeGlow: shade * whole,
       shadeProfile: {
         bulb: shadeGlowLifted(Math.max(G.paperY0, Math.min(G.paperY1, G.bulbCenterY - liftM)), liftM),
         top: shadeGlowLifted(G.paperY1, liftM),
@@ -1336,7 +1344,9 @@ export class LampLight {
    * base, then up its stem into the shade to its bulb (the paper hides the last part).
    */
   private buildThreadPath(M: mat4, cam: vec3): void {
-    const start = M.multiplyPoint(G.plugAt.add(new vec3(0, 1.4, 0)))
+    void M
+    // From the plug where it really is (it stays on the table while the copy hovers).
+    const start = this.ctx.model.parts["LampPlug"].getTransform().getWorldTransform().multiplyPoint(new vec3(0, 1.4, 0))
     const o = this.ctx.realOrigin()
     const bulb = this.ctx.realBulb()
     const flat = new vec3(cam.x - o.x, 0, cam.z - o.z)

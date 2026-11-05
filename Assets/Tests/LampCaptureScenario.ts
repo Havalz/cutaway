@@ -7,7 +7,8 @@ import {getLamp, lampCleanStart, landLamp, pressLampSwitch} from "./LampHeroTest
 /**
  * Helper (not a test): drive the lamp stage to one beat and freeze it there for the _review/lamp_*
  * captures. Beats: rest; on (the real lamp lit too, 1.2 s after it came on); bubble (the bubble open,
- * 1.4 s after the bulb lit); shade_off (the shade lifted 25 cm, held in the hand). The stage stays frozen (setHoldLamp) until the
+ * 1.4 s after the bulb lit); shade_off (the shade lifted 25 cm, held in the hand); hover (up, not yet
+ * apart); apart (fully apart with the lamp on: the driver's live detail); apart_off (apart, lamp off). The stage stays frozen (setHoldLamp) until the
  * next scenario's lampCleanStart.
  */
 @component
@@ -43,6 +44,28 @@ export class LampCaptureScenario extends Scenario {
         main.setHoldLamp(true)
         print(`Cutaway lamp capture: beat ${beat} held`)
         return
+      }
+      case "hover":
+        // Up at the hover, the parts not yet apart.
+        await sleep(300)
+        main.getLampRail().setValue("apart", 0.002)
+        await waitForPhase(main, "lamp:hover", 3000)
+        await sleep(600)
+        break
+      case "apart":
+      case "apart_off": {
+        // Fully apart, its labels settled; "apart" with the lamp on (the driver's live detail).
+        await sleep(300)
+        const lamp = getLamp(main)
+        if (beat === "apart") {
+          await pressLampSwitch()
+          await waitForPhase(main, "lamp:scatter", 6000)
+        }
+        main.getLampRail().setValue("apart", 1)
+        await waitForPhase(main, "lamp:hover", 3000)
+        await waitUntil(() => lamp.getApart().live, 3000)
+        await sleep(beat === "apart" ? 1500 : 900)
+        break
       }
       case "bubble":
         await sleep(300)

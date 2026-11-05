@@ -319,7 +319,8 @@ function basis(ax: vec3): {u: vec3; v: vec3} {
  * Surface of revolution of `bands` around axis `ax` through `c`; `color` may vary per point and
  * angle; `uv` (UvKit only) maps each profile point and its turn round the axis to the texture.
  */
-function lathe(k: Kit, c: vec3, ax: vec3, bands: Bands, seg: number, color: vec4 | ((p: PP, a: number) => vec4), uv?: LatheUv): void {
+/** Turn bands round an axis; `arc` limits it to part of the turn (angles from basis(ax).u toward .v). The uv callback gets the share of the whole turn. */
+function lathe(k: Kit, c: vec3, ax: vec3, bands: Bands, seg: number, color: vec4 | ((p: PP, a: number) => vec4), uv?: LatheUv, arc: [number, number] = [0, TAU]): void {
   const {u, v} = basis(ax)
   const cols = seg + 1
   for (const band of bands) {
@@ -327,10 +328,10 @@ function lathe(k: Kit, c: vec3, ax: vec3, bands: Bands, seg: number, color: vec4
     for (const p of band) {
       const nl = Math.hypot(p.nr, p.ny) || 1
       for (let s = 0; s <= seg; s++) {
-        const a = (s / seg) * TAU
+        const a = arc[0] + (s / seg) * (arc[1] - arc[0])
         const d = u.uniformScale(Math.cos(a)).add(v.uniformScale(Math.sin(a)))
         const cc = typeof color === "function" ? color(p, a) : color
-        k.vert(c.add(ax.uniformScale(p.y)).add(d.uniformScale(p.r)), d.uniformScale(p.nr / nl).add(ax.uniformScale(p.ny / nl)), cc, uv ? uv(p, s / seg) : undefined)
+        k.vert(c.add(ax.uniformScale(p.y)).add(d.uniformScale(p.r)), d.uniformScale(p.nr / nl).add(ax.uniformScale(p.ny / nl)), cc, uv ? uv(p, a / TAU) : undefined)
       }
     }
     for (let j = 0; j < band.length - 1; j++)
@@ -602,6 +603,8 @@ export class LampModel {
   /** Each part's pivot in model space (at rest). */
   private pivots: Record<string, vec3> = {}
   private interiorSos: SceneObject[] = []
+  /** The paper's two halves (holders under LampPaper) and the way each opens (model space, flat). */
+  private halves: {so: SceneObject; dir: vec3}[] = []
   private meshes: {rmv: RenderMeshVisual; part: string; interior: boolean; tris: number; lo: vec3; hi: vec3}[] = []
   private mats: Partial<Record<LampFinish, Material>> = {}
   private layer: LayerSet
@@ -718,6 +721,11 @@ export class LampModel {
     box(PLUG_AT, PLUG_DEG, 2.6, 1.9)
     for (const q of this.cordRuns.toBase.concat(this.cordRuns.toPlug)) pts.push(new vec2(q.x, q.z))
     return pts
+  }
+
+  /** The paper's two halves: their holders (under LampPaper, at its origin) and the way each opens (model space). */
+  paperHalves(): {so: SceneObject; dir: vec3}[] {
+    return this.halves.slice()
   }
 
   /** A part's pivot in model space at rest. */
@@ -952,14 +960,22 @@ export class LampModel {
       }
       return out
     }
-    const pk = new UvKit()
-    lathe(pk, vec3.zero(), vec3.up(), [profile(0, false)], 48, this.vcol("paper"), (p, u) => new vec2(u, paperV(p.y)))
-    this.mesh(P, "Outer", pk, "paper", ORDER.paper)
-
-    // Inside of the paper (seen through the openings and from below once lifted).
-    const ik = new UvKit()
-    lathe(ik, vec3.zero(), vec3.up(), [profile(-0.05, true)], 32, this.vcol("paperIn"), (p, u) => new vec2(u, paperV(p.y)))
-    this.mesh(P, "Inner", ik, "paperIn", ORDER.paperIn)
+    // Built as two halves that meet exactly (so the shade can open in the take-apart): each half
+    // holds its outside and its inside (seen through the openings and from below once lifted).
+    const {v: half} = basis(vec3.up())
+    for (const [h, a0, a1, dir] of [
+      ["A", 0, Math.PI, half],
+      ["B", Math.PI, TAU, half.uniformScale(-1)]
+    ] as [string, number, number, vec3][]) {
+      const holder = this.node(P, "LampPaperHalf" + h, vec3.zero())
+      const pk = new UvKit()
+      lathe(pk, vec3.zero(), vec3.up(), [profile(0, false)], 24, this.vcol("paper"), (p, u) => new vec2(u, paperV(p.y)), [a0, a1])
+      this.mesh(P, "Outer" + h, pk, "paper", ORDER.paper).setParent(holder)
+      const ik = new UvKit()
+      lathe(ik, vec3.zero(), vec3.up(), [profile(-0.05, true)], 16, this.vcol("paperIn"), (p, u) => new vec2(u, paperV(p.y)), [a0, a1])
+      this.mesh(P, "Inner" + h, ik, "paperIn", ORDER.paperIn).setParent(holder)
+      this.halves.push({so: holder, dir})
+    }
 
     // Steel rings: a rolled band round each end of the paper, slightly proud of it, brushed round.
     const ring = (name: string, y0: number) => {

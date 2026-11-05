@@ -6,6 +6,7 @@ import {L2LampMoveTurnScenario} from "./L2LampMoveTurnScenario"
 import {L3LampSwitchScenario} from "./L3LampSwitchScenario"
 import {L4LampShadeScenario} from "./L4LampShadeScenario"
 import {L5LampSlidersScenario} from "./L5LampSlidersScenario"
+import {L6LampApartScenario} from "./L6LampApartScenario"
 import {LampCaptureScenario} from "./LampCaptureScenario"
 import {C2RecordPlayerScenario} from "./C2RecordPlayerScenario"
 import {C3CameraScenario} from "./C3CameraScenario"
@@ -84,6 +85,7 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "l3-lamp-switch", typename: L3LampSwitchScenario.getTypeName()},
     {id: "l4-lamp-shade", typename: L4LampShadeScenario.getTypeName()},
     {id: "l5-lamp-sliders", typename: L5LampSlidersScenario.getTypeName()},
+    {id: "l6-lamp-apart", typename: L6LampApartScenario.getTypeName()},
     {id: "helper-lamp-capture", typename: LampCaptureScenario.getTypeName(), parameters: {beat: "rest", extraMs: ""}},
     {id: "helper-lamp-model", typename: LampModelScenario.getTypeName(), parameters: {dx: "", dz: "", interior: "", hide: "", at: "", scale: "", yaw: ""}},
     {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer", step: "", untilPhase: "", extraMs: "", layout: ""}}
