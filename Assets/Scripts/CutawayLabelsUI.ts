@@ -8,10 +8,8 @@ import {clamp01, easeOutCubic, Fader, faceToward} from "./CutawayTween"
 const AVG_ADVANCE = 0.38
 /** Leaves room in the five-a-frame limit for anything else that needs a bounding box. */
 const CHARS_PER_FRAME = 3
-/** What every character is measured between. */
-const PAIR = "nn"
-/** An apostrophe sits tighter between two n's than inside a word, so these are measured whole. */
-const WHOLE_WORDS = ["You've", "That's"]
+/** What every character is measured between: straight-sided, so no letter kerns against it (T and Y do against n). */
+const PAIR = "HH"
 
 interface Label {
   so: SceneObject
@@ -63,7 +61,6 @@ export class CutawayLabelsUI extends BaseScriptComponent {
   private labels = new Map<string, Label>()
   /** Character widths at design scale (cm). */
   private advances = new Map<string, number>()
-  private wholeWords = new Map<string, number>()
   /** Characters still to measure, last first: the pair they are measured against goes first. */
   private pendingChars: string[] = [PAIR]
   private pairWidth = 0
@@ -76,7 +73,6 @@ export class CutawayLabelsUI extends BaseScriptComponent {
   onAwake(): void {
     this.sceneObject.createComponent("Component.Canvas")
     for (let c = 32; c <= 126; c++) this.pendingChars.unshift(String.fromCharCode(c))
-    WHOLE_WORDS.forEach((w) => this.pendingChars.unshift(w))
     this.createEvent("OnStartEvent").bind(() => {
       this.camTransform = WorldCameraFinderProvider.getInstance().getTransform()
     })
@@ -211,8 +207,6 @@ export class CutawayLabelsUI extends BaseScriptComponent {
    * frames (see measureChars); words are a plain sum of them, the type having no kerning to speak of.
    */
   measure(text: string): vec2 {
-    const whole = this.wholeWords.get(text)
-    if (whole !== undefined) return new vec2(whole, this.lineBox)
     let w = 0
     for (let i = 0; i < text.length; i++) w += this.advances.get(text[i]) ?? AVG_ADVANCE
     return new vec2(w, this.lineBox)
@@ -230,7 +224,7 @@ export class CutawayLabelsUI extends BaseScriptComponent {
       const c = this.pendingChars[this.pendingChars.length - 1]
       // A glyph's bounds are tight, so its advance is what it adds between two letters. That also
       // covers the space, which has no glyph at all.
-      this.ruler.text.text = c === PAIR ? PAIR : "n" + c + "n"
+      this.ruler.text.text = c === PAIR ? PAIR : PAIR[0] + c + PAIR[1]
       let r: Rect
       try {
         r = this.ruler.text.getBoundingBox()
@@ -241,7 +235,6 @@ export class CutawayLabelsUI extends BaseScriptComponent {
       if (r.right <= r.left) continue
       this.lineBox = r.top - r.bottom
       if (c === PAIR) this.pairWidth = r.right - r.left
-      else if (c.length > 1) this.wholeWords.set(c, r.right - r.left - this.pairWidth)
       else this.advances.set(c, r.right - r.left - this.pairWidth)
     }
   }
