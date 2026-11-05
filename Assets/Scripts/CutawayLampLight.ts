@@ -7,8 +7,9 @@
  *   2. The bulb lights: the LED chips and the frosted envelope glow, and a magnify bubble opens at
  *      the chips. In it blue light leaves a tiny chip; inside the phosphor coating over it part of the
  *      blue turns yellow; together they come out white (the lamp's colour).
- *   3. The shade glows from within: brightest level with the bulb, fading with height up the paper
- *      (light from a point falls off with distance), and a soft pool of light lies on the table.
+ *   3. The shade glows from within: brightest at the paper's widest middle, spreading smoothly and
+ *      wide up and down it (the paper scatters the light through the whole shade), softer at the top,
+ *      a little dimmer at the bottom, and a soft pool of light lies on the table.
  *   4. The real lamp: a thin cyan thread runs from the copy's plug across the room to the real lamp's
  *      base and up its stem; its shade fills with the same glow and a warm pool lies on the floor.
  * Off: the pulses stop, the bubble closes and everything fades over 0.4 s.
@@ -103,14 +104,19 @@ export function coatingColor(T: number): vec3 {
   return y.add(COAT_AMBER.sub(y).uniformScale(w))
 }
 
+/** The paper's widest row (model space; t = 0.51 in CutawayLampModel's SHADE_KNOTS): the glow's brightest row. */
+export const GLOW_CENTRE_Y = G.paperY0 + 0.51 * (G.paperY1 - G.paperY0)
+/** How far (model cm) the glow halves above and below its centre: about 0.64 at the top ring and 0.76 at the bottom ring. */
+const GLOW_SPREAD_UP = 90
+const GLOW_SPREAD_DOWN = 125
+
 /**
- * How brightly the paper glows at model height y, relative to the brightest (level with the bulb's
- * centre): light from the bulb falls off with distance, so the glow fades with height up the shade
- * (and over a shorter run down to the bottom ring). An inverse-square falloff, softened by the
- * paper's own scatter.
+ * How brightly the paper glows at model height y, relative to the brightest (its widest row): the
+ * paper scatters the bulb's light through the whole shade, so the glow spreads wide from there, softer
+ * up to the top and a little dimmer down to the bottom. Flat at the centre, so no crease shows there.
  */
 export function shadeGlowAt(y: number): number {
-  const d = (y - G.bulbCenterY) / (y >= G.bulbCenterY ? 30 : 16)
+  const d = (y - GLOW_CENTRE_Y) / (y >= GLOW_CENTRE_Y ? GLOW_SPREAD_UP : GLOW_SPREAD_DOWN)
   return 1 / (1 + d * d)
 }
 
@@ -121,8 +127,9 @@ export const RAYS_FROM = 0.6
 
 /**
  * The paper's glow at its own height y (model, seated) with the shade lifted liftM model cm: the
- * same falloff from the bulb, now further away; once the bulb is below the paper's bottom edge only
- * the light through the bottom opening reaches it (falling off with the gap).
+ * glow stays where it was while the paper rises through it, so its brightest row moves down the
+ * paper; once the bulb is below the paper's bottom edge only the light through the bottom opening
+ * reaches it (falling off with the gap).
  */
 export function shadeGlowLifted(y: number, liftM: number): number {
   const gap = Math.max(0, G.paperY0 + liftM - G.bulbCenterY) / 12
@@ -155,8 +162,9 @@ const FLOOR_POOL_R = 115
  * Glow strengths: the light each adds at full Brightness (linear; tint() and the vertex gradients
  * take the square root, since the glow material blends Add with source alpha so both land squared).
  */
-const SHADE_GAIN = 0.42
-const REAL_GAIN = 0.42
+// Spread over the whole shade the same total light needs a lower peak (0.42 when it sat low): both set from before/after captures of the added light.
+const SHADE_GAIN = 0.16
+const REAL_GAIN = 0.175
 const POOL_GAIN = 0.4
 const FLOOR_GAIN = 0.45
 const BLOOM_GAIN = 0.05
@@ -237,9 +245,9 @@ export interface LampLightInfo {
   coatingShare: number
   coatColor: vec3
   bubbleColor: vec3
-  /** The shade's glow (× Brightness) and its profile: level with the bulb, at the top, at the bottom ring. */
+  /** The shade's glow (× Brightness) and its profile: at its brightest row, level with the bulb, at the top, at the bottom ring. */
   shadeGlow: number
-  shadeProfile: {bulb: number; top: number; bottom: number}
+  shadeProfile: {mid: number; bulb: number; top: number; bottom: number}
   /** The paper's brightest row now (1 seated; falls as the shade lifts away from the bulb). */
   shadePeak: number
   /** The shade's lift (0 seated … 1 at 25 cm), the bare bulb's rays (level × Brightness, 0 up to RAYS_FROM) and how far out they reach (0..1). */
@@ -499,6 +507,11 @@ class CometCloud {
   }
 }
 
+/** A model height held on the paper's span. */
+function paperRow(y: number): number {
+  return Math.max(G.paperY0, Math.min(G.paperY1, y))
+}
+
 /**
  * The copy's paper glow: a lathe just outside the paper (`pad` cm, model space), whose strength per
  * row follows shadeGlowLifted for the shade's current lift (recomputed only when the lift changes).
@@ -567,10 +580,10 @@ class ShadeGlowMesh {
     this.mb.updateMesh()
   }
 
-  /** The paper's brightest point now: level with the bulb, or its bottom edge once the bulb is below it (1 seated). */
+  /** The paper's brightest point now: its widest row seated, moving down the paper as it lifts (1 seated). */
   peak(): number {
     const liftM = Math.max(0, this.last)
-    return shadeGlowLifted(Math.max(G.paperY0, Math.min(G.paperY1, G.bulbCenterY - liftM)), liftM)
+    return shadeGlowLifted(paperRow(GLOW_CENTRE_Y - liftM), liftM)
   }
 }
 
@@ -1264,7 +1277,7 @@ export class LampLight {
     if (this.realMat) tint(this.realMat, color, real * REAL_GAIN)
     if (this.realBloom && this.realBloomMat) {
       const o = this.ctx.realOrigin()
-      const c = o.add(new vec3(0, G.bulbCenterY + 30, 0))
+      const c = o.add(new vec3(0, GLOW_CENTRE_Y, 0))
       const flat = new vec3(cam.x - c.x, 0, cam.z - c.z)
       const toCam = flat.length > 1e-4 ? flat.normalize() : vec3.forward()
       const tr = this.realBloom.getTransform()
@@ -1304,7 +1317,8 @@ export class LampLight {
       bubbleColor: this.bubble ? this.bubble.whiteColor() : vec3.zero(),
       shadeGlow: shade * whole,
       shadeProfile: {
-        bulb: shadeGlowLifted(Math.max(G.paperY0, Math.min(G.paperY1, G.bulbCenterY - liftM)), liftM),
+        mid: shadeGlowLifted(paperRow(GLOW_CENTRE_Y - liftM), liftM),
+        bulb: shadeGlowLifted(paperRow(G.bulbCenterY - liftM), liftM),
         top: shadeGlowLifted(G.paperY1, liftM),
         bottom: shadeGlowLifted(G.paperY0, liftM)
       },
@@ -1395,7 +1409,7 @@ export class LampLight {
       coatColor: coatingColor(LAMP_K_DEFAULT),
       bubbleColor: vec3.zero(),
       shadeGlow: 0,
-      shadeProfile: {bulb: 1, top: shadeGlowAt(G.paperY1), bottom: shadeGlowAt(G.paperY0)},
+      shadeProfile: {mid: 1, bulb: shadeGlowAt(G.bulbCenterY), top: shadeGlowAt(G.paperY1), bottom: shadeGlowAt(G.paperY0)},
       shadePeak: 1,
       lift: 0,
       rays: 0,

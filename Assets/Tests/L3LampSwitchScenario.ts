@@ -91,12 +91,12 @@ export class L3LampSwitchScenario extends Scenario {
     check(c.chipColor.z > 0.9 && c.chipColor.z > c.chipColor.x + 0.4, () => `the chip is not blue: ${c.chipColor}`)
     check(c.photonsBlue > 0 && c.photonsYellow > 0, () => `photons in the bubble: ${c.photonsBlue} blue, ${c.photonsYellow} yellow`)
     check(c.led > 0.99, () => `LED at ${c.led.toFixed(2)}`)
-    // The shade glows: fully on, brightest level with the bulb, fading with height up the paper.
+    // The shade glows: fully on, brightest at the paper's widest middle, the top clearly lit, the bottom dimmer than the middle.
     check(c.shadeGlow > 0.99, () => `the shade glow is at ${c.shadeGlow.toFixed(2)}`)
     const pr = c.shadeProfile
-    check(pr.bulb > 3 * pr.top && pr.bulb > pr.bottom, () => `the glow is not brightest near the bulb: ${JSON.stringify(pr)}`)
+    check(pr.mid > pr.bulb && pr.mid > pr.top && pr.mid > pr.bottom && pr.top >= 0.5 * pr.mid, () => `the glow is not brightest at the middle with the top lit: ${JSON.stringify(pr)}`)
     check(c.tablePool.level > 0.99, () => `the pool on the table is at ${c.tablePool.level.toFixed(2)}`)
-    print(`Cutaway L3: bulb lit ${tBulb.toFixed(2)} s after the pinch; bubble: chip ${c.chipColor}, ${c.photonsBlue} blue and ${c.photonsYellow} yellow photons; shade glow at the bulb ${pr.bulb.toFixed(2)}, top ${pr.top.toFixed(2)}, bottom ring ${pr.bottom.toFixed(2)}`)
+    print(`Cutaway L3: bulb lit ${tBulb.toFixed(2)} s after the pinch; bubble: chip ${c.chipColor}, ${c.photonsBlue} blue and ${c.photonsYellow} yellow photons; shade glow at the middle ${pr.mid.toFixed(2)}, level with the bulb ${pr.bulb.toFixed(2)}, top ${pr.top.toFixed(2)}, bottom ring ${pr.bottom.toFixed(2)}`)
 
     // ---------------- The real lamp ----------------
     await waitForPhase(main, "lamp:realOn", 3000)
