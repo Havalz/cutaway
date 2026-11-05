@@ -187,6 +187,49 @@ export const HALO = {
   ringLift: 0.3
 }
 
+/** Each object's main energy, for the discovery trio and the finale. */
+export const OBJECT_ENERGY = {
+  recordPlayer: ENERGY.motion,
+  camera: ENERGY.light,
+  lamp: ENERGY.signal
+}
+
+/** The opening: one sweep, three dots, one caption (polish-pass.md §3). */
+export const OPENING = {
+  caption: "Look at something to see how it works.",
+  sweepS: 1.2,
+  /** Landed light at the streak's core. */
+  sweepLevel: 0.55,
+  /** How fast the streak goes when a pinch skips it. */
+  fadeS: 0.12,
+  /** It runs around the head on this circle (cm), between these azimuths (degrees from where the head faced). */
+  sweepRadius: 260,
+  sweepFromDeg: -38,
+  sweepToDeg: 38,
+  tailDeg: 24,
+  bandHalf: 10,
+  dotGapS: 0.25,
+  /** Relative to the pinch tick. */
+  tickVolume: 0.22,
+  captionS: 5,
+  /** Low in view: this far ahead of the eye and this far below it (cm). */
+  captionAt: 110,
+  captionDown: 25,
+  captionFollowS: 0.25
+}
+
+/** The discovery trio above the Reset pill (design cm, polish-pass.md §4). */
+export const TRIO = {
+  radius: 0.55,
+  pitch: 1.9,
+  ringLevel: ALPHA.secondary,
+  fillLevel: 0.85,
+  popScale: 1.15,
+  /** Critically damped: settled by 200 ms. */
+  popStiffness: 800,
+  fadeS: 0.12
+}
+
 // ---- Typography: one typeface (UI Kit default), two sizes only. ----
 export type TextRole = "ui" | "note"
 /** ui = chips, questions and pills. note = captions and callout labels. Sizes at the 110 cm design distance. */

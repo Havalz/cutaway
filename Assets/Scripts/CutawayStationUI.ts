@@ -13,6 +13,8 @@ export interface StationVisual {
   questions: boolean[]
   stop: boolean
   closer: boolean
+  /** How far the opening has revealed the idle dot (1 once it's up). */
+  idleDotReveal: number
 }
 
 interface Piece {
@@ -152,6 +154,7 @@ export class CutawayStationUI extends BaseScriptComponent {
   private captionTarget: vec3 | null = null
   private keptQuestion = -1
   private breathT = 0
+  private dotReveal = new Spring(420, 0.7, 1)
   private flash: SceneObject
   private flashMat: Material
   private flashT = -1
@@ -225,6 +228,12 @@ export class CutawayStationUI extends BaseScriptComponent {
 
   setIdleDot(v: boolean): void {
     this.idleDot.pop.show(v)
+  }
+
+  /** The opening masks the idle dot and brings it up in its turn, whatever its logical state. */
+  setDotReveal(v: boolean, instant: boolean = false): void {
+    this.dotReveal.target = v ? 1 : 0
+    if (instant) this.dotReveal.snap(v ? 1 : 0)
   }
 
   setExplainedDot(v: boolean): void {
@@ -332,7 +341,8 @@ export class CutawayStationUI extends BaseScriptComponent {
       chip: this.chip.pop.isShown,
       questions: this.questionPieces.map((p) => p.pop.isShown),
       stop: this.stop.pop.isShown,
-      closer: this.closer ? this.closer.pop.isShown : false
+      closer: this.closer ? this.closer.pop.isShown : false,
+      idleDotReveal: clamp01(this.dotReveal.value)
     }
   }
 
@@ -598,9 +608,10 @@ export class CutawayStationUI extends BaseScriptComponent {
     // Idle dot breathes: 2.5 s cycle, 85–100% scale, 40–60% opacity.
     this.breathT += dt
     const b = 0.5 - 0.5 * Math.cos((2 * Math.PI * this.breathT) / 2.5)
+    const reveal = this.dotReveal.update(dt)
     if (this.idleDot.pop.so.enabled) {
-      this.idleMesh.getTransform().setLocalScale(vec3.one().uniformScale(0.85 + 0.15 * b))
-      if (this.idleMat) setFade(this.idleMat, (0.4 + 0.2 * b) * this.idleDot.pop.amount)
+      this.idleMesh.getTransform().setLocalScale(vec3.one().uniformScale((0.85 + 0.15 * b) * Math.max(0.001, reveal)))
+      if (this.idleMat) setFade(this.idleMat, (0.4 + 0.2 * b) * this.idleDot.pop.amount * clamp01(reveal))
     }
     if (this.dotMat && this.explainedDot.pop.so.enabled) {
       this.dotHover += (this.dotHoverTarget - this.dotHover) * (1 - Math.exp(-dt / 0.06))

@@ -29,7 +29,7 @@ function checkInView(rail: RailColumn, what: string): void {
   let rx1 = 0
   let ry0 = 1
   let ry1 = 0
-  for (const c of main.getResetPillCorners()) {
+  for (const c of main.getResetClearCorners()) {
     const s = cam.worldSpaceToScreenSpace(c)
     rx0 = Math.min(rx0, s.x)
     rx1 = Math.max(rx1, s.x)

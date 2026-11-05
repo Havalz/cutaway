@@ -1,14 +1,47 @@
 import Event from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import WorldCameraFinderProvider from "SpectaclesInteractionKit.lspkg/Providers/CameraProvider/WorldCameraFinderProvider"
+import {MeshKit, setTint, spawnMesh} from "./CutawayGeometry"
+import {INK, NO_LIGHT, SPACE, STROKE, TRIO, VERTEX_WHITE} from "./CutawayStyle"
+import {Spring} from "./CutawayTween"
 import {UiPill} from "./CutawayUiKit"
+
+/** One slot of the discovery trio, as tests read it. */
+export interface TrioSlot {
+  filled: boolean
+  color: vec4 | null
+  scale: number
+  /** The largest scale since it filled. */
+  peak: number
+  /** Seconds from filling until the pop came to rest (negative while it's going). */
+  settledS: number
+}
+
+interface Slot {
+  ringMat: Material
+  fillSo: SceneObject
+  fillMat: Material
+  color: vec4 | null
+  /** The colour it last filled with: it fades out in that colour when emptied. */
+  tint: vec4
+  /** Eased 0..1, so emptying fades instead of cutting. */
+  amount: number
+  pop: Spring
+  peak: number
+  /** Seconds into the pop, or negative when none is running. */
+  popT: number
+  settledS: number
+}
 
 /**
  * The "Reset" pill: floats low and to the left of the user (body-locked on yaw), in the lower-left
- * of the view: about 15° below and 10° left of a level gaze, so it is fully in view from the
- * default pose (§9) and clear of the middle, where the objects and their explanations are.
+ * of the view: about 11° below and 10° left of a level gaze, so it is fully in view from the
+ * default pose (§9), clear of the middle, and above the record player and its chip.
  * A secondary pill: outline only, in the one UI language (CutawayUiKit). Built at the chips' 110 cm
  * design scale and scaled with distance, so its type and stroke match the chips exactly.
+ * Just above it sits the discovery trio: three hollow rings that fill as objects are explained.
  */
+const STROKE_WIDTH = STROKE.hairline
+
 @component
 export class CutawayResetUI extends BaseScriptComponent {
   @ui.label("Cutaway Reset pill — floats low and left, in the lower-left of the view")
@@ -22,7 +55,7 @@ export class CutawayResetUI extends BaseScriptComponent {
   @input
   @hint("How far below eye level (cm)")
   @widget(new SliderWidget(10, 80, 1))
-  downCm: number = 16
+  downCm: number = 11.5
 
   @input
   @hint("How far to the left of the user's center line (cm)")
@@ -70,6 +103,8 @@ export class CutawayResetUI extends BaseScriptComponent {
   readonly onPinch = new Event<vec3>()
 
   private pill: UiPill
+  private trioRoot: SceneObject
+  private slots: Slot[] = []
   private camTransform: Transform | null = null
   private placed = false
   private anchorDir: vec3 = new vec3(0, 0, -1)
@@ -91,6 +126,7 @@ export class CutawayResetUI extends BaseScriptComponent {
     })
     this.pill.onPinch = (p) => this.onPinch.invoke(p)
     this.pill.btn.onTriggerUp.add(() => this.onResetPressed.invoke())
+    this.buildTrio()
 
     this.createEvent("OnStartEvent").bind(() => {
       this.camTransform = WorldCameraFinderProvider.getInstance().getTransform()
@@ -106,9 +142,86 @@ export class CutawayResetUI extends BaseScriptComponent {
     return [new vec3(-w, -h, 0), new vec3(w, -h, 0), new vec3(w, h, 0), new vec3(-w, h, 0)].map((q) => m.multiplyPoint(q))
   }
 
+  /** The pill and the trio together: what a rail must keep clear of. */
+  getClearCorners(): vec3[] {
+    const m = this.pill.so.getTransform().getWorldTransform()
+    const w = this.pillWidth / 2
+    const h = this.pillHeight / 2
+    const top = this.trioCenter() + TRIO.radius
+    return [new vec3(-w, -h, 0), new vec3(w, -h, 0), new vec3(w, top, 0), new vec3(-w, top, 0)].map((q) => m.multiplyPoint(q))
+  }
+
+  /** Fill a slot in an object's energy colour, with a small pop. A full slot stays as it is. */
+  fillSlot(i: number, color: vec4): void {
+    const s = this.slots[i]
+    if (!s || s.color) return
+    s.color = color
+    s.tint = color
+    s.fillSo.enabled = true
+    s.pop.snap(TRIO.popScale)
+    s.pop.target = 1
+    s.peak = TRIO.popScale
+    s.popT = 0
+    s.settledS = -1
+    s.amount = Math.max(s.amount, 0.5)
+  }
+
+  emptySlots(): void {
+    this.slots.forEach((s) => (s.color = null))
+  }
+
+  getSlots(): TrioSlot[] {
+    return this.slots.map((s) => ({filled: !!s.color, color: s.color, scale: s.pop.value, peak: s.peak, settledS: s.settledS}))
+  }
+
+  private trioCenter(): number {
+    return this.pillHeight / 2 + SPACE + TRIO.radius
+  }
+
+  private buildTrio(): void {
+    this.trioRoot = global.scene.createSceneObject("Trio")
+    this.trioRoot.setParent(this.sceneObject)
+    for (let i = 0; i < 3; i++) {
+      const slot = global.scene.createSceneObject("TrioSlot" + i)
+      slot.setParent(this.trioRoot)
+      slot.getTransform().setLocalPosition(new vec3((i - 1) * TRIO.pitch, 0, 0))
+      const ringKit = new MeshKit()
+      ringKit.addArcXY(0, 0, TRIO.radius, STROKE_WIDTH, 0, Math.PI * 2, VERTEX_WHITE, 32)
+      const ring = spawnMesh(slot, "TrioRing", ringKit.build(), this.glowMaterial)
+      setTint(ring.mat, INK, TRIO.ringLevel)
+      const fillKit = new MeshKit()
+      fillKit.addFanXY(0, 0, TRIO.radius, 0, Math.PI * 2, VERTEX_WHITE, VERTEX_WHITE, 32)
+      fillKit.addSoftRingXY(0, 0, TRIO.radius, TRIO.radius * 1.5, VERTEX_WHITE, NO_LIGHT, 32)
+      const fill = spawnMesh(slot, "TrioFill", fillKit.build(), this.glowMaterial)
+      setTint(fill.mat, INK, 0)
+      fill.so.enabled = false
+      this.slots.push({ringMat: ring.mat, fillSo: fill.so, fillMat: fill.mat, color: null, tint: INK, amount: 0, pop: new Spring(TRIO.popStiffness, 1, 1), peak: 1, popT: -1, settledS: -1})
+    }
+  }
+
+  private updateTrio(dt: number): void {
+    this.slots.forEach((s) => {
+      s.pop.update(dt)
+      if (s.popT >= 0) {
+        s.popT += dt
+        if (s.pop.value < 1.005) {
+          s.settledS = s.popT
+          s.popT = -1
+        }
+      }
+      const step = dt / TRIO.fadeS
+      s.amount = s.color ? Math.min(1, s.amount + step) : Math.max(0, s.amount - step)
+      if (!s.fillSo.enabled) return
+      setTint(s.fillMat, s.tint, TRIO.fillLevel * s.amount)
+      s.fillSo.getTransform().setLocalScale(vec3.one().uniformScale(s.pop.value))
+      if (!s.color && s.amount <= 0) s.fillSo.enabled = false
+    })
+  }
+
   private onUpdate(): void {
     const dt = getDeltaTime()
     this.pill.update(dt)
+    this.updateTrio(dt)
     if (!this.camTransform) return
     const camPos = this.camTransform.getWorldPosition()
     const look = this.camTransform.forward.uniformScale(-1)
@@ -138,5 +251,8 @@ export class CutawayResetUI extends BaseScriptComponent {
     // Same angular size as the chips: design scale at 110 cm, scaled with distance.
     const s = Math.min(6, Math.max(0.3, toCam.length / this.designDistance))
     this.pill.pop.setBaseScale(vec3.one().uniformScale(s))
+    const trio = this.trioRoot.getTransform()
+    trio.setLocalScale(vec3.one().uniformScale(s))
+    trio.setLocalPosition(new vec3(0, this.trioCenter() * s, 0))
   }
 }

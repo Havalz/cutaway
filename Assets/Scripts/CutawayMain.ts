@@ -1,4 +1,5 @@
 import WorldCameraFinderProvider from "SpectaclesInteractionKit.lspkg/Providers/CameraProvider/WorldCameraFinderProvider"
+import {HandInputData} from "SpectaclesInteractionKit.lspkg/Providers/HandInputData/HandInputData"
 import {CutawayStationUI, StationVisual} from "./CutawayStationUI"
 import {CutawayResetUI} from "./CutawayResetUI"
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
@@ -7,7 +8,7 @@ import {easeIn} from "./CutawayTween"
 import {CameraHero, HeroSound} from "./CutawayHero"
 import {TableSurface, TableSurveyor} from "./CutawayHeroSurface"
 import {CutawayHeroUI} from "./CutawayHeroUI"
-import {ENERGY, HALO} from "./CutawayStyle"
+import {ENERGY, HALO, OBJECT_ENERGY, OPENING} from "./CutawayStyle"
 import {RpTone} from "./CutawayRpTone"
 import {RecordPlayerHero, RpSound} from "./CutawayRpHero"
 import {RpRail, RpRailVisual} from "./CutawayRpRail"
@@ -16,6 +17,8 @@ import {LampHero, LampSound} from "./CutawayLampHero"
 import {LampRail, LampRailVisual} from "./CutawayLampRail"
 import {cameraShell, HaloInfo, HaloKey, Halos, lampShell, recordPlayerShell} from "./CutawayHalo"
 import {ROOM_LAMP} from "./CutawayLampModel"
+import {Opening, OpeningInfo} from "./CutawayOpening"
+import {TrioSlot} from "./CutawayResetUI"
 
 export type StationKey = "recordPlayer" | "camera" | "lamp"
 export type StationState = "idle" | "chip" | "questions" | "playing" | "explained"
@@ -330,6 +333,9 @@ export class CutawayMain extends BaseScriptComponent {
   private surveyor: TableSurveyor | null = null
   private surface: TableSurface | null = null
   private halos: Halos | null = null
+  private opening: Opening | null = null
+  /** The pinch tick's volume in the scene: the opening's ticks play softer than it. */
+  private tickVolume = 1
   private rpHero: RecordPlayerHero | null = null
   private rpRail: RpRail | null = null
   private rpTone: RpTone | null = null
@@ -373,7 +379,42 @@ export class CutawayMain extends BaseScriptComponent {
     this.setupRpHero()
     this.setupLampHero()
     this.setupHalos()
+    this.setupOpening()
     print("Cutaway ready: 3 stations")
+  }
+
+  // ---------------- Opening ----------------
+
+  private setupOpening(): void {
+    if (this.tickAudio) this.tickVolume = this.tickAudio.volume
+    // Left to right, the way the sweep goes: lamp, record player, camera.
+    const order = [this.index("lamp"), this.index("recordPlayer"), this.index("camera")]
+    this.opening = new Opening({
+      parent: this.sceneObject,
+      glowMat: this.glowMaterial,
+      camera: () => this.camTransform,
+      dots: order.length,
+      hideDots: () => this.stations.forEach((s) => s.ui.setDotReveal(false, true)),
+      revealDot: (i, tick) => {
+        const s = this.stations[order[i]]
+        s.ui.setDotReveal(true)
+        if (tick && s.mode === "rest") this.playAt("openingTick", this.tickAudio, s.ui.getAnchorWorldPosition())
+      },
+      chipUp: () => this.stations.some((s) => s.mode !== "rest"),
+      storyCaption: () => this.labelsUI.captionText() !== null,
+      setCaption: (text, at) => this.labelsUI.setAmbientCaption(text, at)
+    })
+    // Any pinch at all, on a control or in the air.
+    for (const hand of ["left", "right"] as const) {
+      HandInputData.getInstance()
+        .getHand(hand)
+        .onPinchDown.add(() => this.onAnyPinch())
+    }
+    this.opening.start()
+  }
+
+  private onAnyPinch(): void {
+    if (this.opening) this.opening.skip()
   }
 
   // ---------------- Halos ----------------
@@ -480,7 +521,7 @@ export class CutawayMain extends BaseScriptComponent {
       log: (p) => this.log(p),
       caption: (text) => this.labelsUI.setCaption(text, undefined, this.rpRail.getRail())
     })
-    this.rpRail.getRail().keepClearOf = () => this.resetUI.getCorners()
+    this.rpRail.getRail().keepClearOf = () => this.resetUI.getClearCorners()
     this.rpRail.onPutBack = () => this.rpHero.putBack()
     this.rpRail.onPinch = (p) => this.playAt("tick", this.tickAudio, p)
     this.recordPlayerUI.onCloserPressed.add(() => this.launchRp())
@@ -576,7 +617,7 @@ export class CutawayMain extends BaseScriptComponent {
       log: (p) => this.log(p),
       caption: (text) => this.labelsUI.setCaption(text, undefined, this.lampRail.getRail())
     })
-    this.lampRail.getRail().keepClearOf = () => this.resetUI.getCorners()
+    this.lampRail.getRail().keepClearOf = () => this.resetUI.getClearCorners()
     this.lampRail.onPutBack = () => this.lampHero.putBack()
     this.lampRail.onPinch = (p) => this.playAt("tick", this.tickAudio, p)
     this.lampUI.onCloserPressed.add(() => this.launchLamp())
@@ -681,7 +722,7 @@ export class CutawayMain extends BaseScriptComponent {
       caption: (text, at) => this.labelsUI.setCaption(text, at, at ? undefined : this.heroUI.getRail()),
       avoid: () => (this.resetUI ? [this.resetUI.getCorners()] : [])
     })
-    this.heroUI.getRail().keepClearOf = () => this.resetUI.getCorners()
+    this.heroUI.getRail().keepClearOf = () => this.resetUI.getClearCorners()
     this.heroUI.onPutBack.add(() => this.hero.putBack())
     this.heroUI.onPhoto.add(() => this.hero.photo())
     this.heroUI.onPinch.add((p) => this.playAt("tick", this.tickAudio, p))
@@ -781,6 +822,8 @@ export class CutawayMain extends BaseScriptComponent {
       this.setMode(i, "rest")
     })
     this.focused = -1
+    this.resetUI.emptySlots()
+    if (this.opening) this.opening.start()
     this.log("reset")
   }
 
@@ -891,6 +934,7 @@ export class CutawayMain extends BaseScriptComponent {
       s.explained = true
       s.ui.setEnergies(r.exp.energies)
       s.ui.playFlash()
+      this.resetUI.fillSlot(r.index, OBJECT_ENERGY[s.key])
     }
     s.armed = false
     this.setMode(r.index, "rest")
@@ -916,6 +960,8 @@ export class CutawayMain extends BaseScriptComponent {
     const so = audio.getSceneObject()
     so.getTransform().setWorldPosition(p)
     if (audio.isPlaying()) audio.stop(false)
+    if (audio === this.tickAudio) audio.volume = this.tickVolume * (name === "openingTick" ? OPENING.tickVolume : 1)
+    if (name === "tick") this.onAnyPinch()
     audio.play(1)
     this.soundLog.push({name, time: getTime(), position: p})
   }
@@ -961,6 +1007,7 @@ export class CutawayMain extends BaseScriptComponent {
     this.updateCloser()
     this.updateGaze()
     this.updateHalos(dt)
+    if (this.opening) this.opening.update(dt)
   }
 
   /** The "Bring it closer" pills: under the camera / the record player once explained and idle. */
@@ -1115,6 +1162,35 @@ export class CutawayMain extends BaseScriptComponent {
   /** The Reset pill's four world corners (layout tests). */
   getResetPillCorners(): vec3[] {
     return this.resetUI.getCorners()
+  }
+
+  /** The Reset pill and trio's corners: what a rail must keep clear of. */
+  getResetClearCorners(): vec3[] {
+    return this.resetUI.getClearCorners()
+  }
+
+  getOpeningInfo(): OpeningInfo | null {
+    return this.opening ? this.opening.info() : null
+  }
+
+  /** Test hook: freeze the opening at this moment, or null to let it run (screenshots). */
+  holdOpeningAt(t: number | null): void {
+    if (this.opening) this.opening.holdAt = t
+  }
+
+  /** Test hook: a pinch that lands on nothing. */
+  pinchInTheAir(): void {
+    this.onAnyPinch()
+  }
+
+  /** Where a station's dot sits (world). */
+  getDotPosition(key: StationKey): vec3 {
+    return this.stations[this.index(key)].ui.getAnchorWorldPosition()
+  }
+
+  /** The discovery trio, in station order: record player, camera, lamp. */
+  getTrio(): TrioSlot[] {
+    return this.resetUI.getSlots()
   }
 
   /** The camera hero stage (null if it is not wired). */

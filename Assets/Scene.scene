@@ -1803,7 +1803,7 @@
   ScriptInputs:
     "":
       forwardCm: !<float> 60.000000
-      downCm: !<float> 16.000000
+      downCm: 11.500000
       leftCm: !<float> 11.000000
       followSpeed: !<float> 5.000000
       deadzoneDeg: !<float> 40.000000
