@@ -7,9 +7,8 @@
  *   2. The bulb lights: the LED chips and the frosted envelope glow, and a magnify bubble opens at
  *      the chips. In it blue light leaves a tiny chip; inside the phosphor coating over it part of the
  *      blue turns yellow; together they come out white (the lamp's colour).
- *   3. The shade glows from within: brightest at the paper's widest middle, spreading smoothly and
- *      wide up and down it (the paper scatters the light through the whole shade), softer at the top,
- *      a little dimmer at the bottom, and a soft pool of light lies on the table.
+ *   3. The shade glows from within: brightest at the paper's widest middle, fading smoothly up and
+ *      down to its rings, and a soft pool of light lies on the table.
  *   4. The real lamp: a thin cyan thread runs from the copy's plug across the room to the real lamp's
  *      base and up its stem; its shade fills with the same glow and a warm pool lies on the floor.
  * Off: the pulses stop, the bubble closes and everything fades over 0.4 s.
@@ -106,14 +105,14 @@ export function coatingColor(T: number): vec3 {
 
 /** The paper's widest row (model space; t = 0.51 in CutawayLampModel's SHADE_KNOTS): the glow's brightest row. */
 export const GLOW_CENTRE_Y = G.paperY0 + 0.51 * (G.paperY1 - G.paperY0)
-/** How far (model cm) the glow halves above and below its centre: about 0.64 at the top ring and 0.76 at the bottom ring. */
-const GLOW_SPREAD_UP = 90
-const GLOW_SPREAD_DOWN = 125
+/** How far (model cm) the glow halves above and below its centre: about 0.26 at the top ring and 0.33 at the bottom ring. */
+const GLOW_SPREAD_UP = 40
+const GLOW_SPREAD_DOWN = 50
 
 /**
  * How brightly the paper glows at model height y, relative to the brightest (its widest row): the
- * paper scatters the bulb's light through the whole shade, so the glow spreads wide from there, softer
- * up to the top and a little dimmer down to the bottom. Flat at the centre, so no crease shows there.
+ * centre stands out clearly and the glow falls off smoothly to both rings. Flat at the centre, so no
+ * crease shows there.
  */
 export function shadeGlowAt(y: number): number {
   const d = (y - GLOW_CENTRE_Y) / (y >= GLOW_CENTRE_Y ? GLOW_SPREAD_UP : GLOW_SPREAD_DOWN)
@@ -162,9 +161,8 @@ const FLOOR_POOL_R = 115
  * Glow strengths: the light each adds at full Brightness (linear; tint() and the vertex gradients
  * take the square root, since the glow material blends Add with source alpha so both land squared).
  */
-// Spread over the whole shade the same total light needs a lower peak (0.42 when it sat low): both set from before/after captures of the added light.
-const SHADE_GAIN = 0.16
-const REAL_GAIN = 0.175
+const SHADE_GAIN = 0.42
+const REAL_GAIN = 0.42
 const POOL_GAIN = 0.4
 const FLOOR_GAIN = 0.45
 const BLOOM_GAIN = 0.05
