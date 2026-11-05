@@ -221,6 +221,10 @@ const SOLID: Record<SolidKind, {base: vec3; metallic: number; roughness: number;
 const CANDLE_R = 0.333
 const CANDLE_TOP = 0.3
 const WICK_TOP = 0.43
+/** The rail's leader stops this far short of the replica's centre (cm). */
+const RAIL_LEADER_STOP = 20
+const DISTANCE_LABEL = "candle_d"
+const DISTANCE_LABEL_LIFT = 4
 const FLAME_BASE = 0.33
 const FLAME_W = 0.15
 const FLAME_WHITE = new vec4(1, 0.94, 0.82, 1)
@@ -3418,7 +3422,7 @@ export class CameraHero {
     // The side away from the rail, and the replica's edge on that side (view units).
     const toS = flatDir(S.sub(eye))
     const right = toS.cross(vec3.up()).normalize()
-    const side = this.railAnchor().sub(S).dot(right) >= 0 ? -1 : 1
+    const side = this.ctx.rail.getRail().getPlaced().sub(S).dot(right) >= 0 ? -1 : 1
     let edge = side < 0 ? 1e9 : -1e9
     for (const h of replica) for (const q of h) edge = side < 0 ? Math.min(edge, q.x) : Math.max(edge, q.x)
     if (!replica.length) edge = 0
@@ -3746,7 +3750,27 @@ export class CameraHero {
 
   private placeRail(): void {
     if (this.state !== "landed" && this.state !== "light" && !(this.state === "returning" && this.ctx.rail.isVisible())) return
-    this.ctx.rail.place(this.railAnchor())
+    this.ctx.rail.place(this.railAnchor(), this.stageCenter(), RAIL_LEADER_STOP)
+    this.ctx.rail.syncTicks(this.parts.map((p) => ({at: p.a + 0.02 * p.w, freed: p.freed})))
+    this.ctx.rail.setFocusReadout("L " + this.L.toFixed(1) + " cm")
+    this.ctx.rail.setPhotoDisabled(this.shotT >= 0)
+    this.updateDistanceReadout()
+  }
+
+  /** While the candle is dragged: its distance, in secondary text just above the flame. */
+  private updateDistanceReadout(): void {
+    const labels = this.ctx.labels
+    if (!this.subjectDrag || !this.subject) {
+      if (labels.isShown(DISTANCE_LABEL)) labels.hide(DISTANCE_LABEL)
+      return
+    }
+    const text = "d " + Math.round(this.d_o) + " cm"
+    const at = this.subject.getTransform().getWorldTransform().multiplyPoint(new vec3(0, WICK_TOP, 0)).add(new vec3(0, DISTANCE_LABEL_LIFT, 0))
+    if (!labels.isShown(DISTANCE_LABEL)) labels.show(DISTANCE_LABEL, text, at)
+    else {
+      labels.setText(DISTANCE_LABEL, text)
+      labels.move(DISTANCE_LABEL, at)
+    }
   }
 
   /** The rail's anchor: beside the replica on the user's side, in front of it and right of the body. */
@@ -3759,16 +3783,11 @@ export class CameraHero {
   }
 
   /**
-   * The caption sits right above the rail (beside the replica, on the user's side). The rail keeps
-   * its apparent size, so its height grows with distance; `raised` = the light-path layout, where
-   * "Take apart" sits a row above "Focus".
+   * The caption has the top slot of the rail; `raised` = the light-path layout, where the rail has
+   * all its rows.
    */
   private captionAnchor(raised: boolean): vec3 {
-    const head = this.ctx.camPos()
-    const rail = this.railAnchor()
-    const k = Math.min(6, Math.max(0.3, rail.distance(head) / 110))
-    // Rail top above its anchor at design scale (slider label tops), plus the caption's two lines and a gap.
-    return rail.add(new vec3(0, k * ((raised ? 10.3 : 4.1) + 5), 0))
+    return this.ctx.rail.getRail().captionPoint(this.railAnchor(), raised ? "light" : "apart")
   }
 
   /** World centre of the assembled body (where the thread and trail attach). */

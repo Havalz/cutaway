@@ -631,6 +631,12 @@ export function setLevel(mat: Material, level: number): void {
   setFade(mat, Math.sqrt(Math.max(0, level)))
 }
 
+/** Colour a VERTEX_WHITE glow mesh from its material, landing at `level`. */
+export function setTint(mat: Material, c: vec4, level: number): void {
+  const k = Math.sqrt(Math.max(0, level))
+  mat.mainPass.baseColor = new vec4(c.x * k, c.y * k, c.z * k, k)
+}
+
 export interface GlowOpts {
   /** Core half-width. */
   radius: number

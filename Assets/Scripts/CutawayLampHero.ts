@@ -130,7 +130,6 @@ export const LAMP_CAPTIONS = {
  * Half the width of the widest caption, in caption design units: centred text runs about 0.34
  * units a character at the caption's size (measured), plus a little margin.
  */
-const CAPTION_HALF_W = 10.5
 /** How fast the parts follow the "Take apart" slider (slider units per second), as the other stages. */
 const APART_RATE = 1.6
 /** The foot switch's button (model cm): its stroke when pinched, and how far it stays down while on (push-push latch). */
@@ -297,6 +296,7 @@ export class LampHero {
 
   constructor(private ctx: LampContext) {
     ctx.rail.onChange = (k, v) => this.onSlider(k, v)
+    ctx.rail.onSwitchHint = () => this.onSwitch()
   }
 
   // =====================================================================================
@@ -1489,7 +1489,9 @@ export class LampHero {
   private placeRail(): void {
     if (this.state !== "landed" && !(this.state === "returning" && this.ctx.rail.isVisible())) return
     if (this.state === "landed") this.updateRailShift(getDeltaTime())
-    this.ctx.rail.place(this.railAnchor())
+    this.ctx.rail.place(this.railAnchor(), this.stageCenter(), G.shadeMaxR * this.scale)
+    if (this.apart) this.ctx.rail.syncTicks(this.apart.freeTicks())
+    this.ctx.rail.setApartDisabled(!!this.grab || !this.shadeSeated())
   }
 
   /**
@@ -1551,8 +1553,7 @@ export class LampHero {
       copy.push({h, x0: Math.min(...h.map((q) => q.x)), x1: Math.max(...h.map((q) => q.x)), y0: Math.min(...h.map((q) => q.y)), y1: Math.max(...h.map((q) => q.y))})
     }
     if (!copy.length) return none
-    const rows = 3
-    const top = 4.3 + 6.2 * (rows - 1)
+    const plate = this.ctx.rail.getRail().extent("on")
     const unitAt = (p: vec3, k: number) => (k * F.D) / Math.max(1, p.sub(eye).dot(F.f))
     const rect = (c: vec2, u: number, x0: number, x1: number, y0: number, y1: number) => [new vec2(c.x + u * x0, c.y + u * y0), new vec2(c.x + u * x1, c.y + u * y0), new vec2(c.x + u * x1, c.y + u * y1), new vec2(c.x + u * x0, c.y + u * y1)]
     const clearOf = (r: vec2[]) => {
@@ -1565,7 +1566,6 @@ export class LampHero {
     const savedSide = this.railSide
     const saved = this.railShift
     const savedFwd = this.railFwd
-    const dd = this.ctx.labels.getDesignDistance()
     const best = new Map<number, {side: number; shift: number; fwd: number; reach: number}>()
     for (const side of [1, -1]) {
       this.railSide = side
@@ -1574,8 +1574,7 @@ export class LampHero {
         for (let shift = 0; shift <= 90; shift += 3) {
           this.railShift = shift
           const a = this.railAnchor()
-          const ca = this.captionAnchor(rows)
-          const shapes = [rect(toView(F, a), unitAt(a, LampRail.scaleAt(a, eye)), -8.5, 8.5, -7, top + 0.5), rect(toView(F, ca), unitAt(ca, Math.min(6, Math.max(0.3, ca.distance(eye) / dd))), -CAPTION_HALF_W, CAPTION_HALF_W, -4.8, 0.3)]
+          const shapes = [rect(toView(F, a), unitAt(a, LampRail.scaleAt(a, eye)), plate.x0, plate.x1, plate.y0, plate.y1)]
           if (!shapes.every(clearOf)) continue
           let reach = 0
           for (const h of shapes) for (const q of h) reach = Math.max(reach, q.length)
@@ -1604,12 +1603,9 @@ export class LampHero {
     return c.add(toUser.uniformScale(reach + 13 + this.railFwd)).add(right.uniformScale(this.railSide * (reach + 4 + this.railShift))).add(new vec3(0, 2, 0))
   }
 
-  /** The caption sits right above the rail; `rows` = slider rows showing above "Put it back". */
+  /** The caption has the top slot of the rail; `rows` = slider rows showing above "Put it back". */
   private captionAnchor(rows: number): vec3 {
-    const head = this.ctx.camPos()
-    const rail = this.railAnchor()
-    const k = LampRail.scaleAt(rail, head)
-    return rail.add(new vec3(0, k * (4.1 + 6.2 * (rows - 1) + 5), 0))
+    return this.ctx.rail.getRail().captionPoint(this.railAnchor(), rows > 1 ? "on" : "rest")
   }
 
   private replicaCenter(): vec3 {

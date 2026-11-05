@@ -132,6 +132,11 @@ export interface RpApartInfo {
 
 export class RpApart {
   private parts: Part[] = []
+
+  /** One entry per part that frees itself: where on the slider, and whether it has (the rail's ticks). */
+  freeTicks(): {at: number; freed: boolean}[] {
+    return this.parts.filter((p) => p.d.length > 0).map((p) => ({at: p.spec.a + 0.02 * p.spec.w, freed: p.freed}))
+  }
   private byKey: {[k: string]: Part} = {}
   private allRest: {so: SceneObject; pos: vec3}[] = []
   private s = 0

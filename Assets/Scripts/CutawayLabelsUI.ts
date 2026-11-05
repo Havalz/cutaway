@@ -109,6 +109,12 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     label.fader.show(true, false, label.leader ? 0.12 : 0)
   }
 
+  /** Change the words of a label that is showing, in place. */
+  setText(id: string, text: string): void {
+    const label = this.labels.get(id)
+    if (label && label.text.text !== text) label.text.text = text
+  }
+
   /** Move a label that is showing (and its callout) without rebuilding it, e.g. to follow a moving part. */
   move(id: string, worldPos: vec3, anchor?: vec3, side?: number): void {
     const label = this.labels.get(id)

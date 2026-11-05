@@ -54,6 +54,34 @@ export const STROKE = {
   hairline: 2 * PX
 }
 
+/** The rail's grid and instruments (design cm). Every gap and padding is a whole number of SPACE. */
+export const RAIL = {
+  column: 14 * SPACE,
+  padding: 2 * SPACE,
+  gap: SPACE,
+  sliderRow: 4 * SPACE,
+  /** Two lines of caption. */
+  captionSlot: 4 * SPACE,
+  corner: 2 * SPACE,
+  /** Where the plate's bottom edge sits below the rail's own origin. */
+  bottom: -7,
+  pillHeight: 3.2,
+  knobRadius: 0.8,
+  knobHit: 3.2,
+  knobHaloSpread: 1,
+  knobHaloLevel: 0.5,
+  tickHeight: 0.7,
+  fillWidth: 1.5 * STROKE.hairline
+}
+
+/** A computed colour (such as a colour temperature) as an opaque colour. */
+export function opaque(c: vec3): vec4 {
+  return new vec4(c.x, c.y, c.z, 1)
+}
+
+/** A vertex that takes all its colour from its material (see setTint). */
+export const VERTEX_WHITE = new vec4(1, 1, 1, 1)
+
 /** Hover on every pill and slider knob: rim and text to 100%, scale 1.04, over 120 ms. */
 export const HOVER = {scale: 1.04, stiffness: 2500}
 /** Press on every pill and slider knob: 0.97, and one thin ring expands and fades. */

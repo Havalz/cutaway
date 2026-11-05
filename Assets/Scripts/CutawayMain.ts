@@ -1074,6 +1074,10 @@ export class CutawayMain extends BaseScriptComponent {
     if (this.hero) this.hero.hold = v
   }
 
+  getHeroRail(): CutawayHeroUI | null {
+    return this.heroUI ?? null
+  }
+
   getHeroRailVisual(): {apart: boolean; focus: boolean; putBack: boolean; photo: boolean} | null {
     return this.heroUI ? this.heroUI.getVisual() : null
   }

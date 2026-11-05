@@ -25,15 +25,15 @@ function cachedMesh(key: string, make: () => MeshKit): RenderMesh {
 }
 
 /** An arc whose colour runs from c0 at a0 to c1 at a1 (the highlight trailing off round a cap). */
-function gradientArc(k: MeshKit, r: number, width: number, a0: number, a1: number, c0: vec4, c1: vec4, seg: number): void {
+export function gradientArc(k: MeshKit, r: number, width: number, a0: number, a1: number, c0: vec4, c1: vec4, seg: number, cx: number = 0, cy: number = 0): void {
   let base = -1
   for (let s = 0; s <= seg; s++) {
     const t = s / seg
     const a = a0 + (a1 - a0) * t
     const c = vec4.lerp(c0, c1, t)
-    const i = k.vert(new vec3(Math.cos(a) * (r - width / 2), Math.sin(a) * (r - width / 2), 0), NZ, c)
+    const i = k.vert(new vec3(cx + Math.cos(a) * (r - width / 2), cy + Math.sin(a) * (r - width / 2), 0), NZ, c)
     if (base < 0) base = i
-    k.vert(new vec3(Math.cos(a) * (r + width / 2), Math.sin(a) * (r + width / 2), 0), NZ, c)
+    k.vert(new vec3(cx + Math.cos(a) * (r + width / 2), cy + Math.sin(a) * (r + width / 2), 0), NZ, c)
   }
   for (let s = 0; s < seg; s++) {
     const i = base + s * 2

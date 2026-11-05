@@ -149,7 +149,6 @@ const CAPTIONS = [
  * Half the width of the widest caption, in caption design units: centred text runs about 0.34
  * units a character at the caption's size (measured), plus a little margin.
  */
-const CAPTION_HALF_W = Math.min(10.5, (0.34 * Math.max(...CAPTIONS.map((c) => c.replace(/<[^>]*>/g, "").length)) + 1) / 2)
 /** Taken apart: the caption for the live detail. */
 const CAPTION_APART = 4
 /** How fast the parts follow the "Take apart" slider (slider units per second), as the camera. */
@@ -1379,7 +1378,9 @@ export class RecordPlayerHero {
   private placeRail(): void {
     if (this.state !== "landed" && !(this.state === "returning" && this.ctx.rail.isVisible())) return
     if (this.state === "landed") this.updateRailShift(getDeltaTime())
-    this.ctx.rail.place(this.railAnchor())
+    this.ctx.rail.place(this.railAnchor(), this.stageCenter(), G.plinthHalf.x * this.scale)
+    if (this.apart) this.ctx.rail.syncTicks(this.apart.freeTicks())
+    this.ctx.rail.setApartDisabled(!this.deck || !this.deck.atRest || !!this.armGrab)
   }
 
   /**
@@ -1428,15 +1429,13 @@ export class RecordPlayerHero {
 
   /**
    * Where the rail stands. For each side of the copy and each step towards the user (0–36 cm), the
-   * smallest step out (0–90 cm in 3 cm steps) at which the rail's full layout and its caption clear
-   * the copy's meshes from the user's eye; of those, the most compact: the one whose farthest corner
-   * is nearest the copy's centre in view, so it stays close to where the user is looking (the
-   * current side keeps it unless the other is clearly closer). The copy faces its tonearm to the
-   * user, so its open dust cover stands tall on the user's right: there the caption would sit on the
-   * cover, and the rail usually stands on the left. Both face the eye at a constant apparent size,
-   * so their outlines are rectangles in view: the rail's sliders and pill span x −8.5…8.5 and
-   * y −7…4.8 design units (11 with the Pitch row); the caption, centred below its top centre, is as
-   * wide as its longest line (CAPTION_HALF_W) and about 5 tall.
+   * smallest step out (0–90 cm in 3 cm steps) at which the rail's glass plate (with the caption in
+   * its top slot) clears the copy's meshes from the user's eye; of those, the most compact: the one
+   * whose farthest corner is nearest the copy's centre in view, so it stays close to where the user
+   * is looking (the current side keeps it unless the other is clearly closer). The plate faces the
+   * eye at a constant apparent size, so its outline is a rectangle in view. The copy faces its
+   * tonearm to the user, so its open dust cover stands tall on the user's right, and the rail
+   * usually stands on the left. RailColumn then pulls that spot inside the view if it has to.
    */
   private findRailShift(mode: "rest" | "play" = this.ctx.rail.getMode() === "play" ? "play" : "rest"): {side: number; shift: number; fwd: number; reach: number} {
     const none = {side: this.railSide, shift: 0, fwd: 0, reach: 0}
@@ -1448,8 +1447,7 @@ export class RecordPlayerHero {
       copy.push({h, x0: Math.min(...h.map((q) => q.x)), x1: Math.max(...h.map((q) => q.x)), y0: Math.min(...h.map((q) => q.y)), y1: Math.max(...h.map((q) => q.y))})
     }
     if (!copy.length) return none
-    const rows = mode === "play" ? 2 : 1
-    const top = rows > 1 ? 10.5 : 4.3
+    const plate = this.ctx.rail.getRail().extent(mode)
     const unitAt = (p: vec3, k: number) => (k * F.D) / Math.max(1, p.sub(eye).dot(F.f))
     const rect = (c: vec2, u: number, x0: number, x1: number, y0: number, y1: number) => [new vec2(c.x + u * x0, c.y + u * y0), new vec2(c.x + u * x1, c.y + u * y0), new vec2(c.x + u * x1, c.y + u * y1), new vec2(c.x + u * x0, c.y + u * y1)]
     // Clear of every mesh by 1 view unit (boxes far from the rectangle are skipped cheaply).
@@ -1463,7 +1461,6 @@ export class RecordPlayerHero {
     const savedSide = this.railSide
     const saved = this.railShift
     const savedFwd = this.railFwd
-    const dd = this.ctx.labels.getDesignDistance()
     const best = new Map<number, {side: number; shift: number; fwd: number; reach: number}>()
     for (const side of [1, -1]) {
       this.railSide = side
@@ -1472,11 +1469,7 @@ export class RecordPlayerHero {
         for (let shift = 0; shift <= 90; shift += 3) {
           this.railShift = shift
           const a = this.railAnchor()
-          const ca = this.captionAnchor(rows)
-          const shapes = [
-            rect(toView(F, a), unitAt(a, RpRail.scaleAt(a, eye)), -8.5, 8.5, -7, top + 0.5),
-            rect(toView(F, ca), unitAt(ca, Math.min(6, Math.max(0.3, ca.distance(eye) / dd))), -CAPTION_HALF_W, CAPTION_HALF_W, -4.8, 0.3)
-          ]
+          const shapes = [rect(toView(F, a), unitAt(a, RpRail.scaleAt(a, eye)), plate.x0, plate.x1, plate.y0, plate.y1)]
           if (!shapes.every(clearOf)) continue
           let reach = 0
           for (const h of shapes) for (const q of h) reach = Math.max(reach, q.length)
@@ -1505,12 +1498,9 @@ export class RecordPlayerHero {
     return c.add(toUser.uniformScale(reach + 13 + this.railFwd)).add(right.uniformScale(this.railSide * (reach + 4 + this.railShift))).add(new vec3(0, 2, 0))
   }
 
-  /** The caption sits right above the rail; `rows` = slider rows showing above "Put it back". */
+  /** The caption has the top slot of the rail; `rows` = slider rows showing above "Put it back". */
   private captionAnchor(rows: number): vec3 {
-    const head = this.ctx.camPos()
-    const rail = this.railAnchor()
-    const k = RpRail.scaleAt(rail, head)
-    return rail.add(new vec3(0, k * ((rows > 1 ? 10.3 : 4.1) + 5), 0))
+    return this.ctx.rail.getRail().captionPoint(this.railAnchor(), rows > 1 ? "play" : "rest")
   }
 
   private replicaCenter(): vec3 {

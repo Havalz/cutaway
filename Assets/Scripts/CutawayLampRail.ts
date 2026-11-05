@@ -1,20 +1,14 @@
 /**
- * Lamp hero: the control rail beside the copy, on the user's side (lamp-hero.md, Phase B), a copy
- * of the record player's rail (CutawayRpRail, not touched) with the lamp's controls.
- * The same look and behaviour as the camera's rail (CutawayHeroUI): UI Kit sliders and a pill do
- * the input; their own visuals are masked and everything is drawn with light (hairline strokes,
- * 85% white text), built at the 110 cm design scale and scaled with distance so the pinch targets
- * keep a constant apparent size. It shows only what the current step needs:
- *   "rest": "Take apart" and "Put it back" (the lamp off);
- *   "on": "Take apart", "Brightness", "Warmth" and "Put it back" (the lamp on).
+ * Lamp hero: the control rail beside the copy, on the user's side (lamp-hero.md, Phase B).
+ * One glass column (CutawayRail) showing only what the current step needs:
+ *   "rest": "Take apart", the switch hint and "Put it back" (the lamp off);
+ *   "on": "Warmth", "Brightness", "Take apart" and "Put it back" (the lamp on).
  * Built in code by the lamp stage (no scene component), placed by it every frame.
  */
-import {Slider} from "SpectaclesUIKit.lspkg/Scripts/Components/Slider/Slider"
-import WorldCameraFinderProvider from "SpectaclesInteractionKit.lspkg/Providers/CameraProvider/WorldCameraFinderProvider"
-import {MeshKit, setFade, spawnMesh, UnitLine} from "./CutawayGeometry"
-import {ALPHA, applyType, GLASS, ink, INK, setTextAlpha} from "./CutawayStyle"
-import {PillKind, UiPill} from "./CutawayUiKit"
-import {faceToward, Pop, Spring} from "./CutawayTween"
+import {kelvinToRgb, warmthToKelvin} from "./CutawayLampLight"
+import {InstrumentSlider, RailColumn, SliderTick} from "./CutawayRail"
+import {ENERGY, INK, opaque} from "./CutawayStyle"
+import {UiPill} from "./CutawayUiKit"
 
 export type LampRailMode = "none" | "rest" | "on"
 
@@ -23,67 +17,64 @@ export interface LampRailVisual {
   brightness: boolean
   warmth: boolean
   putBack: boolean
+  switchHint: boolean
 }
 
 export type LampSliderKey = "apart" | "brightness" | "warmth"
-
-interface LightSlider {
-  pop: Pop
-  slider: Slider
-  label: Text
-  knob: SceneObject
-  knobMat: Material
-  fill: UnitLine
-  trackMat: Material
-  masked: boolean
-  hover: Spring
-  row: Spring
-}
-
-const SLIDER_W = 16
-const ROW_H = 3.2
-const DESIGN_D = 110
 
 export class LampRail {
   readonly so: SceneObject
   /** Fired when "Put it back" is pinched. */
   onPutBack: (() => void) | null = null
+  /** Fired when the switch hint is pinched: the same as pressing the switch on the cord. */
+  onSwitchHint: (() => void) | null = null
   /** Fired on every pinch of a rail control (world position), for the tick sound. */
   onPinch: ((p: vec3) => void) | null = null
   /** Fired as soon as a slider's value changes (drag or setValue), so its effects land in the same frame. */
   onChange: ((k: LampSliderKey, v: number) => void) | null = null
 
-  private panel: SceneObject
-  private sliders: Record<LampSliderKey, LightSlider>
+  private rail: RailColumn
+  private sliders: Record<LampSliderKey, InstrumentSlider>
   private putBack: UiPill
+  private switchHint: UiPill
   private mode: LampRailMode = "none"
-  private camTransform: Transform | null = null
   private seen: Record<LampSliderKey, number> = {apart: -1, brightness: -1, warmth: -1}
 
-  constructor(parent: SceneObject, private glowMaterial: Material) {
-    this.so = this.child(parent, "LampRail")
+  constructor(parent: SceneObject, glowMaterial: Material) {
+    this.so = global.scene.createSceneObject("LampRail")
+    this.so.setParent(parent)
     this.so.createComponent("Component.Canvas")
-    this.panel = this.child(this.so, "LampRailPanel")
+    this.rail = new RailColumn(this.so, "LampRailPanel", glowMaterial)
+    this.rail.onPinch = (p) => {
+      if (this.onPinch) this.onPinch(p)
+    }
     this.sliders = {
-      apart: this.buildSlider("LampRailApart", "Take apart"),
-      brightness: this.buildSlider("LampRailBrightness", "Brightness"),
-      warmth: this.buildSlider("LampRailWarmth", "Warmth")
+      apart: this.rail.addSlider({name: "LampRailApart", label: "Take apart", fill: INK}),
+      brightness: this.rail.addSlider({name: "LampRailBrightness", label: "Brightness", fill: ENERGY.light, format: (v) => Math.round(v * 100) + "%"}),
+      warmth: this.rail.addSlider({
+        name: "LampRailWarmth",
+        label: "Warmth",
+        fill: ENERGY.light,
+        // The track is the colour scale: the lamp's own formula, cool on the left to warm on the right.
+        gradient: (v) => opaque(kelvinToRgb(warmthToKelvin(v)))
+      })
     }
     for (const k of Object.keys(this.sliders) as LampSliderKey[]) {
       const sl = this.sliders[k].slider
       sl.onValueChange.add(() => this.notify(k))
       sl.onKnobMoved.add(() => this.notify(k))
     }
-    this.putBack = this.buildPill("LampRailPutBack", "Put it back", 10.5, "outline")
-    this.putBack.pop.so.getTransform().setLocalPosition(new vec3(0, -(ROW_H + 1.6), 0))
+    this.switchHint = this.rail.addPill("LampRailSwitch", "Press the switch", "primary")
+    this.switchHint.btn.onTriggerUp.add(() => {
+      if (this.switchHint.pop.isShown && this.onSwitchHint) this.onSwitchHint()
+    })
+    this.putBack = this.rail.addPill("LampRailPutBack", "Put it back", "outline")
     this.putBack.btn.onTriggerUp.add(() => {
       if (this.putBack.pop.isShown && this.onPutBack) this.onPutBack()
     })
-    try {
-      this.camTransform = WorldCameraFinderProvider.getInstance().getTransform()
-    } catch (e) {
-      this.camTransform = null
-    }
+    const s = this.sliders
+    this.rail.defineLayout("rest", [s.apart, this.switchHint, this.putBack])
+    this.rail.defineLayout("on", [s.warmth, s.brightness, s.apart, this.putBack])
     this.setMode("none", true)
   }
 
@@ -92,16 +83,7 @@ export class LampRail {
   /** Show only the controls this step needs. `instant` skips the animation (Reset). */
   setMode(mode: LampRailMode, instant: boolean = false): void {
     this.mode = mode
-    const s = this.sliders
-    s.apart.pop.show(mode !== "none", instant)
-    s.brightness.pop.show(mode === "on", instant)
-    s.warmth.pop.show(mode === "on", instant)
-    this.putBack.pop.show(mode !== "none", instant)
-    // Rows, bottom up: "Take apart" right above "Put it back", then "Brightness", then "Warmth".
-    s.apart.row.target = 0
-    s.brightness.row.target = ROW_H + 3
-    s.warmth.row.target = 2 * (ROW_H + 3)
-    if (instant) for (const k of Object.keys(s) as LampSliderKey[]) s[k].row.snap(s[k].row.target)
+    this.rail.setLayout(mode, instant)
   }
 
   getMode(): LampRailMode {
@@ -110,96 +92,79 @@ export class LampRail {
 
   /** Slider value 0..1 (follows the knob while it is dragged). */
   getValue(k: LampSliderKey): number {
-    return this.sliders[k].slider.knobValue
+    return this.sliders[k].value
   }
 
   setValue(k: LampSliderKey, v: number): void {
-    this.sliders[k].slider.resetToValue(Math.max(0, Math.min(1, v)))
+    this.sliders[k].value = v
     this.notify(k)
   }
 
-  /** Change a slider's label (e.g. "Warmth  2700 K"). */
+  /** A slider's words and value (e.g. "Warmth  2700 K"). */
   setLabel(k: LampSliderKey, text: string): void {
-    const t = this.sliders[k].label
-    if (t.text !== text) t.text = text
+    this.sliders[k].setWords(text)
   }
 
   getLabel(k: LampSliderKey): string {
-    return this.sliders[k].label.text
+    return this.sliders[k].getWords()
+  }
+
+  getSlider(k: LampSliderKey): InstrumentSlider {
+    return this.sliders[k]
+  }
+
+  /** One tick per part on "Take apart", lit as each part frees itself. */
+  syncTicks(list: SliderTick[]): void {
+    this.sliders.apart.syncTicks(list)
+  }
+
+  /** "Take apart" does nothing while the shade is off or held: it looks it. */
+  setApartDisabled(v: boolean): void {
+    this.sliders.apart.setDisabled(v)
   }
 
   isDragging(): boolean {
-    return (Object.keys(this.sliders) as LampSliderKey[]).some((k) => (this.sliders[k].slider as unknown as {_isDragged?: boolean})._isDragged === true)
+    return this.rail.isDragging()
   }
 
   getVisual(): LampRailVisual {
     const s = this.sliders
-    return {apart: s.apart.pop.isShown, brightness: s.brightness.pop.isShown, warmth: s.warmth.pop.isShown, putBack: this.putBack.pop.isShown}
+    return {apart: s.apart.pop.isShown, brightness: s.brightness.pop.isShown, warmth: s.warmth.pop.isShown, putBack: this.putBack.pop.isShown, switchHint: this.switchHint.pop.isShown}
   }
 
   /** True while any part of the rail is still on screen (including its exit animation). */
   isVisible(): boolean {
-    const s = this.sliders
-    return [s.apart.pop, s.brightness.pop, s.warmth.pop, this.putBack.pop].some((p) => p.so.enabled)
+    return this.rail.isVisible()
   }
 
-  /** Place the rail at `p` (world), facing the viewer, scaled to keep its apparent size. */
-  place(p: vec3): void {
-    const tr = this.so.getTransform()
-    tr.setWorldPosition(p)
-    if (!this.camTransform) return
-    const cam = this.camTransform.getWorldPosition()
-    tr.setWorldRotation(faceToward(cam.sub(p), this.camTransform.up))
-    this.panel.getTransform().setLocalScale(vec3.one().uniformScale(LampRail.scaleAt(p, cam)))
+  /** Place the rail for `p` (world), inside the view, with its leader to `target`. */
+  place(p: vec3, target?: vec3, radius?: number): void {
+    this.rail.place(p, target, radius)
+  }
+
+  getRail(): RailColumn {
+    return this.rail
   }
 
   /** The rail's scale at `p` seen from `cam` (it keeps its apparent size). */
   static scaleAt(p: vec3, cam: vec3): number {
-    return Math.min(6, Math.max(0.3, p.distance(cam) / DESIGN_D))
+    return RailColumn.scaleAt(p, cam)
   }
 
-  /** World boxes (8 corners) of the rail's visible text and meshes (layout checks). */
+  /** The rail's outline as a world box (layout checks). */
   getBoxes(): vec3[][] {
-    const out: vec3[][] = []
-    const corners = (m: mat4, a: vec3, b: vec3) => {
-      const c: vec3[] = []
-      for (const x of [a.x, b.x]) for (const y of [a.y, b.y]) for (const z of [a.z, b.z]) c.push(m.multiplyPoint(new vec3(x, y, z)))
-      return c
-    }
-    const walk = (so: SceneObject) => {
-      if (!so.enabled) return
-      const m = so.getTransform().getWorldTransform()
-      const t = so.getComponent("Component.Text") as Text
-      if (t && t.enabled && t.text.length) {
-        try {
-          const r = t.getBoundingBox()
-          out.push(corners(m, new vec3(r.left, r.bottom, 0), new vec3(r.right, r.top, 0)))
-        } catch (e) {
-          // rich text: no glyph bounds
-        }
-      }
-      const v = so.getComponent("Component.RenderMeshVisual") as RenderMeshVisual
-      if (v && v.enabled && v.mesh) out.push(corners(m, v.mesh.aabbMin, v.mesh.aabbMax))
-      for (let i = 0; i < so.getChildrenCount(); i++) walk(so.getChild(i))
-    }
-    walk(this.panel)
-    return out
+    return this.rail.getBoxes()
   }
 
   /** Per frame (driven by the stage). */
   update(dt: number): void {
-    for (const k of Object.keys(this.sliders) as LampSliderKey[]) {
-      this.notify(k)
-      this.updateSlider(this.sliders[k], dt)
-    }
-    this.putBack.update(dt)
+    for (const k of Object.keys(this.sliders) as LampSliderKey[]) this.notify(k)
+    this.rail.update(dt)
   }
 
   destroy(): void {
     this.so.destroy()
   }
-
-  // ---------------- Build ----------------
 
   /** Tell the stage when a value really changed (from an event, setValue, or the per-frame check). */
   private notify(k: LampSliderKey): void {
@@ -207,102 +172,5 @@ export class LampRail {
     if (v === this.seen[k]) return
     this.seen[k] = v
     if (this.onChange) this.onChange(k, v)
-  }
-
-  private child(parent: SceneObject, name: string): SceneObject {
-    const so = global.scene.createSceneObject(name)
-    so.setParent(parent)
-    return so
-  }
-
-  private text(parent: SceneObject, value: string, align: HorizontalAlignment, rect: Rect): Text {
-    const so = this.child(parent, "Label")
-    so.getTransform().setLocalPosition(new vec3(0, 0, 0.08))
-    const t = so.createComponent("Component.Text") as Text
-    t.text = value
-    t.depthTest = true
-    applyType(t, "ui")
-    setTextAlpha(t, 0)
-    t.horizontalAlignment = align
-    t.verticalAlignment = VerticalAlignment.Center
-    t.horizontalOverflow = HorizontalOverflow.Overflow
-    t.verticalOverflow = VerticalOverflow.Overflow
-    t.layoutRect = rect
-    return t
-  }
-
-  private buildSlider(name: string, labelText: string): LightSlider {
-    const wrap = this.child(this.panel, name + "Pop")
-    const so = this.child(wrap, name)
-    const slider = so.createComponent(Slider.getTypeName()) as Slider
-    slider.size = new vec3(SLIDER_W, ROW_H, 1)
-    slider.knobSize = new vec2(ROW_H, ROW_H)
-    const track = SLIDER_W - ROW_H
-    const label = this.text(wrap, labelText, HorizontalAlignment.Left, Rect.create(-track / 2, track / 2 + 4, -1.2, 1.2))
-    label.getSceneObject().getTransform().setLocalPosition(new vec3(0, ROW_H * 0.5 + 1.5, 0.08))
-
-    const trackMat = this.glowMaterial.clone()
-    const tk = new MeshKit()
-    tk.addRectXY(-track / 2, -0.045, track / 2, 0.045, ink(INK, ALPHA.hairline))
-    tk.addRectXY(-track / 2 - 0.045, -0.35, -track / 2 + 0.045, 0.35, ink(INK, ALPHA.hairline))
-    tk.addRectXY(track / 2 - 0.045, -0.35, track / 2 + 0.045, 0.35, ink(INK, ALPHA.hairline))
-    spawnMesh(so, name + "Track", tk.build(), this.glowMaterial, new vec3(0, 0, 0.02), trackMat)
-    const fill = new UnitLine(so, name + "Fill", this.glowMaterial, 0.22, ink(INK, 0.85), 0, trackMat)
-    fill.so.getTransform().setLocalPosition(new vec3(-track / 2, 0, 0.03))
-
-    const knob = this.child(so, name + "Knob")
-    const kk = new MeshKit()
-    const r = ROW_H * 0.36
-    kk.addArcXY(0, 0, r, 0.13, 0, Math.PI * 2, ink(INK, 0.9), 40)
-    kk.addFanXY(0, 0, r - 0.07, 0, Math.PI * 2, ink(INK, 0.16), ink(INK, GLASS.fill), 40)
-    const knobMat = this.glowMaterial.clone()
-    spawnMesh(knob, name + "KnobRing", kk.build(), this.glowMaterial, new vec3(0, 0, 0.04), knobMat)
-
-    const hover = new Spring(900, 1, 1)
-    slider.onHoverEnter.add(() => (hover.target = 1.5))
-    slider.onHoverExit.add(() => (hover.target = 1))
-    slider.onTriggerDown.add(() => {
-      if (this.onPinch) this.onPinch(knob.getTransform().getWorldPosition())
-    })
-
-    const ls: LightSlider = {pop: undefined as unknown as Pop, slider, label, knob, knobMat, fill, trackMat, masked: false, hover, row: new Spring(420, 0.9, 0)}
-    ls.pop = new Pop(wrap, vec3.one(), false, {
-      onAmount: (a) => {
-        setTextAlpha(label, a)
-        setFade(trackMat, a)
-        setFade(knobMat, a * ls.hover.value)
-      }
-    })
-    return ls
-  }
-
-  private buildPill(name: string, labelText: string, width: number, kind: PillKind): UiPill {
-    const pill = new UiPill({parent: this.panel, name, label: labelText, width, height: ROW_H, material: this.glowMaterial, kind, minScale: 0.85})
-    pill.onPinch = (p) => {
-      if (this.onPinch) this.onPinch(p)
-    }
-    return pill
-  }
-
-  // ---------------- Frame loop ----------------
-
-  private maskSlider(s: LightSlider): void {
-    const vs = [s.slider.visual, s.slider.knobVisual, s.slider.trackFillVisual]
-    if (vs.some((v) => !v || !v.renderMeshVisual)) return
-    for (const v of vs) v.renderMeshVisual.mainPass.colorMask = new vec4b(false, false, false, false)
-    s.masked = true
-  }
-
-  private updateSlider(s: LightSlider, dt: number): void {
-    if (!s.masked) this.maskSlider(s)
-    s.pop.update(dt)
-    s.pop.so.getTransform().setLocalPosition(new vec3(0, s.row.update(dt), 0))
-    if (!s.pop.so.enabled) return
-    s.hover.update(dt)
-    const track = SLIDER_W - ROW_H
-    const x = (s.slider.knobValue - 0.5) * track
-    s.knob.getTransform().setLocalPosition(new vec3(x, 0, 0))
-    s.fill.set(new vec3(-track / 2, 0, 0.03), new vec3(Math.max(-track / 2 + 1e-3, x), 0, 0.03))
-    setFade(s.knobMat, s.pop.amount * s.hover.value)
   }
 }

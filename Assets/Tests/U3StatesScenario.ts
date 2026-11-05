@@ -3,6 +3,7 @@ import {expect} from "Leaf.lspkg/Utils/common/Expect"
 import {findSceneObjectByName, sleep} from "Leaf.lspkg/Utils/common/Utils"
 import {PRESS_RINGS} from "../Scripts/CutawayUiKit"
 import {cleanStart, getMain, hoverOver, isEnabled, press, SETTLE_MS} from "./CutawayTestUtils"
+import {landHero, toLive} from "./HeroTestUtils"
 
 const scaleOf = (popName: string) => findSceneObjectByName(popName).getTransform().getLocalScale().x
 
@@ -57,5 +58,15 @@ export class U3StatesScenario extends Scenario {
     expect(main.getStationState("camera")).toBe("questions")
     await checkHover("CameraQ0", "CameraQ0Pop")
     main.setGazeOverride(null)
+
+    // A rail: a primary pill, a secondary pill and a slider knob.
+    await cleanStart(main)
+    const hero = await landHero(main)
+    await checkHover("HeroPutBack", "HeroPutBackPop")
+    await toLive(main, hero)
+    await sleep(500)
+    await checkHover("HeroPhoto", "HeroPhotoPop")
+    await checkHover("HeroFocusSlider", "HeroFocusSliderKnob")
+    await checkPress("HeroFocusSlider")
   }
 }

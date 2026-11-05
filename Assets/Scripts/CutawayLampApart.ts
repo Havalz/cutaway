@@ -135,6 +135,11 @@ export interface LampApartInfo {
 
 export class LampApart {
   private parts: Part[] = []
+
+  /** One entry per part that frees itself: where on the slider, and whether it has (the rail's ticks). */
+  freeTicks(): {at: number; freed: boolean}[] {
+    return this.parts.filter((p) => p.spec.special || p.spec.d.length > 0).map((p) => ({at: p.spec.a + 0.02 * p.spec.w, freed: p.freed}))
+  }
   private byKey: {[k: string]: Part} = {}
   /** Every part and the paper's halves: two points of each (origin, a point off it) at rest, in the copy's space. */
   private allRest: {so: SceneObject; p0: vec3; p1: vec3}[] = []
