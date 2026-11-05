@@ -16,8 +16,9 @@
  * Back at 0 every part returns exactly to its rest transform.
  */
 import {MeshKit, setFade, spawnMesh} from "./CutawayGeometry"
+import {LabelItem, LabelPlanner} from "./CutawayLabelPlan"
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
-import {hull2, meshBoxes, polyGap, rect2, toView, viewFrame} from "./CutawayLayout"
+import {boxHull, pushBox} from "./CutawayLayout"
 import {RecordPlayerModel, RP_GEOM, rpBeltRing} from "./CutawayRecordPlayerModel"
 import {RpDeck} from "./CutawayRpDeck"
 import {RP_S} from "./CutawayRpSound"
@@ -38,6 +39,8 @@ const MAGNET_SWING = 0.05
 const MAG_POS = new vec3(0, 0.02, -0.25)
 const COIL_AXES = [new vec3(-0.6, 0.8, -0.1).normalize(), new vec3(0.6, 0.8, -0.1).normalize()]
 const BELT_DASHES = 5
+const BELT_UP = vec3.up()
+const LABEL_RISES = [3, 4.5, 6, 8, 10, 12.5, 15, 18, 22]
 
 interface PartSpec {
   key: string
@@ -95,6 +98,8 @@ interface Part {
   e: number
   raw: number
   freed: boolean
+  item: LabelItem | null
+  tick: {at: number; freed: boolean} | null
 }
 
 export interface RpApartCtx {
@@ -133,9 +138,11 @@ export interface RpApartInfo {
 export class RpApart {
   private parts: Part[] = []
 
+  private ticks: {at: number; freed: boolean}[] = []
+
   /** One entry per part that frees itself: where on the slider, and whether it has (the rail's ticks). */
   freeTicks(): {at: number; freed: boolean}[] {
-    return this.parts.filter((p) => p.d.length > 0).map((p) => ({at: p.spec.a + 0.02 * p.spec.w, freed: p.freed}))
+    return this.ticks
   }
   private byKey: {[k: string]: Part} = {}
   private allRest: {so: SceneObject; pos: vec3}[] = []
@@ -155,8 +162,22 @@ export class RpApart {
   private markers: {so: SceneObject; mat: Material}[] = []
   private wires: SceneObject[] = []
   private plinthFill = 1
-  private labelPlans = new Map<string, {o: vec2; side: number; soft: boolean}>()
-  private labelShownOff = new Map<string, vec2>()
+  private planner: LabelPlanner
+  private want: LabelItem[] = []
+  /** The copy all the way apart: its corners in its own space (explodedPoints). */
+  private exploded: number[] | null = null
+  private laidS = NaN
+  private dashesOn: boolean | null = null
+  private dashFade = NaN
+  private markersOn: boolean | null = null
+  private markerFade = NaN
+  private coilFade = NaN
+  private glowsOn: boolean | null = null
+  private magnetX = NaN
+  private magnetZ = NaN
+  private readonly dashAt = new vec3(0, 0, 0)
+  /** Every box the labels keep clear of: each mesh of the copy and what hangs under it. */
+  private boxes: {owner: RenderMeshVisual; rmv: RenderMeshVisual; so: SceneObject; lo: vec3; hi: vec3}[] | null = null
 
   /** Built while the model is still at the origin, unrotated, at scale 1. */
   constructor(
@@ -182,13 +203,54 @@ export class RpApart {
         const rel = root.getTransform().getWorldRotation().invert().multiply(par)
         d = rel.invert().multiplyVec3(spec.dModel)
       }
-      const p: Part = {spec, d, so, anchorSo, rest: {pos: tr.getLocalPosition(), rot: tr.getLocalRotation(), scale: tr.getLocalScale()}, e: 0, raw: 0, freed: false}
+      const tick = d.length > 0 ? {at: spec.a + 0.02 * spec.w, freed: false} : null
+      if (tick) this.ticks.push(tick)
+      const item: LabelItem | null = spec.label ? {key: spec.key, id: "rp_" + spec.key, text: spec.label, anchor: vec3.zero(), sh: 1, sv: 1} : null
+      const p: Part = {spec, d, so, anchorSo, rest: {pos: tr.getLocalPosition(), rot: tr.getLocalRotation(), scale: tr.getLocalScale()}, e: 0, raw: 0, freed: false, item, tick}
       this.parts.push(p)
       this.byKey[spec.key] = p
     }
     this.magnet = model.parts["RpCartridgeMagnet"].getTransform()
     for (const n of ["RpSignalWiresArm", "RpSignalWires"]) if (model.parts[n]) this.wires.push(model.parts[n])
     this.buildLiveDetail()
+    this.planner = new LabelPlanner(
+      {
+        labels: ctx.labels,
+        camPos: ctx.camPos,
+        stageCenter: ctx.stageCenter,
+        pivot: () => this.model.root.getTransform().getWorldPosition(),
+        addObstacles: (F, hard, soft) => {
+          for (const b of this.obstacleBoxes()) {
+            const solid = this.ctx.meshSolid(b.owner)
+            if (solid === null || !b.owner.getSceneObject().isEnabledInHierarchy) continue
+            if (!b.so.isEnabledInHierarchy || !b.rmv.enabled) continue
+            ;(solid ? hard : soft).push(boxHull(F, b.so.getTransform().getWorldTransform(), b.lo, b.hi))
+          }
+        },
+        railBoxes: ctx.railBoxes,
+        prefer: (item, F) => {
+          const dirW = this.model.root.getTransform().getWorldRotation().multiplyVec3(this.byKey[item.key].spec.labelDir)
+          item.sv = dirW.dot(F.u) >= 0 ? 1 : -1
+          item.sh = dirW.dot(F.r) >= 0 ? 1 : -1
+        }
+      },
+      LABEL_RISES
+    )
+  }
+
+  private obstacleBoxes(): {owner: RenderMeshVisual; rmv: RenderMeshVisual; so: SceneObject; lo: vec3; hi: vec3}[] {
+    if (this.boxes) return this.boxes
+    const out: {owner: RenderMeshVisual; rmv: RenderMeshVisual; so: SceneObject; lo: vec3; hi: vec3}[] = []
+    for (const m of this.model.meshList()) {
+      const walk = (so: SceneObject) => {
+        const rmv = so.getComponent("Component.RenderMeshVisual") as RenderMeshVisual
+        if (rmv && rmv.mesh) out.push({owner: m.rmv, rmv, so, lo: rmv.mesh.aabbMin, hi: rmv.mesh.aabbMax})
+        for (let i = 0; i < so.getChildrenCount(); i++) walk(so.getChild(i))
+      }
+      walk(m.rmv.getSceneObject())
+    }
+    this.boxes = out
+    return out
   }
 
   get value(): number {
@@ -213,6 +275,21 @@ export class RpApart {
       for (const w of this.wires) w.enabled = false
       this.ctx.log(apart ? "rp:apart" : "rp:together")
     }
+    // The slider hasn't moved: the parts are where they were.
+    if (s !== this.laidS) {
+      this.laidS = s
+      this.layParts(s)
+    }
+    // The plinth (and what is fixed to it) fades to an outline as the first parts leave.
+    const ep = easeInOutCubic(clamp01(s / 0.3))
+    this.plinthFill = 1 - 0.85 * ep
+    this.ctx.setGroup("plinth", this.plinthFill, 1)
+    this.updateLive(dt, s, freq)
+    if (apart) this.updateLabels()
+    else this.hideLabels()
+  }
+
+  private layParts(s: number): void {
     for (const p of this.parts) {
       const sp = p.spec
       const raw = clamp01((s - sp.a) / sp.w)
@@ -232,21 +309,42 @@ export class RpApart {
         this.ctx.partSound(p.so.getTransform().getWorldPosition())
         this.ctx.log("rp:free:" + sp.key)
       } else if (raw <= 0 && p.freed) p.freed = false
+      if (p.tick) p.tick.freed = p.freed
     }
-    // The plinth (and what is fixed to it) fades to an outline as the first parts leave.
-    const ep = easeInOutCubic(clamp01(s / 0.3))
-    this.plinthFill = 1 - 0.85 * ep
-    this.ctx.setGroup("plinth", this.plinthFill, 1)
-    this.updateLive(dt, s, freq)
-    if (apart) this.updateLabels()
-    else this.hideLabels()
+  }
+
+  /**
+   * The copy all the way apart: the corners (x, y, z, in its own space) of every mesh. The rail stands
+   * clear of them before the first part moves, so it never has to move under the user's finger. Lays
+   * the parts out and back within the call, so nothing ever draws that way. It looks the same from
+   * every side, so it is worked out once.
+   */
+  explodedPoints(): number[] {
+    if (this.exploded) return this.exploded
+    const saved = this.parts.map((p) => {
+      const tr = p.so.getTransform()
+      return {tr, pos: tr.getLocalPosition(), scale: tr.getLocalScale()}
+    })
+    for (const p of this.parts) {
+      const tr = p.so.getTransform()
+      tr.setLocalPosition(p.rest.pos.add(p.d))
+      if (p.spec.zoom) tr.setLocalScale(p.rest.scale.uniformScale(p.spec.zoom))
+    }
+    const inv = this.model.root.getTransform().getInvertedWorldTransform()
+    const pts: number[] = []
+    for (const b of this.obstacleBoxes()) pushBox(pts, inv.mult(b.so.getTransform().getWorldTransform()), b.lo, b.hi)
+    saved.forEach((b) => {
+      b.tr.setLocalPosition(b.pos)
+      b.tr.setLocalScale(b.scale)
+    })
+    this.exploded = pts
+    return pts
   }
 
   /** Every label off (Reset, put back, reassembled). */
   hideLabels(): void {
-    for (const p of this.parts) if (p.spec.label && this.ctx.labels.isShown("rp_" + p.spec.key)) this.ctx.labels.hide("rp_" + p.spec.key)
-    this.labelPlans.clear()
-    this.labelShownOff.clear()
+    for (const p of this.parts) if (p.item && this.ctx.labels.isShown(p.item.id)) this.ctx.labels.hide(p.item.id)
+    this.planner.clear()
   }
 
   getInfo(): RpApartInfo {
@@ -332,51 +430,82 @@ export class RpApart {
     // The belt runs at the sub-platter's groove speed; the dashes ride it.
     this.beltTravel = (this.beltTravel + this.deck.beltSpeed * dt) % Math.max(1e-3, this.beltLen)
     const shown = this.interiorShown ? clamp01(s / 0.4) : 0
-    if (this.dashMat) setFade(this.dashMat, shown * clamp01(this.deck.driveOmega / 1.5))
-    for (let i = 0; i < this.dashes.length; i++) {
-      const so = this.dashes[i]
-      so.enabled = this.interiorShown
-      if (!so.enabled) continue
-      const at = (this.beltTravel + (i * this.beltLen) / this.dashes.length) % this.beltLen
-      const {p, t} = this.beltAt(at)
-      const tr = so.getTransform()
-      tr.setLocalPosition(p)
-      tr.setLocalRotation(quat.angleAxis(Math.atan2(-t.z, t.x), vec3.up()))
+    const dashFade = shown * clamp01(this.deck.driveOmega / 1.5)
+    if (this.dashMat && dashFade !== this.dashFade) {
+      this.dashFade = dashFade
+      setFade(this.dashMat, dashFade)
     }
-    for (const mk of this.markers) {
-      mk.so.enabled = this.interiorShown
-      setFade(mk.mat, shown)
+    if (this.dashesOn !== this.interiorShown) {
+      this.dashesOn = this.interiorShown
+      for (let i = 0; i < this.dashes.length; i++) this.dashes[i].enabled = this.interiorShown
+    }
+    if (this.interiorShown) for (let i = 0; i < this.dashes.length; i++) this.placeDash(this.dashes[i], (this.beltTravel + (i * this.beltLen) / this.dashes.length) % this.beltLen)
+    if (this.markersOn !== this.interiorShown) {
+      this.markersOn = this.interiorShown
+      for (let i = 0; i < this.markers.length; i++) this.markers[i].so.enabled = this.interiorShown
+    }
+    if (shown !== this.markerFade) {
+      this.markerFade = shown
+      for (let i = 0; i < this.markers.length; i++) setFade(this.markers[i].mat, shown)
     }
     // The magnet wiggles at f / S, the same slowed rate as the cone; the coils glow with its speed.
     this.magnetPhase += 2 * Math.PI * (freq / RP_S) * dt
     const stylus = this.byKey["stylus"]
-    const back = stylus ? stylus.d.uniformScale(stylus.e) : vec3.zero()
     this.magnetOffset = MAGNET_SWING * liveK * Math.sin(this.magnetPhase)
     // It stays between the coils while the stylus is drawn out (shown apart), and wiggles there.
-    this.magnet.setLocalPosition(MAG_POS.sub(back).add(new vec3(this.magnetOffset, 0, 0)))
-    if (s <= 0) this.magnet.setLocalPosition(MAG_POS)
+    const off = s <= 0 ? 0 : this.magnetOffset
+    const e = s > 0 && stylus ? stylus.e : 0
+    if (off !== this.magnetX || e !== this.magnetZ) {
+      this.magnetX = off
+      this.magnetZ = e
+      const d = stylus ? stylus.d : MAG_POS
+      this.magnet.setLocalPosition(e > 0 ? new vec3(MAG_POS.x - d.x * e + off, MAG_POS.y - d.y * e, MAG_POS.z - d.z * e) : new vec3(MAG_POS.x + off, MAG_POS.y, MAG_POS.z))
+    }
     this.coilGlow = liveK * (0.2 + 0.8 * Math.abs(Math.cos(this.magnetPhase)))
-    if (this.coilGlowMat) setFade(this.coilGlowMat, this.coilGlow)
-    const cam = this.ctx.camPos()
-    for (const g of this.coilGlowSo) {
-      g.enabled = liveK > 0
-      if (g.enabled) g.getTransform().setWorldRotation(faceToward(cam.sub(g.getTransform().getWorldPosition())))
+    if (this.coilGlowMat && this.coilGlow !== this.coilFade) {
+      this.coilFade = this.coilGlow
+      setFade(this.coilGlowMat, this.coilGlow)
+    }
+    const on = liveK > 0
+    if (this.glowsOn !== on) {
+      this.glowsOn = on
+      for (let i = 0; i < this.coilGlowSo.length; i++) this.coilGlowSo[i].enabled = on
+    }
+    if (on) {
+      const cam = this.ctx.camPos()
+      for (let i = 0; i < this.coilGlowSo.length; i++) {
+        const g = this.coilGlowSo[i].getTransform()
+        g.setWorldRotation(faceToward(cam.sub(g.getWorldPosition())))
+      }
     }
   }
 
-  private beltAt(d: number): {p: vec3; t: vec3} {
+  /** A dash at distance `d` along the belt, pointing along it. */
+  private placeDash(so: SceneObject, d: number): void {
+    const pts = this.beltPts
     let acc = 0
-    for (let i = 1; i < this.beltPts.length; i++) {
-      const a = this.beltPts[i - 1]
-      const b = this.beltPts[i]
-      const l = a.distance(b)
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1]
+      const b = pts[i]
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      const dz = b.z - a.z
+      const l = Math.sqrt(dx * dx + dy * dy + dz * dz)
       if (acc + l >= d) {
         const k = l > 1e-6 ? (d - acc) / l : 0
-        return {p: vec3.lerp(a, b, k), t: b.sub(a).normalize()}
+        const at = this.dashAt
+        at.x = a.x + dx * k
+        at.y = a.y + dy * k
+        at.z = a.z + dz * k
+        const tr = so.getTransform()
+        tr.setLocalPosition(at)
+        tr.setLocalRotation(quat.angleAxis(Math.atan2(-(l > 1e-6 ? dz / l : 0), l > 1e-6 ? dx / l : 0), BELT_UP))
+        return
       }
       acc += l
     }
-    return {p: this.beltPts[0], t: vec3.right()}
+    so.getTransform().setLocalPosition(pts[0])
+    so.getTransform().setLocalRotation(quat.angleAxis(0, BELT_UP))
   }
 
   // =====================================================================================
@@ -387,96 +516,27 @@ export class RpApart {
     const sp = p.spec
     if (!sp.label) return false
     const by = sp.revealWith ? this.byKey[sp.revealWith] : p
-    if (!by || by.e < 0.8) return false
-    return p.so.isEnabledInHierarchy && sp.groups.every((g) => this.ctx.groupSolid(g))
+    if (!by || by.e < 0.8 || !p.so.isEnabledInHierarchy) return false
+    for (let i = 0; i < sp.groups.length; i++) if (!this.ctx.groupSolid(sp.groups[i])) return false
+    return true
   }
 
   private updateLabels(): void {
     const labels = this.ctx.labels
-    const want: Part[] = []
-    for (const p of this.parts) {
-      if (!p.spec.label) continue
-      const id = "rp_" + p.spec.key
-      if (this.labelled(p)) want.push(p)
-      else {
-        if (labels.isShown(id)) labels.hide(id)
-        this.labelPlans.delete(p.spec.key)
+    let n = 0
+    for (let i = 0; i < this.parts.length; i++) {
+      const p = this.parts[i]
+      const it = p.item
+      if (!it) continue
+      if (this.labelled(p)) {
+        it.anchor = p.anchorSo.getTransform().getWorldTransform().multiplyPoint(p.spec.anchor)
+        this.want[n++] = it
+      } else {
+        if (labels.isShown(it.id)) labels.hide(it.id)
+        this.planner.drop(it.key)
       }
     }
-    if (!want.length) return
-    const F = viewFrame(this.ctx.camPos(), this.ctx.stageCenter())
-    const view = (pts: vec3[]) => hull2(pts.map((q) => toView(F, q)))
-    const hard: vec2[][] = []
-    const soft: vec2[][] = []
-    for (const m of this.model.meshList()) {
-      const solid = this.ctx.meshSolid(m.rmv)
-      if (solid === null || !m.rmv.getSceneObject().isEnabledInHierarchy) continue
-      for (const b of meshBoxes(m.rmv.getSceneObject())) (solid ? hard : soft).push(view(b))
-    }
-    const cap = labels.getCaptionQuad()
-    if (cap) hard.push(view(cap))
-    for (const b of this.ctx.railBoxes()) hard.push(view(b))
-
-    const rot = this.model.root.getTransform().getWorldRotation()
-    const dd = labels.getDesignDistance()
-    const M = 0.8
-    const placed: vec2[][] = []
-    const dt = getDeltaTime()
-    for (const p of want) {
-      const id = "rp_" + p.spec.key
-      const anchorW = p.anchorSo.getTransform().getWorldTransform().multiplyPoint(p.spec.anchor)
-      const A = toView(F, anchorW)
-      const dA = Math.max(1, anchorW.sub(F.eye).dot(F.f))
-      const size = labels.measure(p.spec.label).uniformScale(F.D / dd)
-      const g = (0.6 * F.D) / dd
-      const dirW = rot.multiplyVec3(p.spec.labelDir)
-      const sv = dirW.dot(F.u) >= 0 ? 1 : -1
-      const sh = dirW.dot(F.r) >= 0 ? 1 : -1
-      const box = (o: vec2, side: number) => {
-        const e = A.add(o)
-        return side > 0 ? rect2(e.x + g, e.x + g + size.x, e.y - size.y / 2, e.y + size.y / 2) : rect2(e.x - g - size.x, e.x - g, e.y - size.y / 2, e.y + size.y / 2)
-      }
-      const clear = (o: vec2, side: number, useSoft: boolean) => {
-        const b = box(o, side)
-        for (const h of hard) if (polyGap(b, h) < M) return false
-        for (const h of placed) if (polyGap(b, h) < M) return false
-        const seg = [A, A.add(o)]
-        for (const h of placed) if (polyGap(seg, h) < 0.3) return false
-        if (useSoft) for (const h of soft) if (polyGap(b, h) < M) return false
-        return true
-      }
-      let plan = this.labelPlans.get(p.spec.key) ?? null
-      if (plan && !clear(plan.o, plan.side, plan.soft)) plan = null
-      if (!plan) plan = this.search(clear, sv, sh)
-      if (!plan) plan = {o: new vec2(sh * 3, sv * 6), side: sh, soft: false}
-      this.labelPlans.set(p.spec.key, plan)
-      placed.push(box(plan.o, plan.side))
-      placed.push([A, A.add(plan.o)])
-      let o = this.labelShownOff.get(p.spec.key)
-      const fresh = !labels.isShown(id) || !o
-      o = fresh ? plan.o : o.add(plan.o.sub(o).uniformScale(1 - Math.exp(-dt / 0.07)))
-      this.labelShownOff.set(p.spec.key, o)
-      const k = dA / F.D
-      const textPos = anchorW.add(F.r.uniformScale(o.x * k)).add(F.u.uniformScale(o.y * k))
-      if (fresh) labels.show(id, p.spec.label, textPos, anchorW, plan.side)
-      else labels.move(id, textPos, anchorW, plan.side)
-    }
-  }
-
-  private search(clear: (o: vec2, side: number, soft: boolean) => boolean, sv: number, sh: number): {o: vec2; side: number; soft: boolean} | null {
-    for (const useSoft of [true, false]) {
-      for (const v of [sv, -sv]) {
-        for (const rise of [3, 4.5, 6, 8, 10, 12.5, 15, 18, 22]) {
-          for (const lat of [0, 2.5, 5, 8, 11, 14]) {
-            for (const side of [sh, -sh]) {
-              const o = new vec2(side * lat, v * rise)
-              if (clear(o, side, useSoft)) return {o, side, soft: useSoft}
-            }
-          }
-        }
-      }
-    }
-    return null
+    if (n > 0) this.planner.update(this.want, n, this.s)
   }
 }
 

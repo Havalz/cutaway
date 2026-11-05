@@ -21,6 +21,12 @@ export class Spring {
   }
 
   update(dt: number): number {
+    if (this.velocity === 0 && this.value === this.target) return this.value
+    if (Math.abs(this.value - this.target) < 1e-5 && Math.abs(this.velocity) < 1e-4) {
+      this.value = this.target
+      this.velocity = 0
+      return this.value
+    }
     const k = this.stiffness
     const c = 2 * this.dampingRatio * Math.sqrt(k)
     const steps = Math.max(1, Math.ceil(dt / (1 / 120)))
@@ -126,6 +132,7 @@ export class Pop {
   private hover: Spring
   private minScale: number
   private onAmount: ((a: number) => void) | null
+  private scaleShown = -1
 
   constructor(
     public readonly so: SceneObject,
@@ -172,6 +179,7 @@ export class Pop {
 
   setBaseScale(s: vec3): void {
     this.baseScale = s
+    this.scaleShown = -1
     this.apply()
   }
 
@@ -187,7 +195,10 @@ export class Pop {
   private apply(): void {
     const a = this.fader.value
     const s = Math.max(0.0001, (this.minScale + (1 - this.minScale) * a) * this.press.value * this.hover.value)
-    this.so.getTransform().setLocalScale(this.baseScale.uniformScale(s))
+    if (s !== this.scaleShown) {
+      this.scaleShown = s
+      this.so.getTransform().setLocalScale(this.baseScale.uniformScale(s))
+    }
     if (this.onAmount) this.onAmount(a)
   }
 }
@@ -237,4 +248,25 @@ export function yawToward(dir: vec3): quat {
   const flat = new vec3(dir.x, 0, dir.z)
   if (flat.length < 1e-4) return quat.quatIdentity()
   return quat.lookAt(flat.normalize(), vec3.up())
+}
+
+/** How often a ribbon of light is redrawn at most: its points move too little between frames to see. */
+const RIBBON_TICK = 1 / 30
+
+/**
+ * Lets something run at most 30 times a second, keeping to its beat (so 45 frames a second gives 30, not
+ * 22). Several start half a beat apart so they don't all land on one frame.
+ */
+export class RibbonClock {
+  private next: number
+
+  constructor(phase: number = 0) {
+    this.next = getTime() + phase * RIBBON_TICK
+  }
+
+  due(now: number): boolean {
+    if (now < this.next) return false
+    this.next = now - this.next < RIBBON_TICK ? this.next + RIBBON_TICK : now + RIBBON_TICK
+    return true
+  }
 }

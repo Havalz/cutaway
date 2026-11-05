@@ -14,6 +14,8 @@ export interface CaptionHost {
   captionPlace(): CaptionPlace
   /** Design cm the words wrap to. */
   readonly captionWidth: number
+  /** How many lines are on it now (0: none), so its glass can fit them. */
+  setCaptionLines?(lines: number): void
 }
 
 interface PlacedWord {
@@ -58,6 +60,8 @@ export interface CaptionInfo {
 
 /** A caption this far from where it is showing is a new one, not the same one nudged (cm). */
 const SAME_PLACE = 2
+/** Captions run to nine words, a few more can come: all the slots exist from the start. */
+const WORD_SLOTS = 12
 
 /**
  * The one caption: each word is its own Text so it can fade in and rise a little after the one
@@ -83,6 +87,7 @@ export class WordCaption {
     this.root = global.scene.createSceneObject("Caption")
     this.root.setParent(parent)
     this.root.enabled = false
+    for (let i = 0; i < WORD_SLOTS; i++) this.slot(i, true).so.enabled = false
   }
 
   /** `at` = the top centre to hang from; with a host the words sit on it and `at` isn't used. */
@@ -112,6 +117,7 @@ export class WordCaption {
   hide(instant: boolean): void {
     this.wanted = null
     if (instant) {
+      this.tellHost(this.active, null)
       this.active = null
       this.phase = "idle"
       this.fadeT = 0
@@ -182,6 +188,7 @@ export class WordCaption {
 
   /** The old caption has gone: the wanted one starts. */
   private swap(): void {
+    this.tellHost(this.active, this.wanted)
     this.active = this.wanted
     this.fadeT = 0
     this.revealT = 0
@@ -201,6 +208,14 @@ export class WordCaption {
     }
     this.follow()
     this.draw()
+  }
+
+  /** The old caption's host has lost its words, the new one's has them. */
+  private tellHost(was: Layout | null, now: Layout | null): void {
+    const a = was ? was.host : null
+    const b = now ? now.host : null
+    if (a && a !== b && a.setCaptionLines) a.setCaptionLines(0)
+    if (b && b.setCaptionLines) b.setCaptionLines(now.lines)
   }
 
   private wordAlpha(i: number): number {

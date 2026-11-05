@@ -58,7 +58,10 @@ export class R7RpApartScenario extends Scenario {
     let mHi = -Infinity
     let gLo = Infinity
     let gHi = -Infinity
+    // The furthest it got: first and last alone can't tell a whole turn from none.
+    let subTurned = 0
     for (let k = 0; k < 40; k++) {
+      subTurned = Math.max(subTurned, angleBetween(q0.s, sub.getLocalRotation()))
       const x = rp.getApartInfo()
       mLo = Math.min(mLo, x.magnetOffset)
       mHi = Math.max(mHi, x.magnetOffset)
@@ -69,7 +72,7 @@ export class R7RpApartScenario extends Scenario {
     const b = rp.getApartInfo()
     check(b.driveOmega > 3, () => `the motor drive runs at ${b.driveOmega.toFixed(2)} rad/s`)
     check(b.driveAngle - q0.d > 2, () => `the sub-platter turned only ${(b.driveAngle - q0.d).toFixed(2)} rad`)
-    check(angleBetween(q0.s, sub.getLocalRotation()) > 0.2, "the sub-platter's transform did not turn")
+    check(subTurned > 0.2, "the sub-platter's transform did not turn")
     check(angleBetween(q0.p, pul.getLocalRotation()) > 0.05 || b.driveOmega > 3, "the motor pulley's transform did not turn")
     check(b.beltTravel !== q0.b, "the belt did not run")
     check(mHi - mLo > 0.06, () => `the magnet moved only ${(mHi - mLo).toFixed(3)} cm`)

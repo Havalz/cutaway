@@ -23,6 +23,10 @@ interface Label {
   drawT: number
   /** Callouts: the text sits right (+1) or left (-1) of the leader's end. */
   side: number
+  /** The alpha last written. */
+  shownA: number
+  /** Moved since it last turned to the viewer. */
+  moved: boolean
 }
 
 /**
@@ -69,6 +73,8 @@ export class CutawayLabelsUI extends BaseScriptComponent {
   private caption: WordCaption
   private camTransform: Transform | null = null
   private lineMaterial: Material | null = null
+  private eye: vec3 | null = null
+  private look: vec3 | null = null
 
   onAwake(): void {
     this.sceneObject.createComponent("Component.Canvas")
@@ -119,6 +125,7 @@ export class CutawayLabelsUI extends BaseScriptComponent {
       label.text.layoutRect = Rect.create(-w / 2, w / 2, -3, 3)
     }
     label.drawT = 0
+    label.moved = true
     label.so.enabled = true
     label.fader.show(true, false, label.leader ? 0.12 : 0)
   }
@@ -137,6 +144,7 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     const tr = label.so.getTransform()
     tr.setWorldPosition(worldPos)
     tr.setLocalScale(vec3.one().uniformScale(this.scaleAt(worldPos)))
+    label.moved = true
     if (anchor && label.leader && label.dot) {
       const d = worldPos.sub(anchor)
       const len = d.length
@@ -292,7 +300,7 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     t.verticalOverflow = VerticalOverflow.Overflow
     t.layoutRect = Rect.create(-this.maxWidth / 2, this.maxWidth / 2, -3, 3)
     so.enabled = false
-    return {so, text: t, fader: new Fader(false), leader: null, leaderMat: null, dot: null, leaderLen: 0, drawT: 0, side: 1}
+    return {so, text: t, fader: new Fader(false), leader: null, leaderMat: null, dot: null, leaderLen: 0, drawT: 0, side: 1, shownA: 0, moved: true}
   }
 
   private clearCallout(label: Label): void {
@@ -343,11 +351,28 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     tr.setWorldRotation(faceToward(this.camTransform.getWorldPosition().sub(tr.getWorldPosition()), this.camTransform.up))
   }
 
-  private step(l: Label, dt: number): void {
+  /** Whether the viewer has moved or turned since the last frame. */
+  private viewerMoved(): boolean {
+    if (!this.camTransform) return false
+    const e = this.camTransform.getWorldPosition()
+    const f = this.camTransform.forward
+    const moved = !this.eye || !this.look || e.x !== this.eye.x || e.y !== this.eye.y || e.z !== this.eye.z || f.x !== this.look.x || f.y !== this.look.y || f.z !== this.look.z
+    this.eye = e
+    this.look = f
+    return moved
+  }
+
+  private step(l: Label, id: string, dt: number, viewerMoved: boolean): void {
     if (!l.so.enabled) return
     const a = l.fader.update(dt)
-    setTextAlpha(l.text, a, ALPHA.secondary)
-    this.face(l.so)
+    if (a !== l.shownA) {
+      l.shownA = a
+      setTextAlpha(l.text, a, ALPHA.secondary)
+    }
+    if (viewerMoved || l.moved) {
+      l.moved = false
+      this.face(l.so)
+    }
     if (l.leader && l.leaderMat) {
       // The leader draws out from the part (250 ms), then the words fade in.
       l.drawT += dt
@@ -355,16 +380,19 @@ export class CutawayLabelsUI extends BaseScriptComponent {
       l.leader.getTransform().setLocalScale(new vec3(1, 1, Math.max(0.0001, l.leaderLen * draw)))
       setFade(l.leaderMat, l.fader.isShown ? clamp01(l.drawT / 0.08) : a)
     }
+    // Faded out: it is gone. The next show makes a new one, so nothing piles up.
     if (!l.fader.isShown && !l.fader.isAnimating) {
-      l.so.enabled = false
       this.clearCallout(l)
+      l.so.destroy()
+      this.labels.delete(id)
     }
   }
 
   private onUpdate(): void {
     const dt = getDeltaTime()
     this.measureChars()
-    this.labels.forEach((l) => this.step(l, dt))
+    const moved = this.viewerMoved()
+    this.labels.forEach((l, id) => this.step(l, id, dt, moved))
     this.caption.update(dt)
   }
 }

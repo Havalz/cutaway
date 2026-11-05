@@ -53,6 +53,15 @@ import {U6OpeningScenario} from "./U6OpeningScenario"
 import {U7TrioScenario} from "./U7TrioScenario"
 import {U8FinaleScenario} from "./U8FinaleScenario"
 import {HelperUiCaptureScenario} from "./HelperUiCaptureScenario"
+import {PerfScenario} from "./PerfScenario"
+import {LeakScenario} from "./LeakScenario"
+import {F1RebuildsScenario} from "./F1RebuildsScenario"
+import {F2ShadeBobScenario} from "./F2ShadeBobScenario"
+import {F3ToneTableScenario} from "./F3ToneTableScenario"
+import {F4NoGrowthScenario} from "./F4NoGrowthScenario"
+import {L9LampApartLayoutScenario} from "./L9LampApartLayoutScenario"
+import {R9RpApartLayoutScenario} from "./R9RpApartLayoutScenario"
+import {LayoutCheckScenario} from "./LayoutCheckScenario"
 
 @component
 export class LeafIndex extends BaseScriptComponent {
@@ -109,6 +118,15 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "u6-opening", typename: U6OpeningScenario.getTypeName()},
     {id: "u7-trio", typename: U7TrioScenario.getTypeName()},
     {id: "u8-finale", typename: U8FinaleScenario.getTypeName()},
+    {id: "f1-rebuilds", typename: F1RebuildsScenario.getTypeName()},
+    {id: "f2-shade-bob", typename: F2ShadeBobScenario.getTypeName()},
+    {id: "f3-tone-table", typename: F3ToneTableScenario.getTypeName()},
+    {id: "f4-no-growth", typename: F4NoGrowthScenario.getTypeName()},
+    {id: "l9-lamp-apart-layout", typename: L9LampApartLayoutScenario.getTypeName()},
+    {id: "r9-rp-apart-layout", typename: R9RpApartLayoutScenario.getTypeName()},
+    {id: "helper-layout-check", typename: LayoutCheckScenario.getTypeName(), parameters: {station: "lamp"}},
+    {id: "helper-perf", typename: PerfScenario.getTypeName(), parameters: {state: "idle", off: "", seconds: "", reps: "", count: ""}},
+    {id: "helper-leaks", typename: LeakScenario.getTypeName(), parameters: {station: "lamp", cycles: ""}},
     {id: "helper-ui-capture", typename: HelperUiCaptureScenario.getTypeName(), parameters: {beat: "halo", station: "recordPlayer", extraMs: "", holdAt: ""}},
     {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer", step: "", untilPhase: "", extraMs: "", layout: ""}}
   ]

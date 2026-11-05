@@ -22,12 +22,11 @@
  * density and strength), the LED, the shade glow, the pools and the real lamp, and 0 looks the same
  * as off. Warmth sets the colour of all emitted light by kelvinToRgb (Kang et al. 2002, below).
  */
-import {lightColor, MeshKit, setFade, spawnMesh, STRUCT_GLOW} from "./CutawayGeometry"
+import {lightColor, MeshKit, rewriteVertices, spawnMesh, STRUCT_GLOW} from "./CutawayGeometry"
 import {TableSurface} from "./CutawayHeroSurface"
 import {LAMP_GEOM, lampShadeR, LampModel} from "./CutawayLampModel"
-import {bezier} from "./CutawayStageKit"
 import {ENERGY, ink, INK} from "./CutawayStyle"
-import {clamp01, easeIn, easeInOut, easeOutCubic, faceToward, yawToward} from "./CutawayTween"
+import {clamp01, easeIn, easeInOut, easeOutCubic, faceToward, RibbonClock, yawToward} from "./CutawayTween"
 
 const G = LAMP_GEOM
 
@@ -150,6 +149,7 @@ const THREAD_DELAY = 0.3
 const V_THREAD = 320
 const THREAD_PACKET_LEN = 12
 const THREAD_SPACING = 34
+const THREAD_N = 56
 const REAL_RAMP = 0.5
 const CAPTION_GLOW_AFTER = 2.6
 const FADE_S = 0.4
@@ -157,6 +157,8 @@ const FADE_S = 0.4
 const POOL_R = 30
 const POOL_R_BARE = 17
 const FLOOR_POOL_R = 115
+/** The floor pool's rings stop here (share of its radius): past it the light is too faint to see. */
+const FLOOR_POOL_TRIM = 0.87
 /**
  * Glow strengths: the light each adds at full Brightness (linear; tint() and the vertex gradients
  * take the square root, since the glow material blends Add with source alpha so both land squared).
@@ -178,6 +180,17 @@ const COAT_AMBER = new vec3(1, 0.6, 0.16)
 const ZERO = new vec4(0, 0, 0, 0)
 /** Render after every part of the copy (its draw orders run 0–15), so the paper's depth hides the glow's far side. */
 const ORDER = 20
+/** How far the eye moves (cm) before a ribbon turns to it again: under half a degree at arm's length. */
+const EYE_EPS = 0.5
+/** How far something moves (cm) before what hangs on it is placed again. */
+const MOVE_EPS = 0.01
+/** A whole object faces the eye again after it has moved this far (cm). */
+const FACE_EPS = 0.05
+const CHIP_BLUE_RGB = new vec3(CHIP_BLUE.x, CHIP_BLUE.y, CHIP_BLUE.z)
+const ROW_LED = new vec3(0, 0.16, 0)
+const PLUG_POINT = new vec3(0, 1.4, 0)
+/** The real lamp's bloom stops here (its unit radius): at that edge it adds less than 1/255. */
+const BLOOM_EDGE = 0.72
 
 export type LightPhase = "off" | "flow" | "lit" | "fading"
 
@@ -310,15 +323,38 @@ function attach(parent: SceneObject, name: string, mb: MeshBuilder, material: Ma
   return {so, rmv, mat}
 }
 
+/** Points along a path (world) and a strength at each, as plain numbers, reused from frame to frame. */
+export interface PathPoints {
+  x: Float64Array
+  y: Float64Array
+  z: Float64Array
+  a: Float64Array
+}
+
+export function pathPoints(n: number): PathPoints {
+  return {x: new Float64Array(n), y: new Float64Array(n), z: new Float64Array(n), a: new Float64Array(n)}
+}
+
+/** A row's strength has to change by this much before the row is written again (it lands squared). */
+const ALPHA_EPS = 1 / 512
+
 /**
  * A ribbon of light through world points that turns its flat side to the eye at every point (so a
- * path that runs away from the viewer stays a line), with a width and a strength per point.
+ * path that runs away from the viewer stays a line), with a width and a strength per point. Rebuilt
+ * only as far as it has to be: `geometry` when the points, widths or eye have moved, otherwise only
+ * the rows whose strength has changed.
  */
 export class PathRibbon {
   readonly so: SceneObject
   readonly mat: Material
   private mb: MeshBuilder
-  private cols: vec4[]
+  private cr: number[] = []
+  private cg: number[] = []
+  private cb: number[] = []
+  private ca: number[] = []
+  private data: number[] = []
+  private last: Float64Array
+  private level = -1
 
   constructor(
     parent: SceneObject,
@@ -328,9 +364,16 @@ export class PathRibbon {
     color: vec4
   ) {
     const P = PROFILE.length
-    this.cols = PROFILE.map((q) => lightColor(color, q.k, q.hot))
+    for (const q of PROFILE) {
+      const c = lightColor(color, q.k, q.hot)
+      this.cr.push(c.x)
+      this.cg.push(c.y)
+      this.cb.push(c.z)
+      this.ca.push(c.w)
+    }
+    this.last = new Float64Array(count)
     this.mb = newBuilder()
-    const data: number[] = []
+    const data = this.data
     for (let i = 0; i < count * P; i++) data.push(0, 0, 0, 0, 0, 1, 0, 0, 0, 0)
     this.mb.appendVerticesInterleaved(data)
     const idx: number[] = []
@@ -347,50 +390,122 @@ export class PathRibbon {
     this.mat = s.mat
   }
 
-  update(pts: vec3[], eye: vec3, width: number[], alpha: number[]): void {
+  /** How strongly the whole ribbon is drawn; at nothing it isn't drawn at all. */
+  setLevel(k: number): void {
+    if (k === this.level) return
+    this.level = k
+    this.so.enabled = k > 1e-4
+    this.mat.mainPass.baseColor = new vec4(k, k, k, k)
+  }
+
+  commit(p: PathPoints, eye: vec3, width: Float64Array, geometry: boolean): void {
+    const n = this.count
     const P = PROFILE.length
-    const n = pts.length
-    let prev = vec3.up()
-    for (let i = 0; i < this.count; i++) {
-      const j = Math.min(i, n - 1)
-      const p = pts[j]
-      const a = pts[Math.max(0, j - 1)]
-      const b = pts[Math.min(n - 1, j + 1)]
-      const v = eye.sub(p)
-      let side = b.sub(a).cross(v)
-      side = side.length > 1e-6 ? side.normalize() : prev
-      if (i > 0 && side.dot(prev) < 0) side = side.uniformScale(-1)
-      prev = side
-      const nn = v.length > 1e-6 ? v.normalize() : vec3.forward()
-      const w = width[j] / 2
-      const k = i < n ? alpha[j] : 0
-      for (let q = 0; q < P; q++) {
-        const r = p.add(side.uniformScale(PROFILE[q].o * w))
-        const c = this.cols[q]
-        this.mb.setVertexInterleaved(i * P + q, [r.x, r.y, r.z, nn.x, nn.y, nn.z, c.x * k, c.y * k, c.z * k, c.w * k])
+    const d = this.data
+    if (geometry) {
+      const ex = eye.x
+      const ey = eye.y
+      const ez = eye.z
+      let psx = 0
+      let psy = 1
+      let psz = 0
+      for (let i = 0; i < n; i++) {
+        const a = i > 0 ? i - 1 : 0
+        const b = i < n - 1 ? i + 1 : n - 1
+        const tx = p.x[b] - p.x[a]
+        const ty = p.y[b] - p.y[a]
+        const tz = p.z[b] - p.z[a]
+        const vx = ex - p.x[i]
+        const vy = ey - p.y[i]
+        const vz = ez - p.z[i]
+        let sx = ty * vz - tz * vy
+        let sy = tz * vx - tx * vz
+        let sz = tx * vy - ty * vx
+        const sl = Math.sqrt(sx * sx + sy * sy + sz * sz)
+        if (sl > 1e-6) {
+          sx /= sl
+          sy /= sl
+          sz /= sl
+        } else {
+          sx = psx
+          sy = psy
+          sz = psz
+        }
+        if (i > 0 && sx * psx + sy * psy + sz * psz < 0) {
+          sx = -sx
+          sy = -sy
+          sz = -sz
+        }
+        psx = sx
+        psy = sy
+        psz = sz
+        const vl = Math.sqrt(vx * vx + vy * vy + vz * vz)
+        const nx = vl > 1e-6 ? vx / vl : 0
+        const ny = vl > 1e-6 ? vy / vl : 0
+        const nz = vl > 1e-6 ? vz / vl : 1
+        const w = width[i] / 2
+        for (let q = 0; q < P; q++) {
+          const o = PROFILE[q].o * w
+          const at = (i * P + q) * 10
+          d[at] = p.x[i] + sx * o
+          d[at + 1] = p.y[i] + sy * o
+          d[at + 2] = p.z[i] + sz * o
+          d[at + 3] = nx
+          d[at + 4] = ny
+          d[at + 5] = nz
+        }
       }
     }
-    this.mb.updateMesh()
+    const last = this.last
+    let changed = geometry
+    for (let i = 0; i < n; i++) {
+      const k = p.a[i]
+      const dk = k - last[i]
+      if (dk === 0 || (k !== 0 && dk < ALPHA_EPS && dk > -ALPHA_EPS)) continue
+      last[i] = k
+      changed = true
+      for (let q = 0; q < P; q++) {
+        const at = (i * P + q) * 10 + 6
+        d[at] = this.cr[q] * k
+        d[at + 1] = this.cg[q] * k
+        d[at + 2] = this.cb[q] * k
+        d[at + 3] = this.ca[q] * k
+      }
+    }
+    if (changed) rewriteVertices(this.mb, d)
   }
 }
 
 /**
  * A pool of light lying on a horizontal surface: rings at even fractions of its radius whose
- * strength follows a profile, cut off (and softly faded) at a circle (the table's edge).
+ * strength follows a profile, cut off (and softly faded) at a circle (the table's edge). Written only
+ * when one of its inputs changes.
  */
 class PoolMesh {
   readonly so: SceneObject
   readonly mat: Material
   private mb: MeshBuilder
-  private static NR = 26
-  private static NS = 64
-  private last = ""
+  private data: number[] = []
+  private lastX = NaN
+  private lastY = 0
+  private lastZ = 0
+  private lastR = 0
+  private lastEdge = 0
+  private lastClipX = 0
+  private lastClipZ = 0
+  private lastClipR = 0
 
-  constructor(parent: SceneObject, name: string, material: Material) {
-    const NR = PoolMesh.NR
-    const NS = PoolMesh.NS
+  constructor(
+    parent: SceneObject,
+    name: string,
+    material: Material,
+    private NR: number,
+    private NS: number,
+    /** The share of the radius the rings reach (less than 1: the rest is too faint to see). */
+    private trim: number = 1
+  ) {
     this.mb = newBuilder()
-    const data: number[] = []
+    const data = this.data
     for (let i = 0; i < (NR + 1) * NS; i++) data.push(0, 0, 0, 0, 1, 0, 0, 0, 0, 0)
     this.mb.appendVerticesInterleaved(data)
     const idx: number[] = []
@@ -409,37 +524,54 @@ class PoolMesh {
     this.mat = s.mat
   }
 
-  /** Lay it at `center` (world), radius R; `edge` = the soft edge's width as a fraction of R. */
-  update(center: vec3, R: number, edge: number, clip: {c: vec3; r: number} | null): void {
-    const key = [center.x, center.y, center.z, R, edge, clip ? clip.c.x : 0, clip ? clip.c.z : 0, clip ? clip.r : 0].map((v) => v.toFixed(2)).join(",")
-    if (key === this.last) return
-    this.last = key
-    const NR = PoolMesh.NR
-    const NS = PoolMesh.NS
+  /** Lay it at (x, y, z) (world), radius R; `edge` = the soft edge's width as a fraction of R; clipR 0 = no clip circle. */
+  update(x: number, y: number, z: number, R: number, edge: number, clipX: number, clipZ: number, clipR: number): void {
+    const near = (a: number, b: number) => a - b < 0.005 && b - a < 0.005
+    if (near(x, this.lastX) && near(y, this.lastY) && near(z, this.lastZ) && near(R, this.lastR) && near(edge, this.lastEdge) && near(clipX, this.lastClipX) && near(clipZ, this.lastClipZ) && near(clipR, this.lastClipR)) return
+    this.lastX = x
+    this.lastY = y
+    this.lastZ = z
+    this.lastR = R
+    this.lastEdge = edge
+    this.lastClipX = clipX
+    this.lastClipZ = clipZ
+    this.lastClipR = clipR
+    const NR = this.NR
+    const NS = this.NS
     const e = Math.max(0.02, Math.min(1, edge))
+    const d = this.data
     for (let j = 0; j <= NR; j++) {
-      const rho = j / NR
+      const rho = (j / NR) * this.trim
       // Flat inside, then a smooth cosine falloff over the edge.
       const u = clamp01((rho - (1 - e)) / e)
-      // (√I, √I) lands as I (Add with source alpha).
-      const I = Math.sqrt(0.5 + 0.5 * Math.cos(Math.PI * u))
+      // (√I, √I) lands as I (Add with source alpha); the last ring of a trimmed pool is nothing.
+      const I = j === NR ? 0 : Math.sqrt(0.5 + 0.5 * Math.cos(Math.PI * u))
       for (let s = 0; s < NS; s++) {
         const a = (s / NS) * Math.PI * 2
-        let p = new vec3(center.x + Math.cos(a) * rho * R, center.y, center.z + Math.sin(a) * rho * R)
+        let px = x + Math.cos(a) * rho * R
+        let pz = z + Math.sin(a) * rho * R
         let k = I
-        if (clip) {
-          const dx = p.x - clip.c.x
-          const dz = p.z - clip.c.z
+        if (clipR > 0) {
+          const dx = px - clipX
+          const dz = pz - clipZ
           const d = Math.sqrt(dx * dx + dz * dz)
-          if (d > clip.r) {
-            p = new vec3(clip.c.x + (dx / d) * clip.r, center.y, clip.c.z + (dz / d) * clip.r)
+          if (d > clipR) {
+            px = clipX + (dx / d) * clipR
+            pz = clipZ + (dz / d) * clipR
             k = 0
-          } else k *= clamp01((clip.r - d) / 2)
+          } else k *= clamp01((clipR - d) / 2)
         }
-        this.mb.setVertexInterleaved(j * NS + s, [p.x, p.y, p.z, 0, 1, 0, k, k, k, k])
+        const at = (j * NS + s) * 10
+        d[at] = px
+        d[at + 1] = y
+        d[at + 2] = pz
+        d[at + 6] = k
+        d[at + 7] = k
+        d[at + 8] = k
+        d[at + 9] = k
       }
     }
-    this.mb.updateMesh()
+    rewriteVertices(this.mb, d)
   }
 }
 
@@ -448,6 +580,9 @@ class CometCloud {
   readonly so: SceneObject
   readonly mat: Material
   private mb: MeshBuilder
+  private data: number[] = []
+  /** How many comets were written last time (those past the new count are cleared once). */
+  private drawn = 0
   private static ROWS = [
     {u: 0, k: 0},
     {u: 0.6, k: 0.35},
@@ -464,7 +599,7 @@ class CometCloud {
     const P = PROFILE.length
     const R = CometCloud.ROWS.length
     this.mb = newBuilder()
-    const data: number[] = []
+    const data = this.data
     for (let i = 0; i < n * R * P; i++) data.push(0, 0, 0, 0, 0, 1, 0, 0, 0, 0)
     this.mb.appendVerticesInterleaved(data)
     const idx: number[] = []
@@ -482,26 +617,53 @@ class CometCloud {
     this.mat = s.mat
   }
 
-  update(items: {x: number; y: number; dx: number; dy: number; len: number; w: number; c: vec4}[]): void {
+  /** The photons as comets: `coat` is the colour of those the coating has turned, the rest are the chip's blue. */
+  update(photons: Photon[], coat: vec3): void {
     const P = PROFILE.length
     const rows = CometCloud.ROWS
-    for (let i = 0; i < this.n; i++) {
-      const it = i < items.length ? items[i] : null
-      for (let r = 0; r < rows.length; r++)
+    const count = Math.min(this.n, photons.length)
+    if (count === 0 && this.drawn === 0) return
+    const d = this.data
+    const len = 1.3
+    const hw = 0.15
+    for (let i = 0; i < count; i++) {
+      const p = photons[i]
+      const r2 = p.x * p.x + (p.y - BOARD_Y) * (p.y - BOARD_Y)
+      const a = clamp01(p.age / 0.08) * clamp01((PHOTON_MAX_R - Math.sqrt(r2)) / 1.5)
+      const yellow = p.yellow === true
+      const cr = (yellow ? coat.x : CHIP_BLUE.x) * a
+      const cg = (yellow ? coat.y : CHIP_BLUE.y) * a
+      const cb = (yellow ? coat.z : CHIP_BLUE.z) * a
+      for (let r = 0; r < rows.length; r++) {
+        const u = rows[r].u
+        const back = len * (1 - u)
+        const hotTip = u > 0.9 ? 0.25 : 0
         for (let q = 0; q < P; q++) {
-          const vi = (i * rows.length + r) * P + q
-          if (!it) {
-            this.mb.setVertexInterleaved(vi, [0, 0, 0, 0, 0, 1, 0, 0, 0, 0])
-            continue
-          }
-          const u = rows[r].u
-          const px = it.x - it.dx * it.len * (1 - u) - it.dy * PROFILE[q].o * (it.w / 2)
-          const py = it.y - it.dy * it.len * (1 - u) + it.dx * PROFILE[q].o * (it.w / 2)
-          const c = lightColor(it.c, PROFILE[q].k * rows[r].k, PROFILE[q].hot + (u > 0.9 ? 0.25 : 0))
-          this.mb.setVertexInterleaved(vi, [px, py, 0.03, 0, 0, 1, c.x, c.y, c.z, c.w])
+          const pr = PROFILE[q]
+          const at = ((i * rows.length + r) * P + q) * 10
+          d[at] = p.x - p.dx * back - p.dy * pr.o * hw
+          d[at + 1] = p.y - p.dy * back + p.dx * pr.o * hw
+          d[at + 2] = 0.03
+          const k = pr.k * rows[r].k
+          const hot = pr.hot + hotTip
+          d[at + 6] = (cr + (a - cr) * hot) * k
+          d[at + 7] = (cg + (a - cg) * hot) * k
+          d[at + 8] = (cb + (a - cb) * hot) * k
+          d[at + 9] = a * k
         }
+      }
     }
-    this.mb.updateMesh()
+    for (let at = count * rows.length * P * 10; at < this.drawn * rows.length * P * 10; at += 10) {
+      d[at] = 0
+      d[at + 1] = 0
+      d[at + 2] = 0
+      d[at + 6] = 0
+      d[at + 7] = 0
+      d[at + 8] = 0
+      d[at + 9] = 0
+    }
+    this.drawn = count
+    rewriteVertices(this.mb, d)
   }
 }
 
@@ -519,9 +681,10 @@ class ShadeGlowMesh {
   readonly mat: Material
   private mb: MeshBuilder
   private ys: number[] = []
-  private pos: vec3[] = []
-  private nrm: vec3[] = []
+  private data: number[] = []
   private last = -1
+  /** How many times it has been rewritten (the lift changing; the lamp's bob never does it). */
+  rewrites = 0
   private static ROWS = 44
   private static SEG = 48
 
@@ -529,7 +692,7 @@ class ShadeGlowMesh {
     const R = ShadeGlowMesh.ROWS
     const N = ShadeGlowMesh.SEG
     this.mb = newBuilder()
-    const data: number[] = []
+    const data = this.data
     for (let j = 0; j <= R; j++) {
       const y = G.paperY0 + ((G.paperY1 - G.paperY0) * j) / R
       this.ys.push(y)
@@ -537,10 +700,7 @@ class ShadeGlowMesh {
       for (let s = 0; s <= N; s++) {
         const a = (s / N) * Math.PI * 2
         const n = new vec3(Math.cos(a), 0, Math.sin(a))
-        const p = new vec3(n.x * r, y, n.z * r)
-        this.pos.push(p)
-        this.nrm.push(n)
-        data.push(p.x, p.y, p.z, n.x, n.y, n.z, 0, 0, 0, 0)
+        data.push(n.x * r, y, n.z * r, n.x, n.y, n.z, 0, 0, 0, 0)
       }
     }
     this.mb.appendVerticesInterleaved(data)
@@ -564,18 +724,21 @@ class ShadeGlowMesh {
     // Small changes are skipped, but seated is always exact.
     if (Math.abs(liftM - this.last) < 0.05 && (liftM > 0 || this.last === 0)) return
     this.last = liftM
+    this.rewrites++
     const N = ShadeGlowMesh.SEG
+    const d = this.data
     for (let j = 0; j < this.ys.length; j++) {
       // The material blends Add with source alpha: (√g, √g) lands as g.
       const g = Math.sqrt(shadeGlowLifted(this.ys[j], liftM))
       for (let s = 0; s <= N; s++) {
-        const i = j * (N + 1) + s
-        const p = this.pos[i]
-        const n = this.nrm[i]
-        this.mb.setVertexInterleaved(i, [p.x, p.y, p.z, n.x, n.y, n.z, g, g, g, g])
+        const at = (j * (N + 1) + s) * 10 + 6
+        d[at] = g
+        d[at + 1] = g
+        d[at + 2] = g
+        d[at + 3] = g
       }
     }
-    this.mb.updateMesh()
+    rewriteVertices(this.mb, d)
   }
 
   /** The paper's brightest point now: its widest row seated, moving down the paper as it lifts (1 seated). */
@@ -597,6 +760,7 @@ class RayBurst {
   private dirs: vec3[] = []
   private lens: number[] = []
   private phase: number[] = []
+  private data: number[] = []
   private static ROWS = [
     {u: 0, k: 1},
     {u: 0.3, k: 0.55},
@@ -618,7 +782,7 @@ class RayBurst {
     const P = PROFILE.length
     const R = RayBurst.ROWS.length
     this.mb = newBuilder()
-    const data: number[] = []
+    const data = this.data
     for (let i = 0; i < this.dirs.length * R * P; i++) data.push(0, 0, 0, 0, 0, 1, 0, 0, 0, 0)
     this.mb.appendVerticesInterleaved(data)
     const idx: number[] = []
@@ -645,28 +809,58 @@ class RayBurst {
     const P = PROFILE.length
     const rows = RayBurst.ROWS
     const ext = clamp01(extent)
+    const data = this.data
     for (let i = 0; i < this.dirs.length; i++) {
       const d = this.dirs[i]
       const L = len * this.lens[i] * (0.35 + 0.65 * ext)
       // A faint, slow shimmer along each ray (never dark).
       const tw = 0.82 + 0.18 * Math.sin(t * 2.1 + this.phase[i])
       for (let r = 0; r < rows.length; r++) {
-        const p = c.add(d.uniformScale(r0 + L * rows[r].u))
-        const v = eye.sub(p)
-        let side = d.cross(v)
-        side = side.length > 1e-6 ? side.normalize() : vec3.right()
-        const nn = v.length > 1e-6 ? v.normalize() : vec3.forward()
-        const w = (0.16 + (0.035 - 0.16) * rows[r].u) * Math.max(1, v.length / 90)
+        const along = r0 + L * rows[r].u
+        const px = c.x + d.x * along
+        const py = c.y + d.y * along
+        const pz = c.z + d.z * along
+        const vx = eye.x - px
+        const vy = eye.y - py
+        const vz = eye.z - pz
+        let sx = d.y * vz - d.z * vy
+        let sy = d.z * vx - d.x * vz
+        let sz = d.x * vy - d.y * vx
+        const sl = Math.sqrt(sx * sx + sy * sy + sz * sz)
+        if (sl > 1e-6) {
+          sx /= sl
+          sy /= sl
+          sz /= sl
+        } else {
+          sx = 1
+          sy = 0
+          sz = 0
+        }
+        const vl = Math.sqrt(vx * vx + vy * vy + vz * vz)
+        const nx = vl > 1e-6 ? vx / vl : 0
+        const ny = vl > 1e-6 ? vy / vl : 0
+        const nz = vl > 1e-6 ? vz / vl : 1
+        const w = (0.16 + (0.035 - 0.16) * rows[r].u) * Math.max(1, vl / 90)
         for (let q = 0; q < P; q++) {
           const pr = PROFILE[q]
-          const x = p.add(side.uniformScale(pr.o * w))
+          const o = pr.o * w
+          const at = ((i * rows.length + r) * P + q) * 10
+          data[at] = px + sx * o
+          data[at + 1] = py + sy * o
+          data[at + 2] = pz + sz * o
+          data[at + 3] = nx
+          data[at + 4] = ny
+          data[at + 5] = nz
           // (√I, √I) lands as I.
           const k = Math.sqrt(Math.max(0, rows[r].k * pr.k * tw * ext))
-          this.mb.setVertexInterleaved((i * rows.length + r) * P + q, [x.x, x.y, x.z, nn.x, nn.y, nn.z, k, k, k, k])
+          data[at + 6] = k
+          data[at + 7] = k
+          data[at + 8] = k
+          data[at + 9] = k
         }
       }
     }
-    this.mb.updateMesh()
+    rewriteVertices(this.mb, data)
   }
 }
 
@@ -693,6 +887,55 @@ function shadeGlowKit(pad: number, rows: number = 44, seg: number = 48): MeshKit
 function tint(mat: Material, c: vec3, k: number): void {
   const f = Math.sqrt(Math.max(0, k))
   mat.mainPass.baseColor = new vec4(c.x * f, c.y * f, c.z * f, f)
+}
+
+/** A material's colour and level, written only when they change. */
+class Tint {
+  private x = NaN
+  private y = NaN
+  private z = NaN
+  private w = NaN
+  private shown: boolean | null = null
+  private v = new vec4(0, 0, 0, 0)
+
+  /** With an object, it is drawn only while it has any light to add (level past 1e-4). */
+  constructor(
+    readonly mat: Material,
+    private so: SceneObject | null = null
+  ) {}
+
+  /** As tint(). */
+  set(c: vec3, k: number): void {
+    const f = Math.sqrt(Math.max(0, k))
+    this.write(c.x * f, c.y * f, c.z * f, f)
+  }
+
+  /** As setFade(). */
+  fade(k: number): void {
+    const f = Math.max(0, k)
+    this.write(f, f, f, f)
+  }
+
+  private write(x: number, y: number, z: number, w: number): void {
+    if (x === this.x && y === this.y && z === this.z && w === this.w) return
+    if (this.so) {
+      const on = w > 0.01
+      if (on !== this.shown) {
+        this.shown = on
+        this.so.enabled = on
+      }
+    }
+    this.x = x
+    this.y = y
+    this.z = z
+    this.w = w
+    const v = this.v
+    v.x = x
+    v.y = y
+    v.z = z
+    v.w = w
+    this.mat.mainPass.baseColor = v
+  }
 }
 
 /** A material's drawn colour over its level (what tint() set). */
@@ -736,20 +979,39 @@ interface Photon {
 class LedBubble {
   readonly node: SceneObject
   private face: SceneObject
-  private frameMats: Material[] = []
-  private chipMat: Material
-  private coatMat: Material
-  private whiteMat: Material
+  private nodeTr: Transform
+  private faceTr: Transform
+  private frame: Tint[] = []
+  private chipTint: Tint
+  private coatTint: Tint
+  private whiteTint: Tint
+  private cloudTint: Tint
   private cloud: CometCloud
-  private leader: PathRibbon
+  private clock = new RibbonClock(0.25)
   readonly S: number
   private photons: Photon[] = []
+  private spare: Photon[] = []
   private nextId = 0
   private spawnAcc = 0
-  private target = vec3.zero()
+  private shown: boolean | null = null
+  /** Comets have stepped (or the bubble just showed) since they were last drawn. */
+  private dirty = true
+  private drawnOpen = -1
+  private drawnLed = new vec3(0, 0, 0)
+  private drawnEye = new vec3(0, 0, 0)
+  private drawnSide = 0
+  private drawnR = 0
+  private scaleV = new vec3(1, 1, 1)
+  private posV = new vec3(0, 0, 0)
+  private dirV = new vec3(0, 0, 1)
   blue = 0
   yellowN = 0
   chipShown = false
+  /** The bubble's centre and rim radius now (world). */
+  discX = 0
+  discY = 0
+  discZ = 0
+  discR = 0
   /** The converted light's colour now (yellow, warmer toward amber). */
   coatColor = new vec3(COAT_YELLOW.x, COAT_YELLOW.y, COAT_YELLOW.z)
 
@@ -762,114 +1024,185 @@ class LedBubble {
     this.S = Math.min(1.8, Math.max(1, cam.distance(led) / 220))
     this.node = global.scene.createSceneObject("LampBubble")
     this.node.setParent(parent)
-    this.node.getTransform().setWorldPosition(led)
-    this.node.getTransform().setLocalScale(vec3.one().uniformScale(1e-4))
+    this.nodeTr = this.node.getTransform()
+    this.nodeTr.setWorldPosition(led)
+    this.nodeTr.setLocalScale(vec3.one().uniformScale(1e-4))
     this.face = global.scene.createSceneObject("LampBubbleFace")
     this.face.setParent(this.node)
-    this.face.getTransform().setLocalScale(vec3.one().uniformScale(this.S))
+    this.faceTr = this.face.getTransform()
+    this.faceTr.setLocalScale(vec3.one().uniformScale(this.S))
     // Frame: thin double rim and a faint inner glow (as the other bubbles).
     const fk = new MeshKit()
     fk.addArcXY(0, 0, BR, 0.2, 0, Math.PI * 2, ink(INK, 0.85), 96)
     fk.addArcXY(0, 0, BR - 0.55, 0.1, 0, Math.PI * 2, ink(INK, 0.4), 96)
     fk.addFanXY(0, 0, 8, 0, Math.PI * 2, ink(INK, 0.02), ink(INK, 0.03), 48)
     fk.addSoftRingXY(0, 0, 8, BR - 0.6, ink(INK, 0.03), ink(INK, 0.1), 64)
-    this.frameMats.push(this.glow("LampBubbleFrame", fk))
+    this.frame.push(this.glow("LampBubbleFrame", fk))
     // The LED board and the chip on it (structure).
     const bk = new MeshKit(STRUCT_GLOW)
     bk.addLineXY(-9.6, BOARD_Y, 9.6, BOARD_Y, 0.16, ink(INK, 0.45))
     bk.addPolylineXY([new vec2(-CHIP_HW, BOARD_Y), new vec2(-CHIP_HW, CHIP_TOP), new vec2(CHIP_HW, CHIP_TOP), new vec2(CHIP_HW, BOARD_Y)], 0.14, ink(INK, 0.8))
-    this.frameMats.push(this.glow("LampBubbleBoard", bk))
+    this.frame.push(this.glow("LampBubbleBoard", bk))
     // The chip's blue glow (lit with the LED).
     const ck = new MeshKit()
     ck.addRectXY(-CHIP_HW + 0.08, BOARD_Y + 0.06, CHIP_HW - 0.08, CHIP_TOP - 0.06, ink(INK, 0.9))
     ck.addFanXY(0, CHIP_TOP - 0.4, 2.6, 0, Math.PI * 2, ink(INK, 0.35), ZERO, 32)
-    this.chipMat = this.glow("LampBubbleChip", ck)
+    this.chipTint = this.glow("LampBubbleChip", ck)
     // The phosphor coating over the chip: a dome, filled faintly, its edge brighter.
     const ok = new MeshKit()
     ok.addFanXY(0, BOARD_Y, COAT_R, 0, Math.PI, ink(INK, 0.2), ink(INK, 0.12), 40)
     ok.addArcXY(0, BOARD_Y, COAT_R, 0.14, 0, Math.PI, ink(INK, 0.75), 40)
-    this.coatMat = this.glow("LampBubbleCoating", ok)
+    this.coatTint = this.glow("LampBubbleCoating", ok)
     // Together they come out white: the light leaving the coating fills the upper bubble.
     const wk = new MeshKit()
     wk.addFanXY(0, BOARD_Y, PHOTON_MAX_R + 0.3, (22 * Math.PI) / 180, (158 * Math.PI) / 180, ZERO, ink(INK, 0.5), 48)
-    this.whiteMat = this.glow("LampBubbleWhite", wk)
+    this.whiteTint = this.glow("LampBubbleWhite", wk)
     this.cloud = new CometCloud(this.face, "LampBubblePhotons", glowMat, PHOTONS)
-    this.leader = new PathRibbon(parent, "LampBubbleLeader", glowMat, 8, ink(INK, 0.55))
-    for (const m of [...this.frameMats, this.chipMat, this.coatMat, this.whiteMat, this.cloud.mat, this.leader.mat]) setFade(m, 0)
+    this.cloudTint = new Tint(this.cloud.mat)
+    // The hairline from the rim to the chips is drawn at no level at all, so it is never drawn.
+    const leader = new PathRibbon(parent, "LampBubbleLeader", glowMat, 8, ink(INK, 0.55))
+    leader.setLevel(0)
+    for (const t of this.frame) t.fade(0)
+    this.chipTint.fade(0)
+    this.coatTint.fade(0)
+    this.whiteTint.fade(0)
+    this.cloudTint.fade(0)
   }
 
-  private glow(name: string, kit: MeshKit): Material {
+  private glow(name: string, kit: MeshKit): Tint {
     const s = spawnMesh(this.face, name, kit.build(), this.glowMat)
     s.mat.mainPass.twoSided = true
     s.rmv.setRenderOrder(ORDER + 2)
-    return s.mat
+    return new Tint(s.mat)
   }
 
   /**
    * `open` 0..1, `led` the LED's level, `share` the coating's yellow share, `color` the lamp's
-   * colour; `side` = the user's right (+1) or left (−1) of the copy; `shadeR` the shade's radius
-   * there (world).
+   * colour; `ledTr` the LED board; `side` = the user's right (+1) or left (−1) of the copy; `shadeR`
+   * the shade's radius there (world). The photons fly every frame; closed, nothing is drawn.
    */
-  update(dt: number, open: number, led: number, b: number, share: number, coat: vec3, color: vec3, ledW: vec3, cam: vec3, side: number, shadeR: number): void {
+  update(dt: number, now: number, open: number, led: number, b: number, share: number, coat: vec3, color: vec3, ledTr: Transform, cam: vec3, side: number, shadeR: number): void {
     this.coatColor = coat
-    const up = vec3.up()
-    const flat = new vec3(cam.x - ledW.x, 0, cam.z - ledW.z)
-    const toUser = flat.length > 1e-4 ? flat.normalize() : vec3.forward()
-    const right = toUser.uniformScale(-1).cross(up).normalize()
-    const RS = BR * this.S
-    this.target = ledW.add(up.uniformScale(RS * 0.35 + 3)).add(right.uniformScale(side * (shadeR + RS + 4))).add(toUser.uniformScale(5))
-    const tr = this.node.getTransform()
-    tr.setLocalScale(vec3.one().uniformScale(Math.max(1e-4, open)))
-    tr.setWorldPosition(vec3.lerp(ledW, this.target, open))
-    this.face.getTransform().setWorldRotation(faceToward(cam.sub(tr.getWorldPosition())))
-    for (const m of this.frameMats) setFade(m, open)
-    const lit = open * led
-    tint(this.chipMat, new vec3(CHIP_BLUE.x, CHIP_BLUE.y, CHIP_BLUE.z), lit)
+    this.fly(dt, led * open, b, share)
+    const on = open > 0
+    if (on !== this.shown) {
+      this.shown = on
+      this.node.enabled = on
+      this.dirty = true
+    }
     this.chipShown = open > 0.5
+    if (!on) {
+      if (this.drawnOpen !== 0) {
+        this.drawnOpen = 0
+        this.discR = BR * this.S * 1e-4
+      }
+      return
+    }
+    this.place(open, ledTr, cam, side, shadeR)
+    for (let i = 0; i < this.frame.length; i++) this.frame[i].fade(open)
+    const lit = open * led
+    this.chipTint.set(CHIP_BLUE_RGB, lit)
     // The coating reads more yellow (fuller) as more of the blue is converted.
     const coatK = open * (0.35 + 0.65 * led) * (0.4 + 0.6 * clamp01((share - 0.5) / 0.4))
-    tint(this.coatMat, coat, coatK)
-    tint(this.whiteMat, color, lit)
-    setFade(this.cloud.mat, open)
-    // Photons: blue from the chip; at the coating each turns yellow with the coating's share.
+    this.coatTint.set(coat, coatK)
+    this.whiteTint.set(color, lit)
+    this.cloudTint.fade(open)
+    if (dt > 0) this.dirty = true
+    if (this.clock.due(now) && this.dirty) {
+      this.dirty = false
+      this.cloud.update(this.photons, coat)
+    }
+  }
+
+  /** Photons: blue from the chip; at the coating each turns yellow with the coating's share. */
+  private fly(dt: number, lit: number, b: number, share: number): void {
+    const list = this.photons
     if (dt > 0) {
       if (lit > 0.4) this.spawnAcc += dt * PHOTON_RATE * b
-      while (this.spawnAcc >= 1 && this.photons.length < PHOTONS) {
+      while (this.spawnAcc >= 1 && list.length < PHOTONS) {
         this.spawnAcc -= 1
         const id = this.nextId++
         const ang = (hash01(id * 3 + 1) * 2 - 1) * ((62 * Math.PI) / 180)
-        this.photons.push({id, x: (hash01(id * 3 + 2) - 0.5) * 2 * (CHIP_HW - 0.3), y: CHIP_TOP + 0.05, dx: Math.sin(ang), dy: Math.cos(ang), age: 0, yellow: null})
+        const p = this.spare.length > 0 ? (this.spare.pop() as Photon) : {id: 0, x: 0, y: 0, dx: 0, dy: 0, age: 0, yellow: null}
+        p.id = id
+        p.x = (hash01(id * 3 + 2) - 0.5) * 2 * (CHIP_HW - 0.3)
+        p.y = CHIP_TOP + 0.05
+        p.dx = Math.sin(ang)
+        p.dy = Math.cos(ang)
+        p.age = 0
+        p.yellow = null
+        list.push(p)
       }
       if (this.spawnAcc >= 1) this.spawnAcc = 0
-      for (const p of this.photons) {
+      let keep = 0
+      for (let i = 0; i < list.length; i++) {
+        const p = list[i]
         p.x += p.dx * PHOTON_V * dt
         p.y += p.dy * PHOTON_V * dt
         p.age += dt
-        if (p.yellow === null && Math.hypot(p.x, p.y - BOARD_Y) >= COAT_R) p.yellow = hash01(p.id * 7 + 5) < share
+        const y = p.y - BOARD_Y
+        const r2 = p.x * p.x + y * y
+        if (p.yellow === null && r2 >= COAT_R * COAT_R) p.yellow = hash01(p.id * 7 + 5) < share
+        if (r2 < PHOTON_MAX_R * PHOTON_MAX_R) list[keep++] = p
+        else this.spare.push(p)
       }
-      this.photons = this.photons.filter((p) => Math.hypot(p.x, p.y - BOARD_Y) < PHOTON_MAX_R)
+      list.length = keep
     }
-    this.blue = 0
-    this.yellowN = 0
-    const items = this.photons.map((p) => {
-      const r = Math.hypot(p.x, p.y - BOARD_Y)
-      const yellow = p.yellow === true
-      if (yellow) this.yellowN++
-      else this.blue++
-      const a = clamp01(p.age / 0.08) * clamp01((PHOTON_MAX_R - r) / 1.5)
-      const c = yellow ? coat : new vec3(CHIP_BLUE.x, CHIP_BLUE.y, CHIP_BLUE.z)
-      return {x: p.x, y: p.y, dx: p.dx, dy: p.dy, len: 1.3, w: 0.3, c: new vec4(c.x * a, c.y * a, c.z * a, a)}
-    })
-    this.cloud.update(items)
-    // A hairline from the bubble's rim to the chips (into the shade, where the paper hides it).
-    const pos = tr.getWorldPosition()
-    const d = ledW.sub(pos)
-    const rim = pos.add(d.normalize().uniformScale(RS * open))
-    const pts: vec3[] = []
-    for (let i = 0; i < 8; i++) pts.push(vec3.lerp(rim, ledW, i / 7))
-    const w = pts.map((p) => Math.max(0.08, 0.0011 * p.distance(cam)))
-    const k = clamp01((open - 0.6) / 0.4)
-    this.leader.update(pts, cam, w, pts.map((_, i) => k * (1 - 0.3 * (i / 7))))
+    let yellow = 0
+    for (let i = 0; i < list.length; i++) if (list[i].yellow === true) yellow++
+    this.yellowN = yellow
+    this.blue = list.length - yellow
+  }
+
+  /** Only as far as something moved: the bubble opens beside the chips and turns to the eye. */
+  private place(open: number, ledTr: Transform, cam: vec3, side: number, shadeR: number): void {
+    const led = ledTr.getWorldTransform().multiplyPoint(ROW_LED)
+    const dl = this.drawnLed
+    const de = this.drawnEye
+    const same = (a: number, b: number, eps: number) => a - b < eps && b - a < eps
+    if (open === this.drawnOpen && side === this.drawnSide && same(shadeR, this.drawnR, MOVE_EPS) && same(led.x, dl.x, MOVE_EPS) && same(led.y, dl.y, MOVE_EPS) && same(led.z, dl.z, MOVE_EPS) && same(cam.x, de.x, FACE_EPS) && same(cam.y, de.y, FACE_EPS) && same(cam.z, de.z, FACE_EPS)) return
+    this.drawnOpen = open
+    this.drawnSide = side
+    this.drawnR = shadeR
+    dl.x = led.x
+    dl.y = led.y
+    dl.z = led.z
+    de.x = cam.x
+    de.y = cam.y
+    de.z = cam.z
+    let tx = cam.x - led.x
+    let tz = cam.z - led.z
+    const tl = Math.sqrt(tx * tx + tz * tz)
+    if (tl > 1e-4) {
+      tx /= tl
+      tz /= tl
+    } else {
+      tx = 0
+      tz = 1
+    }
+    const RS = BR * this.S
+    // The user's right: (−toUser) × up.
+    const out = side * (shadeR + RS + 4)
+    const x = led.x + (tz * out + tx * 5 - 0) * open
+    const y = led.y + (RS * 0.35 + 3) * open
+    const z = led.z + (-tx * out + tz * 5) * open
+    const k = Math.max(1e-4, open)
+    this.scaleV.x = k
+    this.scaleV.y = k
+    this.scaleV.z = k
+    this.nodeTr.setLocalScale(this.scaleV)
+    this.posV.x = x
+    this.posV.y = y
+    this.posV.z = z
+    this.nodeTr.setWorldPosition(this.posV)
+    this.dirV.x = cam.x - x
+    this.dirV.y = cam.y - y
+    this.dirV.z = cam.z - z
+    this.faceTr.setWorldRotation(faceToward(this.dirV))
+    this.discX = x
+    this.discY = y
+    this.discZ = z
+    this.discR = RS * k
   }
 
   get count(): number {
@@ -878,13 +1211,7 @@ class LedBubble {
 
   /** The colour of the white light leaving the coating (the lamp's colour). */
   whiteColor(): vec3 {
-    return tintOf(this.whiteMat)
-  }
-
-  /** The bubble's centre and rim radius now (world). */
-  disc(): {c: vec3; r: number} {
-    const tr = this.node.getTransform()
-    return {c: tr.getWorldPosition(), r: BR * this.S * tr.getLocalScale().x}
+    return tintOf(this.whiteTint.mat)
   }
 }
 
@@ -901,43 +1228,104 @@ export interface LampLightTimes {
   dark: number
 }
 
+/** What the light is drawn with: made when it comes on, destroyed when it goes dark. */
+interface LampGraphics {
+  core: PathRibbon
+  halo: PathRibbon
+  shadeMesh: ShadeGlowMesh
+  shade: Tint
+  point: SceneObject
+  pointTint: Tint
+  rays: RayBurst
+  raysTint: Tint
+  tablePool: PoolMesh
+  table: Tint
+  threadCore: PathRibbon
+  threadHalo: PathRibbon
+  real: Tint
+  realBloom: SceneObject
+  realBloomTint: Tint
+  floorPool: PoolMesh
+  floor: Tint
+}
+
 export class LampLight {
   phase: LightPhase = "off"
   private times: LampLightTimes = {on: -1, bulb: -1, realOn: -1, off: -1, dark: -1}
   private root: SceneObject | null = null
+  private g: LampGraphics | null = null
+  private bubble: LedBubble | null = null
+  private shadeGlow: SceneObject | null = null
   private t = 0
   private tFade = -1
   private tBulb = -1
   private tThread = -1
   private tReal = -1
   private captionGlow = false
-  private envAtFade = 1
   // The current's path (model space at rest), its cumulative length and the radius it runs on.
-  private path: vec3[] = []
-  private cum: number[] = []
-  private radius: number[] = []
-  private core: PathRibbon | null = null
-  private halo: PathRibbon | null = null
-  private bubble: LedBubble | null = null
-  private shadeGlow: SceneObject | null = null
-  private shadeMesh: ShadeGlowMesh | null = null
-  private shadeMat: Material | null = null
-  private rays: RayBurst | null = null
-  private bloom: SceneObject | null = null
-  private bloomMat: Material | null = null
-  private tablePool: PoolMesh | null = null
-  private threadCore: PathRibbon | null = null
-  private threadHalo: PathRibbon | null = null
-  private threadPts: vec3[] = []
-  private threadCum: number[] = []
+  private pathN = 0
+  private pathX = new Float64Array(0)
+  private pathY = new Float64Array(0)
+  private pathZ = new Float64Array(0)
+  private cum = new Float64Array(0)
+  private radius = new Float64Array(0)
+  private Lm = 0
+  private current: PathPoints = pathPoints(0)
+  private wCore = new Float64Array(0)
+  private wHalo = new Float64Array(0)
+  private drawnM = new Float64Array(12)
+  private drawnEye = new vec3(0, 0, 0)
+  private drawnS = 0
+  private currentDrawn = false
+  // The thread (world), its length and widths; what it was last laid out from.
+  private thread: PathPoints = pathPoints(THREAD_N)
+  private threadCum = new Float64Array(THREAD_N)
+  private wThread = new Float64Array(THREAD_N)
+  private wThreadHalo = new Float64Array(THREAD_N)
+  private Lt = 0
   /** The first thread point inside the real lamp's shade. */
   private threadInside = 1e9
-  private realGlow: SceneObject | null = null
-  private realMat: Material | null = null
-  private realBloom: SceneObject | null = null
-  private realBloomMat: Material | null = null
-  private floorPool: PoolMesh | null = null
-  private info: LampLightInfo = this.emptyInfo()
+  private threadKey = new Float64Array(9)
+  private threadEye = new vec3(0, 0, 0)
+  private threadLaid = false
+  /** The path has moved since it was last drawn. */
+  private threadMoved = true
+  private threadDrawn = false
+  private bloomEye = new vec3(0, 0, 0)
+  private bloomPlaced = false
+  private pointDrawn = new Float64Array(6)
+  private pointPlaced = false
+  private drawnWhole = -1
+  private drawnPointS = 0
+  private raysShown = false
+  private tableShown = false
+  private floorShown = false
+  private originX = 0
+  private originY = 0
+  private originZ = 0
+  // The clocks are half a beat apart so the ribbons don't all land on one frame.
+  private currentClock = new RibbonClock(0)
+  private threadClock = new RibbonClock(0.5)
+  private raysClock = new RibbonClock(0.75)
+  private poolClock = new RibbonClock(0.125)
+  private glassTr: Transform | null = null
+  private ledTr: Transform | null = null
+  private glassLocal = vec3.zero()
+  private shadeRAtLed = 0
+  private bulbV = new vec3(0, 0, 0)
+  private posV = new vec3(0, 0, 0)
+  private dirV = new vec3(0, 0, 1)
+  private scaleV = new vec3(1, 1, 1)
+  private kelvin = -1
+  private color = vec3.one()
+  private share = 0
+  private coat = vec3.one()
+  private sentLed = 0
+  private sentColor: vec3 | null = null
+  /** At least one frame has run since it came on: getInfo() reads what that frame worked out. */
+  private ran = false
+  private f = {b: 0, L: 0, front: 0, spacing: 0, vPkt: 0, head: 0, pulseLevel: 0, led: 0, open: 0, shade: 0, whole: 1, lift: 0, liftM: 0, rays: 0, raysExt: 0, point: 0, poolLevel: 0, poolR: POOL_R, poolEdge: 0.9, tf: 0, threadLevel: 0, real: 0}
+  private empty: LampLightInfo = this.emptyInfo()
 
   constructor(private ctx: LampLightCtx) {}
 
@@ -950,8 +1338,77 @@ export class LampLight {
     return this.phase === "off"
   }
 
+  /** The LED's level now (× Brightness). */
+  get ledLevel(): number {
+    return this.ran ? this.f.led : 0
+  }
+
+  /** Read-only state, worked out when asked for (the frames don't need it). */
   getInfo(): LampLightInfo {
-    return this.info
+    if (!this.ran || !this.g) return this.empty
+    const f = this.f
+    const g = this.g
+    const cam = this.ctx.camPos()
+    const S = this.ctx.scale()
+    const M = this.ctx.replica.getTransform().getWorldTransform()
+    const last = this.pathN - 1
+    const packets: vec3[] = []
+    // Packet centres: the heads that are on the path behind the front.
+    for (let n = Math.ceil((f.head - f.front) / f.spacing); n * f.spacing <= f.head; n++) {
+      const s = f.head - n * f.spacing
+      if (s < 0 || s > f.front) continue
+      packets.push(this.pointAt(M, cam, S, s / S))
+    }
+    const liftM = f.liftM
+    const n = THREAD_N - 1
+    const th = this.thread
+    return {
+      phase: this.phase,
+      brightness: f.b,
+      kelvin: this.kelvin,
+      color: this.color,
+      front: f.L > 0 ? f.front / f.L : 0,
+      pathStart: this.currentPoint(M, cam, S, 0),
+      pathEnd: this.currentPoint(M, cam, S, last),
+      pathLength: f.L,
+      packets,
+      pulseLevel: f.pulseLevel,
+      pulseSpacing: f.spacing,
+      pulseRate: f.vPkt / f.spacing,
+      led: f.led,
+      bubbleOpen: f.open,
+      chipShown: !!this.bubble && this.bubble.chipShown,
+      chipColor: new vec3(CHIP_BLUE.x, CHIP_BLUE.y, CHIP_BLUE.z),
+      photonsBlue: this.bubble ? this.bubble.blue : 0,
+      photonsYellow: this.bubble ? this.bubble.yellowN : 0,
+      coatingShare: this.share,
+      coatColor: this.coat,
+      bubbleColor: this.bubble ? this.bubble.whiteColor() : vec3.zero(),
+      shadeGlow: f.shade * f.whole,
+      shadeProfile: {
+        mid: shadeGlowLifted(paperRow(GLOW_CENTRE_Y - liftM), liftM),
+        bulb: shadeGlowLifted(paperRow(G.bulbCenterY - liftM), liftM),
+        top: shadeGlowLifted(G.paperY1, liftM),
+        bottom: shadeGlowLifted(G.paperY0, liftM)
+      },
+      shadePeak: g.shadeMesh.peak(),
+      lift: f.lift,
+      rays: f.rays,
+      raysExtent: f.raysExt,
+      bulbPoint: f.point,
+      miniColor: tintOf(g.shade.mat),
+      tablePool: {level: f.poolLevel, radius: f.poolR, edge: f.poolEdge},
+      poolColor: tintOf(g.table.mat),
+      threadFront: this.Lt > 0 ? f.tf / this.Lt : 0,
+      threadLevel: f.threadLevel,
+      threadStart: new vec3(th.x[0], th.y[0], th.z[0]),
+      threadEnd: new vec3(th.x[n], th.y[n], th.z[n]),
+      threadReached: this.tReal >= 0,
+      realGlow: f.real,
+      realColor: tintOf(g.real.mat),
+      floorPool: f.real,
+      floorColor: tintOf(g.floor.mat)
+    }
   }
 
   getTimes(): LampLightTimes {
@@ -989,26 +1446,25 @@ export class LampLight {
     if (this.shadeGlow) this.shadeGlow.destroy()
     this.root = null
     this.shadeGlow = null
-    this.shadeMesh = null
-    this.shadeMat = null
-    this.rays = null
-    this.bloom = null
-    this.bloomMat = null
-    this.core = null
-    this.halo = null
+    this.g = null
     this.bubble = null
-    this.tablePool = null
-    this.threadCore = null
-    this.threadHalo = null
-    this.realGlow = null
-    this.realMat = null
-    this.realBloom = null
-    this.realBloomMat = null
-    this.floorPool = null
+    this.glassTr = null
+    this.ledTr = null
+    this.ran = false
+    this.currentDrawn = false
+    this.threadLaid = false
+    this.threadDrawn = false
+    this.threadMoved = true
+    this.bloomPlaced = false
+    this.pointPlaced = false
+    this.raysShown = false
+    this.tableShown = false
+    this.floorShown = false
     const was = this.phase
     this.phase = "off"
     this.ctx.setBulbGlow(0, vec3.one())
-    this.info = this.emptyInfo()
+    this.sentLed = 0
+    this.sentColor = null
     if (was !== "off") {
       this.times.dark = getTime()
       this.ctx.log("lamp:dark")
@@ -1021,54 +1477,105 @@ export class LampLight {
     root.getTransform().setLocalPosition(vec3.zero())
     this.root = root
     const glow = this.ctx.glowMat
+    const model = this.ctx.model
     // The current's path, resampled to about 1 cm (model), with the radius of what it runs along.
-    const raw = this.ctx.model.currentPath()
-    this.path = [raw[0]]
+    const raw = model.currentPath()
+    const path: vec3[] = [raw[0]]
     for (let i = 1; i < raw.length; i++) {
       const a = raw[i - 1]
       const b = raw[i]
       const n = Math.max(1, Math.ceil(a.distance(b) / 1.0))
-      for (let k = 1; k <= n; k++) this.path.push(vec3.lerp(a, b, k / n))
+      for (let k = 1; k <= n; k++) path.push(vec3.lerp(a, b, k / n))
     }
-    this.cum = [0]
-    for (let i = 1; i < this.path.length; i++) this.cum.push(this.cum[i - 1] + this.path[i].distance(this.path[i - 1]))
-    this.radius = this.path.map((p) => (p.y < 3 ? G.cordR : p.y < G.socketY ? G.stemR : 0.3))
-    this.halo = new PathRibbon(root, "LampCurrentGlow", glow, this.path.length, ink(SIGNAL, 0.24))
-    this.core = new PathRibbon(root, "LampCurrent", glow, this.path.length, ink(SIGNAL, 1))
-    // The shade's glow: a lathe just outside the paper, under the paper part (it lifts with it).
-    const paper = this.ctx.model.parts["LampPaper"]
-    const piv = this.ctx.model.pivot("LampPaper")
-    this.shadeMesh = new ShadeGlowMesh(paper, "LampShadeGlow", glow, 0.18)
-    this.shadeMesh.so.getTransform().setLocalPosition(piv.uniformScale(-1))
-    this.shadeGlow = this.shadeMesh.so
-    this.shadeMat = this.shadeMesh.mat
+    const N = path.length
+    this.pathN = N
+    this.pathX = new Float64Array(N)
+    this.pathY = new Float64Array(N)
+    this.pathZ = new Float64Array(N)
+    this.cum = new Float64Array(N)
+    this.radius = new Float64Array(N)
+    this.wCore = new Float64Array(N)
+    this.wHalo = new Float64Array(N)
+    this.current = pathPoints(N)
+    for (let i = 0; i < N; i++) {
+      const p = path[i]
+      this.pathX[i] = p.x
+      this.pathY[i] = p.y
+      this.pathZ[i] = p.z
+      if (i > 0) this.cum[i] = this.cum[i - 1] + p.distance(path[i - 1])
+      this.radius[i] = p.y < 3 ? G.cordR : p.y < G.socketY ? G.stemR : 0.3
+      this.wCore[i] = 0.32
+      this.wHalo[i] = 1.3
+    }
+    this.Lm = this.cum[N - 1]
+    const halo = new PathRibbon(root, "LampCurrentGlow", glow, N, ink(SIGNAL, 0.24))
+    const core = new PathRibbon(root, "LampCurrent", glow, N, ink(SIGNAL, 1))
+    // The shade's glow: a lathe just outside the paper, under the paper part (it lifts with it, so the
+    // lamp's bob carries it and only the lift itself rewrites it).
+    const paper = model.parts["LampPaper"]
+    const piv = model.pivot("LampPaper")
+    const shadeMesh = new ShadeGlowMesh(paper, "LampShadeGlow", glow, 0.18)
+    shadeMesh.so.getTransform().setLocalPosition(piv.uniformScale(-1))
+    this.shadeGlow = shadeMesh.so
     // The bare bulb's point of light (hidden by the paper while the shade is on) and its rays.
     const bk = new MeshKit(1.5)
     bk.addSparkXY(0, 0, 0.5, ink(INK, 1), 24)
     const bl = spawnMesh(root, "LampBulbPoint", bk.build(), glow)
     bl.rmv.setRenderOrder(ORDER)
-    this.bloom = bl.so
-    this.bloomMat = bl.mat
-    this.rays = new RayBurst(root, "LampRays", glow)
-    this.tablePool = new PoolMesh(root, "LampTablePool", glow)
+    const rays = new RayBurst(root, "LampRays", glow)
+    const tablePool = new PoolMesh(root, "LampTablePool", glow, 26, 64)
     // The thread and the real lamp.
-    this.threadHalo = new PathRibbon(root, "LampThreadGlow", glow, 56, ink(SIGNAL, 0.22))
-    this.threadCore = new PathRibbon(root, "LampThread", glow, 56, ink(SIGNAL, 1))
-    const rg = spawnMesh(root, "LampRealGlow", shadeGlowKit(0.9, 48, 64).build(), glow, this.ctx.realOrigin())
+    const threadHalo = new PathRibbon(root, "LampThreadGlow", glow, THREAD_N, ink(SIGNAL, 0.22))
+    const threadCore = new PathRibbon(root, "LampThread", glow, THREAD_N, ink(SIGNAL, 1))
+    const rg = spawnMesh(root, "LampRealGlow", shadeGlowKit(0.9, 24, 40).build(), glow, this.ctx.realOrigin())
     rg.mat.mainPass.twoSided = true
     rg.rmv.setRenderOrder(ORDER)
-    this.realGlow = rg.so
-    this.realMat = rg.mat
+    // The real lamp's bloom stops where it is too faint to see.
     const sk = new MeshKit()
-    sk.addFanXY(0, 0, 0.45, 0, Math.PI * 2, ink(INK, 1), ink(INK, 0.5), 48)
-    sk.addSoftRingXY(0, 0, 0.45, 1, ink(INK, 0.5), ZERO, 48)
+    sk.addFanXY(0, 0, 0.45, 0, Math.PI * 2, ink(INK, 1), ink(INK, 0.5), 24)
+    sk.addSoftRingXY(0, 0, 0.45, BLOOM_EDGE, ink(INK, 0.5), ink(INK, (0.5 * (1 - BLOOM_EDGE)) / 0.55), 24)
     const rb = spawnMesh(root, "LampRealBloom", sk.build(), glow)
     rb.mat.mainPass.twoSided = true
     rb.rmv.setRenderOrder(ORDER + 1)
-    this.realBloom = rb.so
-    this.realBloomMat = rb.mat
-    this.floorPool = new PoolMesh(root, "LampFloorPool", glow)
-    for (const m of [this.core.mat, this.halo.mat, this.shadeMat, this.bloomMat, this.rays.mat, this.tablePool.mat, this.threadCore.mat, this.threadHalo.mat, this.realMat, this.realBloomMat, this.floorPool.mat]) setFade(m, 0)
+    rb.so.getTransform().setWorldScale(new vec3(42, 105, 1))
+    const floorPool = new PoolMesh(root, "LampFloorPool", glow, 14, 40, FLOOR_POOL_TRIM)
+    this.g = {
+      core,
+      halo,
+      shadeMesh,
+      shade: new Tint(shadeMesh.mat, shadeMesh.so),
+      point: bl.so,
+      pointTint: new Tint(bl.mat, bl.so),
+      rays,
+      raysTint: new Tint(rays.mat),
+      tablePool,
+      table: new Tint(tablePool.mat, tablePool.so),
+      threadCore,
+      threadHalo,
+      real: new Tint(rg.mat, rg.so),
+      realBloom: rb.so,
+      realBloomTint: new Tint(rb.mat, rb.so),
+      floorPool,
+      floor: new Tint(floorPool.mat, floorPool.so)
+    }
+    const g = this.g
+    core.setLevel(0)
+    halo.setLevel(0)
+    threadCore.setLevel(0)
+    threadHalo.setLevel(0)
+    g.shade.fade(0)
+    g.pointTint.fade(0)
+    g.raysTint.fade(0)
+    rays.so.enabled = false
+    g.table.fade(0)
+    g.real.fade(0)
+    g.realBloomTint.fade(0)
+    g.floor.fade(0)
+    this.glassTr = model.parts["LampBulbGlass"].getTransform()
+    this.glassLocal = new vec3(0, G.bulbCenterY - model.pivot("LampBulbGlass").y, 0)
+    this.ledTr = model.parts["LampLedBoard"].getTransform()
+    this.shadeRAtLed = lampShadeR(G.ledY)
+    this.layThread(this.ctx.camPos())
   }
 
   // =====================================================================================
@@ -1076,7 +1583,7 @@ export class LampLight {
   // =====================================================================================
 
   update(dt: number, p: LampLightParams): void {
-    if (this.phase === "off" || !this.root) return
+    if (this.phase === "off" || !this.root || !this.g) return
     this.t += dt
     let env = 1
     if (this.phase === "fading") {
@@ -1086,22 +1593,28 @@ export class LampLight {
         return
       }
     }
+    const g = this.g
+    const f = this.f
     const b = clamp01(p.brightness)
     // Brightness 0 looks the same as off.
     const vis = easeInOut(b / 0.06)
     // Lifted off the table or taken apart: the current on the cord, the shade's glow, the pool, the
     // rays and the bubble belong to the whole lamp standing there, so they fade (the bulb stays lit).
     const whole = 1 - easeInOut(clamp01(p.apart / 0.15))
-    const color = kelvinToRgb(p.kelvin)
-    const share = coatingShare(p.kelvin)
+    if (p.kelvin !== this.kelvin) {
+      this.kelvin = p.kelvin
+      this.color = kelvinToRgb(p.kelvin)
+      this.share = coatingShare(p.kelvin)
+      this.coat = coatingColor(p.kelvin)
+    }
+    const color = this.color
     const cam = this.ctx.camPos()
     const S = this.ctx.scale()
-    const M = this.ctx.replica.getTransform().getWorldTransform()
+    const now = getTime()
     const tLive = this.tFade >= 0 ? this.tFade : this.t
 
     // ---------------- The current along the cord and the stem ----------------
-    const Lm = this.cum[this.cum.length - 1]
-    const L = Lm * S
+    const L = this.Lm * S
     const front = Math.min(L, V_CURRENT * tLive)
     if (this.phase === "flow" && front >= L - 1e-3) {
       this.phase = "lit"
@@ -1116,85 +1629,51 @@ export class LampLight {
     const spacing = 9 - 5 * b
     const vPkt = 12 + 12 * b
     const head = vPkt * this.t
-    const pts: vec3[] = []
-    const alpha: number[] = []
-    const width: number[] = []
-    const wHalo: number[] = []
-    const packets: vec3[] = []
-    for (let i = 0; i < this.path.length; i++) {
-      const w = M.multiplyPoint(this.path[i])
-      const toCam = cam.sub(w).normalize()
-      pts.push(w.add(toCam.uniformScale(this.radius[i] * S + 0.04)))
-      const s = this.cum[i] * S
-      let a = 0
-      if (s <= front) {
-        // Charged line behind the front, packets on it (each brightest at its head), the front's head.
-        const ph = (head - s) / spacing
-        const u = ((ph - Math.floor(ph)) * spacing) / PACKET_LEN
-        const pk = u <= 1 ? Math.pow(1 - u, 1.3) : 0
-        const fr = front < L ? clamp01(1 - (front - s) / PACKET_LEN) : 0
-        a = 0.28 + 0.72 * Math.max(pk * clamp01(b * 1.5), fr)
-        a *= clamp01((L - s) / 1.2) * 0.85 + 0.15
-      }
-      alpha.push(a)
-      width.push(0.32)
-      wHalo.push(1.3)
-    }
-    // Packet centres (for the tests): the heads that are on the path behind the front.
-    for (let n = Math.ceil((head - front) / spacing); n * spacing <= head; n++) {
-      const s = head - n * spacing
-      if (s < 0 || s > front) continue
-      packets.push(this.pointAt(pts, s / S))
-    }
     const pulseLevel = env * vis * whole
-    if (this.core && this.halo) {
-      this.core.update(pts, cam, width, alpha)
-      this.halo.update(pts, cam, wHalo, alpha)
-      setFade(this.core.mat, pulseLevel)
-      setFade(this.halo.mat, pulseLevel)
-    }
+    g.core.setLevel(pulseLevel)
+    g.halo.setLevel(pulseLevel)
+    const currentDue = this.currentClock.due(now)
+    if (pulseLevel > 1e-4 && (currentDue || !this.currentDrawn)) this.drawCurrent(g, cam, S, head, front, L, spacing, b)
 
     // ---------------- The bulb, the shade, the pool on the table ----------------
     const ledRamp = lit ? easeOutCubic((this.t - this.tBulb) / BULB_RAMP) : 0
     const led = ledRamp * b * env
-    this.ctx.setBulbGlow(led, color)
+    if (led !== this.sentLed || color !== this.sentColor) {
+      this.sentLed = led
+      this.sentColor = color
+      this.ctx.setBulbGlow(led, color)
+    }
     const glowRamp = lit ? easeOutCubic((this.t - this.tBulb) / GLOW_RAMP) : 0
     const shade = glowRamp * b * env
     // The shade's lift: the paper moves away from the bulb (its glow falls and moves down to the
     // bottom edge); the bare bulb shows as a small bright point and, above RAYS_FROM, sharp rays.
     const lift = clamp01(p.lift)
     const liftM = (lift * SHADE_LIFT_CM) / Math.max(1e-3, S)
-    if (this.shadeMesh) this.shadeMesh.update(liftM)
-    if (this.shadeMat) tint(this.shadeMat, color, shade * SHADE_GAIN * whole)
-    // The bulb's centre (the envelope's, where its parts really are) and, taken apart, the bare chips.
-    const model = this.ctx.model
-    const glassW = model.parts["LampBulbGlass"].getTransform().getWorldTransform().multiplyPoint(new vec3(0, G.bulbCenterY - model.pivot("LampBulbGlass").y, 0))
-    const bulbW = vec3.lerp(glassW, model.ledCenter(), 1 - whole)
+    g.shadeMesh.update(liftM)
+    g.shade.set(color, shade * SHADE_GAIN * whole)
     const point = led * (1 + 0.5 * lift)
-    if (this.bloom && this.bloomMat) {
-      const toCam = cam.sub(bulbW).normalize()
-      const tr = this.bloom.getTransform()
-      tr.setWorldPosition(bulbW.add(toCam.uniformScale((G.bulbR * whole + 0.3 * (1 - whole)) * S + 0.25)))
-      tr.setWorldRotation(faceToward(toCam))
-      tr.setWorldScale(vec3.one().uniformScale(S * 2.2))
-      tint(this.bloomMat, color, point)
-    }
     const raysExt = easeInOut(clamp01((lift - RAYS_FROM) / (1 - RAYS_FROM)))
     const rays = raysExt * led * whole
-    if (this.rays) {
-      if (rays > 1e-4) this.rays.update(bulbW, G.bulbR * S + 0.08, RAY_LEN, cam, raysExt, this.t)
-      this.rays.so.enabled = rays > 1e-4
-      tint(this.rays.mat, color, rays * RAYS_GAIN)
-    }
+    // The bulb's centre (the envelope's, where its parts really are) and, taken apart, the bare chips.
+    if (point > 1e-4) this.placePoint(g, cam, S, whole)
+    g.pointTint.set(color, point)
+    g.raysTint.set(color, rays * RAYS_GAIN)
+    const raysOn = rays > 1e-4
+    if (raysOn !== this.raysShown) g.rays.so.enabled = raysOn
+    if (raysOn && (this.raysClock.due(now) || !this.raysShown)) g.rays.update(this.bulbV, G.bulbR * S + 0.08, RAY_LEN, cam, raysExt, this.t)
+    this.raysShown = raysOn
     const poolR = POOL_R + (POOL_R_BARE - POOL_R) * lift
     const poolEdge = 0.9 + (0.12 - 0.9) * lift
     const poolLevel = glowRamp * b * env * (1 + 0.8 * lift) * whole
-    if (this.tablePool) {
+    const poolDue = this.poolClock.due(now)
+    const tableOn = poolLevel * POOL_GAIN > 1e-4
+    if (tableOn && (poolDue || !this.tableShown)) {
       const s = this.ctx.surface()
-      const f = this.ctx.foot()
-      this.tablePool.update(new vec3(f.x, s.height + 0.12, f.z), poolR, poolEdge, {c: s.center, r: Math.max(5, s.radius - 0.5)})
-      tint(this.tablePool.mat, color, poolLevel * POOL_GAIN)
+      const foot = this.ctx.foot()
+      g.tablePool.update(foot.x, s.height + 0.12, foot.z, poolR, poolEdge, s.center.x, s.center.z, Math.max(5, s.radius - 0.5))
     }
+    this.tableShown = tableOn
+    g.table.set(color, poolLevel * POOL_GAIN)
 
     // ---------------- The bubble ----------------
     let open = 0
@@ -1207,11 +1686,7 @@ export class LampLight {
         this.ctx.log("lamp:bubble")
       }
     }
-    if (this.bubble) {
-      const ledW = this.ctx.model.ledCenter()
-      const yLed = G.ledY
-      this.bubble.update(this.phase === "fading" ? 0 : dt, open, ledRamp, b, share, coatingColor(p.kelvin), color, ledW, cam, this.ctx.bubbleSide(), lampShadeR(yLed) * S)
-    }
+    if (this.bubble && this.ledTr) this.bubble.update(this.phase === "fading" ? 0 : dt, now, open, ledRamp, b, this.share, this.coat, color, this.ledTr, cam, this.ctx.bubbleSide(), this.shadeRAtLed * S)
     if (lit && !this.captionGlow && this.t - this.tBulb >= CAPTION_GLOW_AFTER && this.phase === "lit") {
       this.captionGlow = true
       this.ctx.caption(3)
@@ -1223,164 +1698,418 @@ export class LampLight {
       this.tThread = this.t
       this.ctx.log("lamp:thread")
     }
-    this.buildThreadPath(M, cam)
-    const Lt = this.threadCum[this.threadCum.length - 1]
+    const threadDue = this.threadClock.due(now)
+    if (threadDue) this.layThread(cam)
+    const Lt = this.Lt
     const tf = this.tThread >= 0 ? Math.min(Lt, V_THREAD * ((this.tFade >= 0 ? this.tFade : this.t) - this.tThread)) : 0
     if (this.tThread >= 0 && this.tReal < 0 && tf >= Lt - 1e-3 && this.phase === "lit") {
       this.tReal = this.t
       this.times.realOn = getTime()
       this.ctx.log("lamp:realOn")
     }
-    if (this.threadCore && this.threadHalo) {
-      const th = V_THREAD * 0.45 * this.t
-      const disc = this.bubble ? this.bubble.disc() : null
-      const ta: number[] = []
-      const tw: number[] = []
-      const tw2: number[] = []
-      for (let i = 0; i < this.threadPts.length; i++) {
-        const s = this.threadCum[i]
-        let a = 0
-        if (this.tThread >= 0 && s <= tf) {
-          const ph = (th - s) / THREAD_SPACING
-          const u = ((ph - Math.floor(ph)) * THREAD_SPACING) / THREAD_PACKET_LEN
-          const pk = u <= 1 ? Math.pow(1 - u, 1.3) : 0
-          const fr = tf < Lt ? clamp01(1 - (tf - s) / THREAD_PACKET_LEN) : 0
-          a = 0.42 + 0.58 * Math.max(pk * clamp01(b * 1.5), fr)
-          // Up the real stem inside the shade it is seen faintly through the paper.
-          if (i >= this.threadInside) a *= 0.35
-          // Behind the open bubble it dims, so the bubble reads clean.
-          if (disc && disc.r > 0.5) {
-            const v = this.threadPts[i].sub(cam)
-            const bc = disc.c.sub(cam)
-            const L = bc.length
-            if (v.length > L) {
-              const ang = Math.acos(Math.max(-1, Math.min(1, v.normalize().dot(bc.uniformScale(1 / L)))))
-              const rim = Math.atan(disc.r / L)
-              a *= 0.15 + 0.85 * clamp01((ang - rim * 0.92) / (rim * 0.12))
-            }
-          }
-        }
-        ta.push(a)
-        const d = this.threadPts[i].distance(cam)
-        tw.push(Math.max(0.25, 0.003 * d))
-        tw2.push(Math.max(1, 0.011 * d))
-      }
-      this.threadCore.update(this.threadPts, cam, tw, ta)
-      this.threadHalo.update(this.threadPts, cam, tw2, ta)
-      setFade(this.threadCore.mat, env * vis)
-      setFade(this.threadHalo.mat, env * vis)
-    }
+    const threadLevel = env * vis
+    const threadOn = this.tThread >= 0 && threadLevel > 1e-4
+    g.threadCore.setLevel(threadOn ? threadLevel : 0)
+    g.threadHalo.setLevel(threadOn ? threadLevel : 0)
+    if (threadOn && (threadDue || !this.threadDrawn)) this.drawThread(g, cam, tf, Lt, b)
     const realRamp = this.tReal >= 0 ? easeOutCubic((this.t - this.tReal) / REAL_RAMP) : 0
     const real = realRamp * b * env
-    if (this.realMat) tint(this.realMat, color, real * REAL_GAIN)
-    if (this.realBloom && this.realBloomMat) {
-      const o = this.ctx.realOrigin()
-      const c = o.add(new vec3(0, GLOW_CENTRE_Y, 0))
-      const flat = new vec3(cam.x - c.x, 0, cam.z - c.z)
-      const toCam = flat.length > 1e-4 ? flat.normalize() : vec3.forward()
-      const tr = this.realBloom.getTransform()
-      tr.setWorldPosition(c.add(toCam.uniformScale(G.shadeMaxR + 2)))
-      tr.setWorldRotation(yawToward(toCam))
-      tr.setWorldScale(new vec3(42, 105, 1))
-      tint(this.realBloomMat, color, real * BLOOM_GAIN)
-    }
-    if (this.floorPool) {
-      const o = this.ctx.realOrigin()
-      this.floorPool.update(o.add(new vec3(0, 0.6, 0)), FLOOR_POOL_R, 0.85, null)
-      tint(this.floorPool.mat, color, real * FLOOR_GAIN)
-    }
+    g.real.set(color, real * REAL_GAIN)
+    g.realBloomTint.set(color, real * BLOOM_GAIN)
+    const floorOn = real * FLOOR_GAIN > 1e-4
+    if (real > 1e-4 && (threadDue || !this.bloomPlaced)) this.placeBloom(g, cam)
+    if (floorOn && (threadDue || !this.floorShown)) g.floorPool.update(this.originX, this.originY + 0.6, this.originZ, FLOOR_POOL_R, 0.85, 0, 0, 0)
+    this.floorShown = floorOn
+    g.floor.set(color, real * FLOOR_GAIN)
 
-    // ---------------- Read-only state ----------------
-    this.info = {
-      phase: this.phase,
-      brightness: b,
-      kelvin: p.kelvin,
-      color,
-      front: L > 0 ? front / L : 0,
-      pathStart: pts[0],
-      pathEnd: pts[pts.length - 1],
-      pathLength: L,
-      packets,
-      pulseLevel,
-      pulseSpacing: spacing,
-      pulseRate: vPkt / spacing,
-      led,
-      bubbleOpen: open,
-      chipShown: !!this.bubble && this.bubble.chipShown,
-      chipColor: new vec3(CHIP_BLUE.x, CHIP_BLUE.y, CHIP_BLUE.z),
-      photonsBlue: this.bubble ? this.bubble.blue : 0,
-      photonsYellow: this.bubble ? this.bubble.yellowN : 0,
-      coatingShare: share,
-      coatColor: this.bubble ? this.bubble.coatColor : coatingColor(p.kelvin),
-      bubbleColor: this.bubble ? this.bubble.whiteColor() : vec3.zero(),
-      shadeGlow: shade * whole,
-      shadeProfile: {
-        mid: shadeGlowLifted(paperRow(GLOW_CENTRE_Y - liftM), liftM),
-        bulb: shadeGlowLifted(paperRow(G.bulbCenterY - liftM), liftM),
-        top: shadeGlowLifted(G.paperY1, liftM),
-        bottom: shadeGlowLifted(G.paperY0, liftM)
-      },
-      shadePeak: this.shadeMesh ? this.shadeMesh.peak() : 1,
-      lift,
-      rays,
-      raysExtent: raysExt,
-      bulbPoint: point,
-      miniColor: tintOf(this.shadeMat),
-      tablePool: {level: poolLevel, radius: poolR, edge: poolEdge},
-      poolColor: tintOf(this.tablePool ? this.tablePool.mat : null),
-      threadFront: Lt > 0 ? tf / Lt : 0,
-      threadLevel: env * vis,
-      threadStart: this.threadPts.length ? this.threadPts[0] : null,
-      threadEnd: this.threadPts.length ? this.threadPts[this.threadPts.length - 1] : null,
-      threadReached: this.tReal >= 0,
-      realGlow: real,
-      realColor: tintOf(this.realMat),
-      floorPool: real,
-      floorColor: tintOf(this.floorPool ? this.floorPool.mat : null)
+    // ---------------- For getInfo() ----------------
+    f.b = b
+    f.L = L
+    f.front = front
+    f.spacing = spacing
+    f.vPkt = vPkt
+    f.head = head
+    f.pulseLevel = pulseLevel
+    f.led = led
+    f.open = open
+    f.shade = shade
+    f.whole = whole
+    f.lift = lift
+    f.liftM = liftM
+    f.rays = rays
+    f.raysExt = raysExt
+    f.point = point
+    f.poolLevel = poolLevel
+    f.poolR = poolR
+    f.poolEdge = poolEdge
+    f.tf = tf
+    f.threadLevel = threadLevel
+    f.real = real
+    this.ran = true
+  }
+
+  /** The current's points are laid again only when the copy or the eye has moved; its packets run on them. */
+  private drawCurrent(g: LampGraphics, cam: vec3, S: number, head: number, front: number, L: number, spacing: number, b: number): void {
+    const P = this.current
+    const N = this.pathN
+    const cum = this.cum
+    const M = this.ctx.replica.getTransform().getWorldTransform()
+    const c0 = M.column0
+    const c1 = M.column1
+    const c2 = M.column2
+    const c3 = M.column3
+    const dm = this.drawnM
+    const e = this.drawnEye
+    const near = (a: number, c: number, eps: number) => a - c < eps && c - a < eps
+    const geometry =
+      !this.currentDrawn ||
+      S !== this.drawnS ||
+      !near(cam.x, e.x, EYE_EPS) ||
+      !near(cam.y, e.y, EYE_EPS) ||
+      !near(cam.z, e.z, EYE_EPS) ||
+      !near(c3.x, dm[9], MOVE_EPS) ||
+      !near(c3.y, dm[10], MOVE_EPS) ||
+      !near(c3.z, dm[11], MOVE_EPS) ||
+      !near(c0.x, dm[0], 1e-4) ||
+      !near(c0.y, dm[1], 1e-4) ||
+      !near(c0.z, dm[2], 1e-4) ||
+      !near(c1.x, dm[3], 1e-4) ||
+      !near(c1.y, dm[4], 1e-4) ||
+      !near(c1.z, dm[5], 1e-4) ||
+      !near(c2.x, dm[6], 1e-4) ||
+      !near(c2.y, dm[7], 1e-4) ||
+      !near(c2.z, dm[8], 1e-4)
+    if (geometry) {
+      this.drawnS = S
+      e.x = cam.x
+      e.y = cam.y
+      e.z = cam.z
+      dm[0] = c0.x
+      dm[1] = c0.y
+      dm[2] = c0.z
+      dm[3] = c1.x
+      dm[4] = c1.y
+      dm[5] = c1.z
+      dm[6] = c2.x
+      dm[7] = c2.y
+      dm[8] = c2.z
+      dm[9] = c3.x
+      dm[10] = c3.y
+      dm[11] = c3.z
+      for (let i = 0; i < N; i++) {
+        const mx = this.pathX[i]
+        const my = this.pathY[i]
+        const mz = this.pathZ[i]
+        const wx = c0.x * mx + c1.x * my + c2.x * mz + c3.x
+        const wy = c0.y * mx + c1.y * my + c2.y * mz + c3.y
+        const wz = c0.z * mx + c1.z * my + c2.z * mz + c3.z
+        const dx = cam.x - wx
+        const dy = cam.y - wy
+        const dz = cam.z - wz
+        const dl = Math.sqrt(dx * dx + dy * dy + dz * dz)
+        const off = dl > 1e-9 ? (this.radius[i] * S + 0.04) / dl : 0
+        P.x[i] = wx + dx * off
+        P.y[i] = wy + dy * off
+        P.z[i] = wz + dz * off
+      }
     }
+    const boost = clamp01(b * 1.5)
+    for (let i = 0; i < N; i++) {
+      const s = cum[i] * S
+      let a = 0
+      if (s <= front) {
+        // Charged line behind the front, packets on it (each brightest at its head), the front's head.
+        const ph = (head - s) / spacing
+        const u = ((ph - Math.floor(ph)) * spacing) / PACKET_LEN
+        const pk = u <= 1 ? Math.pow(1 - u, 1.3) : 0
+        const fr = front < L ? clamp01(1 - (front - s) / PACKET_LEN) : 0
+        a = 0.28 + 0.72 * Math.max(pk * boost, fr)
+        a *= clamp01((L - s) / 1.2) * 0.85 + 0.15
+      }
+      P.a[i] = a
+    }
+    g.core.commit(P, cam, this.wCore, geometry)
+    g.halo.commit(P, cam, this.wHalo, geometry)
+    this.currentDrawn = true
+  }
+
+  /** The bare bulb's point of light, placed only when the bulb or the eye has moved. */
+  private placePoint(g: LampGraphics, cam: vec3, S: number, whole: number): void {
+    if (!this.glassTr || !this.ledTr) return
+    let x = 0
+    let y = 0
+    let z = 0
+    if (whole > 0) {
+      const w = this.glassTr.getWorldTransform().multiplyPoint(this.glassLocal)
+      x = w.x * whole
+      y = w.y * whole
+      z = w.z * whole
+    }
+    if (whole < 1) {
+      const w = this.ledTr.getWorldTransform().multiplyPoint(ROW_LED)
+      x += w.x * (1 - whole)
+      y += w.y * (1 - whole)
+      z += w.z * (1 - whole)
+    }
+    const d = this.pointDrawn
+    const near = (a: number, c: number, eps: number) => a - c < eps && c - a < eps
+    this.bulbV.x = x
+    this.bulbV.y = y
+    this.bulbV.z = z
+    if (this.pointPlaced && near(x, d[0], 0.005) && near(y, d[1], 0.005) && near(z, d[2], 0.005) && near(cam.x, d[3], FACE_EPS) && near(cam.y, d[4], FACE_EPS) && near(cam.z, d[5], FACE_EPS) && whole === this.drawnWhole && S === this.drawnPointS) return
+    d[0] = x
+    d[1] = y
+    d[2] = z
+    d[3] = cam.x
+    d[4] = cam.y
+    d[5] = cam.z
+    this.drawnWhole = whole
+    let dx = cam.x - x
+    let dy = cam.y - y
+    let dz = cam.z - z
+    const l = Math.sqrt(dx * dx + dy * dy + dz * dz)
+    if (l > 1e-9) {
+      dx /= l
+      dy /= l
+      dz /= l
+    }
+    const out = (G.bulbR * whole + 0.3 * (1 - whole)) * S + 0.25
+    const tr = g.point.getTransform()
+    this.posV.x = x + dx * out
+    this.posV.y = y + dy * out
+    this.posV.z = z + dz * out
+    tr.setWorldPosition(this.posV)
+    this.dirV.x = dx
+    this.dirV.y = dy
+    this.dirV.z = dz
+    tr.setWorldRotation(faceToward(this.dirV))
+    if (S !== this.drawnPointS || !this.pointPlaced) {
+      const k = S * 2.2
+      this.scaleV.x = k
+      this.scaleV.y = k
+      this.scaleV.z = k
+      tr.setWorldScale(this.scaleV)
+      this.drawnPointS = S
+    }
+    this.pointPlaced = true
+  }
+
+  /** The real lamp's bloom stands between its shade and the eye. */
+  private placeBloom(g: LampGraphics, cam: vec3): void {
+    const e = this.bloomEye
+    const near = (a: number, c: number) => a - c < FACE_EPS && c - a < FACE_EPS
+    if (this.bloomPlaced && near(cam.x, e.x) && near(cam.y, e.y) && near(cam.z, e.z)) return
+    e.x = cam.x
+    e.y = cam.y
+    e.z = cam.z
+    this.bloomPlaced = true
+    const cy = this.originY + GLOW_CENTRE_Y
+    let tx = cam.x - this.originX
+    let tz = cam.z - this.originZ
+    const tl = Math.sqrt(tx * tx + tz * tz)
+    if (tl > 1e-4) {
+      tx /= tl
+      tz /= tl
+    } else {
+      tx = 0
+      tz = 1
+    }
+    const tr = g.realBloom.getTransform()
+    this.posV.x = this.originX + tx * (G.shadeMaxR + 2)
+    this.posV.y = cy
+    this.posV.z = this.originZ + tz * (G.shadeMaxR + 2)
+    tr.setWorldPosition(this.posV)
+    this.dirV.x = tx
+    this.dirV.y = 0
+    this.dirV.z = tz
+    tr.setWorldRotation(yawToward(this.dirV))
+  }
+
+  /** A point on the (camera-offset) current path, as it is now. */
+  private currentPoint(M: mat4, cam: vec3, S: number, i: number): vec3 {
+    const w = M.multiplyPoint(new vec3(this.pathX[i], this.pathY[i], this.pathZ[i]))
+    return w.add(cam.sub(w).normalize().uniformScale(this.radius[i] * S + 0.04))
   }
 
   /** A point on the (camera-offset) current path at model arc length sm. */
-  private pointAt(pts: vec3[], sm: number): vec3 {
-    for (let i = 1; i < this.cum.length; i++) {
-      if (this.cum[i] >= sm) {
-        const seg = this.cum[i] - this.cum[i - 1]
-        return vec3.lerp(pts[i - 1], pts[i], seg > 1e-6 ? (sm - this.cum[i - 1]) / seg : 0)
+  private pointAt(M: mat4, cam: vec3, S: number, sm: number): vec3 {
+    const cum = this.cum
+    for (let i = 1; i < this.pathN; i++) {
+      if (cum[i] >= sm) {
+        const seg = cum[i] - cum[i - 1]
+        return vec3.lerp(this.currentPoint(M, cam, S, i - 1), this.currentPoint(M, cam, S, i), seg > 1e-6 ? (sm - cum[i - 1]) / seg : 0)
       }
     }
-    return pts[pts.length - 1]
+    return this.currentPoint(M, cam, S, this.pathN - 1)
   }
 
   /**
    * The thread: from the copy's plug, up over the room in a soft arc and down onto the real lamp's
-   * base, then up its stem into the shade to its bulb (the paper hides the last part).
+   * base, then up its stem into the shade to its bulb (the paper hides the last part). Laid again only
+   * when one of its ends or the eye has moved.
    */
-  private buildThreadPath(M: mat4, cam: vec3): void {
-    void M
+  private layThread(cam: vec3): void {
     // From the plug where it really is (it stays on the table while the copy hovers).
-    const start = this.ctx.model.parts["LampPlug"].getTransform().getWorldTransform().multiplyPoint(new vec3(0, 1.4, 0))
+    const start = this.ctx.model.parts["LampPlug"].getTransform().getWorldTransform().multiplyPoint(PLUG_POINT)
     const o = this.ctx.realOrigin()
     const bulb = this.ctx.realBulb()
-    const flat = new vec3(cam.x - o.x, 0, cam.z - o.z)
-    const toCam = flat.length > 1e-4 ? flat.normalize() : vec3.forward()
-    const off = toCam.uniformScale(G.stemR + 0.4)
-    const land = o.add(new vec3(0, G.domeTop + 0.4, 0)).add(toCam.uniformScale(4))
-    const foot = o.add(new vec3(0, G.collarTop, 0)).add(off)
-    const top = bulb.add(off)
-    const dist = start.distance(land)
-    const c = vec3.lerp(start, land, 0.5).add(new vec3(0, 0.18 * dist + 15, 0))
-    const pts: vec3[] = []
-    for (let i = 0; i <= 44; i++) pts.push(bezier(start, c, land, i / 44))
-    pts.push(vec3.lerp(land, foot, 0.5), foot)
+    const key = this.threadKey
+    const e = this.threadEye
+    const near = (a: number, c: number, eps: number) => a - c < eps && c - a < eps
+    this.originX = o.x
+    this.originY = o.y
+    this.originZ = o.z
+    if (
+      this.threadLaid &&
+      near(cam.x, e.x, EYE_EPS) &&
+      near(cam.y, e.y, EYE_EPS) &&
+      near(cam.z, e.z, EYE_EPS) &&
+      near(start.x, key[0], MOVE_EPS) &&
+      near(start.y, key[1], MOVE_EPS) &&
+      near(start.z, key[2], MOVE_EPS) &&
+      near(o.x, key[3], MOVE_EPS) &&
+      near(o.y, key[4], MOVE_EPS) &&
+      near(o.z, key[5], MOVE_EPS) &&
+      near(bulb.x, key[6], MOVE_EPS) &&
+      near(bulb.y, key[7], MOVE_EPS) &&
+      near(bulb.z, key[8], MOVE_EPS)
+    )
+      return
+    this.threadLaid = true
+    this.threadMoved = true
+    e.x = cam.x
+    e.y = cam.y
+    e.z = cam.z
+    key[0] = start.x
+    key[1] = start.y
+    key[2] = start.z
+    key[3] = o.x
+    key[4] = o.y
+    key[5] = o.z
+    key[6] = bulb.x
+    key[7] = bulb.y
+    key[8] = bulb.z
+    let tx = cam.x - o.x
+    let tz = cam.z - o.z
+    const tl = Math.sqrt(tx * tx + tz * tz)
+    if (tl > 1e-4) {
+      tx /= tl
+      tz /= tl
+    } else {
+      tx = 0
+      tz = 1
+    }
+    const off = G.stemR + 0.4
+    const landX = o.x + tx * 4
+    const landY = o.y + G.domeTop + 0.4
+    const landZ = o.z + tz * 4
+    const footX = o.x + tx * off
+    const footY = o.y + G.collarTop
+    const footZ = o.z + tz * off
+    const topX = bulb.x + tx * off
+    const topY = bulb.y
+    const topZ = bulb.z + tz * off
+    const ddx = start.x - landX
+    const ddy = start.y - landY
+    const ddz = start.z - landZ
+    const dist = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz)
+    const cx = (start.x + landX) / 2
+    const cy = (start.y + landY) / 2 + 0.18 * dist + 15
+    const cz = (start.z + landZ) / 2
+    const T = this.thread
+    for (let i = 0; i <= 44; i++) {
+      const t = i / 44
+      const u = 1 - t
+      const a = u * u
+      const m = 2 * u * t
+      const c = t * t
+      T.x[i] = start.x * a + cx * m + landX * c
+      T.y[i] = start.y * a + cy * m + landY * c
+      T.z[i] = start.z * a + cz * m + landZ * c
+    }
+    T.x[45] = (landX + footX) / 2
+    T.y[45] = (landY + footY) / 2
+    T.z[45] = (landZ + footZ) / 2
+    T.x[46] = footX
+    T.y[46] = footY
+    T.z[46] = footZ
     this.threadInside = 1e9
     for (let i = 1; i <= 9; i++) {
-      const q = vec3.lerp(foot, top, i / 9)
-      if (q.y > o.y + G.shadeSeatY && this.threadInside > pts.length) this.threadInside = pts.length
-      pts.push(q)
+      const at = 46 + i
+      const k = i / 9
+      const qy = footY + (topY - footY) * k
+      if (qy > o.y + G.shadeSeatY && this.threadInside > at) this.threadInside = at
+      T.x[at] = footX + (topX - footX) * k
+      T.y[at] = qy
+      T.z[at] = footZ + (topZ - footZ) * k
     }
-    this.threadPts = pts
-    this.threadCum = [0]
-    for (let i = 1; i < pts.length; i++) this.threadCum.push(this.threadCum[i - 1] + pts[i].distance(pts[i - 1]))
+    const cum = this.threadCum
+    cum[0] = 0
+    for (let i = 0; i < THREAD_N; i++) {
+      if (i > 0) {
+        const dx = T.x[i] - T.x[i - 1]
+        const dy = T.y[i] - T.y[i - 1]
+        const dz = T.z[i] - T.z[i - 1]
+        cum[i] = cum[i - 1] + Math.sqrt(dx * dx + dy * dy + dz * dz)
+      }
+      const vx = T.x[i] - cam.x
+      const vy = T.y[i] - cam.y
+      const vz = T.z[i] - cam.z
+      const d = Math.sqrt(vx * vx + vy * vy + vz * vz)
+      this.wThread[i] = Math.max(0.25, 0.003 * d)
+      this.wThreadHalo[i] = Math.max(1, 0.011 * d)
+    }
+    this.Lt = cum[THREAD_N - 1]
+  }
+
+  /** The thread's packets run on its path; behind the open bubble it dims, so the bubble reads clean. */
+  private drawThread(g: LampGraphics, cam: vec3, tf: number, Lt: number, b: number): void {
+    const T = this.thread
+    const cum = this.threadCum
+    const th = V_THREAD * 0.45 * this.t
+    const boost = clamp01(b * 1.5)
+    const disc = this.bubble && this.bubble.discR > 0.5 ? this.bubble : null
+    let bx = 0
+    let by = 0
+    let bz = 0
+    let bl = 0
+    let rim = 0
+    if (disc) {
+      bx = disc.discX - cam.x
+      by = disc.discY - cam.y
+      bz = disc.discZ - cam.z
+      bl = Math.sqrt(bx * bx + by * by + bz * bz)
+      rim = Math.atan(disc.discR / bl)
+    }
+    for (let i = 0; i < THREAD_N; i++) {
+      const s = cum[i]
+      let a = 0
+      if (s <= tf) {
+        const ph = (th - s) / THREAD_SPACING
+        const u = ((ph - Math.floor(ph)) * THREAD_SPACING) / THREAD_PACKET_LEN
+        const pk = u <= 1 ? Math.pow(1 - u, 1.3) : 0
+        const fr = tf < Lt ? clamp01(1 - (tf - s) / THREAD_PACKET_LEN) : 0
+        a = 0.42 + 0.58 * Math.max(pk * boost, fr)
+        // Up the real stem inside the shade it is seen faintly through the paper.
+        if (i >= this.threadInside) a *= 0.35
+        if (disc) {
+          const vx = T.x[i] - cam.x
+          const vy = T.y[i] - cam.y
+          const vz = T.z[i] - cam.z
+          const vl = Math.sqrt(vx * vx + vy * vy + vz * vz)
+          if (vl > bl) {
+            const ang = Math.acos(Math.max(-1, Math.min(1, (vx * bx + vy * by + vz * bz) / (vl * bl))))
+            a *= 0.15 + 0.85 * clamp01((ang - rim * 0.92) / (rim * 0.12))
+          }
+        }
+      }
+      T.a[i] = a
+    }
+    const geometry = this.threadMoved || !this.threadDrawn
+    g.threadCore.commit(T, cam, this.wThread, geometry)
+    g.threadHalo.commit(T, cam, this.wThreadHalo, geometry)
+    this.threadMoved = false
+    this.threadDrawn = true
   }
 
   private emptyInfo(): LampLightInfo {

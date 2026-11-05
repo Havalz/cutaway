@@ -94,6 +94,8 @@ export class GlassCapsule {
   private fillLevel = 0
   private opacity = 1
   private hover = new Spring(HOVER.stiffness, 1, 0)
+  private rimShown = -1
+  private fillShown = -1
 
   constructor(parent: SceneObject, name: string, material: Material, private height: number, kind: PillKind = "glass") {
     this.root = global.scene.createSceneObject(name)
@@ -177,8 +179,16 @@ export class GlassCapsule {
     const h = this.hover.update(dt)
     const rest = GLASS.highlight
     const aimed = GLASS.highlight / GLASS.rim
-    setLevel(this.rimMat, this.opacity * (rest + (aimed - rest) * clamp01(h)))
-    if (this.fillMat) setLevel(this.fillMat, this.opacity * this.fillLevel)
+    const rim = this.opacity * (rest + (aimed - rest) * clamp01(h))
+    if (rim !== this.rimShown) {
+      this.rimShown = rim
+      setLevel(this.rimMat, rim)
+    }
+    const fill = this.opacity * this.fillLevel
+    if (this.fillMat && fill !== this.fillShown) {
+      this.fillShown = fill
+      setLevel(this.fillMat, fill)
+    }
   }
 }
 
@@ -203,7 +213,7 @@ function softHalf(k: MeshKit, r0: number, r1: number, a0: number, a1: number, c0
 /** How many press rings each control has played (LEAF checks). */
 export const PRESS_RINGS: {[name: string]: number} = {}
 
-/** One thin ring that expands from a control and fades (250 ms). Built on first use. */
+/** One thin ring that expands from a control and fades (250 ms). Built for each press, gone after it. */
 export class PressRing {
   private holder: SceneObject | null = null
   private shape: CapsuleShape | null = null
@@ -229,7 +239,10 @@ export class PressRing {
     this.t += dt
     if (this.t >= PRESS.ringSeconds) {
       this.t = -1
-      this.holder.enabled = false
+      this.holder.destroy()
+      this.holder = null
+      this.shape = null
+      this.mat = null
       return
     }
     this.apply()
@@ -306,6 +319,8 @@ export class UiPill {
   private textOpacity = 0
   private dim = 1
   private dimTarget = 1
+  private textShown = -1
+  private textBase = -1
 
   constructor(o: PillOptions) {
     this.wrap = global.scene.createSceneObject(o.popName ?? o.name + "Pop")
@@ -368,13 +383,19 @@ export class UiPill {
     if (!this.masked) this.maskVisual()
     this.ring.update(dt)
     if (!this.so.isEnabledInHierarchy) return
-    this.dim += (this.dimTarget - this.dim) * (1 - Math.exp(-dt / 0.05))
+    this.dim = Math.abs(this.dimTarget - this.dim) < 1e-4 ? this.dimTarget : this.dim + (this.dimTarget - this.dim) * (1 - Math.exp(-dt / 0.05))
     const hover = this.glass ? this.glass.hoverAmount : 0
     if (this.glass) {
       this.glass.setOpacity(this.glassOpacity * this.dim)
       this.glass.update(dt)
     }
-    setTextAlpha(this.label, this.textOpacity * this.dim, ALPHA.text + (1 - ALPHA.text) * hover)
+    const text = this.textOpacity * this.dim
+    const base = ALPHA.text + (1 - ALPHA.text) * hover
+    if (text !== this.textShown || base !== this.textBase) {
+      this.textShown = text
+      this.textBase = base
+      setTextAlpha(this.label, text, base)
+    }
   }
 
   private setHover(h: boolean): void {

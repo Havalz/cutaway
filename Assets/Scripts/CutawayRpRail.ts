@@ -19,6 +19,7 @@ export interface RpRailVisual {
 }
 
 export type SliderKey = "apart" | "loudness" | "pitch"
+const SLIDER_KEYS: SliderKey[] = ["apart", "loudness", "pitch"]
 
 export class RpRail {
   readonly so: SceneObject
@@ -139,7 +140,7 @@ export class RpRail {
 
   /** Per frame (driven by the stage). */
   update(dt: number): void {
-    for (const k of Object.keys(this.sliders) as SliderKey[]) this.notify(k)
+    for (let i = 0; i < SLIDER_KEYS.length; i++) this.notify(SLIDER_KEYS[i])
     this.rail.update(dt)
   }
 

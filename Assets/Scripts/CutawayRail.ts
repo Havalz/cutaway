@@ -11,10 +11,11 @@
  * its depth and so its apparent size. It stays put while a slider is held.
  */
 import {CaptionPlace} from "./CutawayCaption"
+import {FastPoly, ViewFrame} from "./CutawayLayout"
 import {Slider} from "SpectaclesUIKit.lspkg/Scripts/Components/Slider/Slider"
 import WorldCameraFinderProvider from "SpectaclesInteractionKit.lspkg/Providers/CameraProvider/WorldCameraFinderProvider"
 import {MeshKit, setLevel, setTint, spawnMesh, UnitLine} from "./CutawayGeometry"
-import {ALPHA, applyType, GLASS, HOVER, INK, lit, NO_LIGHT, PRESS, RAIL, setTextAlpha, STROKE, VERTEX_WHITE} from "./CutawayStyle"
+import {ALPHA, applyType, CAPTION, GLASS, HOVER, INK, lit, NO_LIGHT, PRESS, RAIL, setTextAlpha, STROKE, VERTEX_WHITE} from "./CutawayStyle"
 import {clamp01, Fader, faceToward, Pop, Spring} from "./CutawayTween"
 import {GlassCapsule, gradientArc, PillKind, PressRing, UiPill} from "./CutawayUiKit"
 
@@ -33,6 +34,8 @@ const MAX_FOLLOW_COS = Math.cos((70 * Math.PI) / 180)
 const FOLLOW_S = 0.12
 const TICK_MIN_APART = 0.022
 const DESIGN_D = 110
+/** A rail at rest looks again this often anyway, for what it can't watch (Reset moving). */
+const REST_CHECK_S = 0.25
 
 export interface SliderSpec {
   name: string
@@ -43,6 +46,81 @@ export interface SliderSpec {
   gradient?: (v: number) => vec4
   /** The live value with units. Without it, setReadout says what shows. */
   format?: (v: number) => string
+}
+
+/** Where a stage stands its rail: which side of the copy, how far out and how far towards the user. */
+export interface RailSpot {
+  side: number
+  shift: number
+  fwd: number
+  /** Its farthest corner from the copy's centre, as the user sees it. */
+  reach: number
+}
+
+export interface RailSearch {
+  F: ViewFrame
+  center: vec3
+  /** How far the copy reaches from its centre: the spots start beyond it. */
+  reach: number
+  /** The step whose layout has to fit. */
+  layout: string
+  /** The side it stands on now, and whether it has to stay there (the copy is apart). */
+  side: number
+  lock: boolean
+  /** What the plate has to clear when it stands on a side. */
+  obstacles: (side: number) => FastPoly[]
+}
+
+/** What a stage's rail search stands by: says when it is worth searching again. */
+export class RailWatch {
+  private ex = NaN
+  private ey = NaN
+  private ez = NaN
+  private lx = NaN
+  private ly = NaN
+  private lz = NaN
+  private cx = NaN
+  private cz = NaN
+  private yaw = NaN
+  private mode = ""
+  private at = -1e9
+
+  /** Has the user or the copy moved since the last search? It looks again every second regardless. */
+  moved(rail: RailColumn, eye: vec3, center: vec3, yaw: number, mode: string): boolean {
+    const f = rail.getLook()
+    const dx = this.ex - eye.x
+    const dy = this.ey - eye.y
+    const dz = this.ez - eye.z
+    const lx = this.lx - f.x
+    const ly = this.ly - f.y
+    const lz = this.lz - f.z
+    const cx = this.cx - center.x
+    const cz = this.cz - center.z
+    // Less than 1 cm for the eye and the copy, about 1.5° for the look. NaN (nothing seen yet) fails.
+    const same = dx * dx + dy * dy + dz * dz < 1 && lx * lx + ly * ly + lz * lz < 7e-4 && cx * cx + cz * cz < 1 && Math.abs(this.yaw - yaw) < 0.03 && this.mode === mode
+    if (same && getTime() - this.at < 1) return false
+    this.mark(rail, eye, center, yaw, mode)
+    return true
+  }
+
+  mark(rail: RailColumn, eye: vec3, center: vec3, yaw: number, mode: string): void {
+    const f = rail.getLook()
+    this.ex = eye.x
+    this.ey = eye.y
+    this.ez = eye.z
+    this.lx = f.x
+    this.ly = f.y
+    this.lz = f.z
+    this.cx = center.x
+    this.cz = center.z
+    this.yaw = yaw
+    this.mode = mode
+    this.at = getTime()
+  }
+
+  forget(): void {
+    this.at = -1e9
+  }
 }
 
 export interface SliderTick {
@@ -109,6 +187,16 @@ export class InstrumentSlider {
   private ticks: {at: number; x: number; freed: boolean; so: SceneObject}[] = []
   private tickMat: Material | null = null
   private dimTicks: SceneObject | null = null
+  // What was last written, so a slider nobody touches writes nothing.
+  private knobX = NaN
+  private knobS = NaN
+  private levelA = NaN
+  private tintV = NaN
+  private formatV = NaN
+  private formatted = ""
+  private textA = NaN
+  private textBase = NaN
+  private valueX = NaN
 
   constructor(parent: SceneObject, private spec: SliderSpec, private material: Material) {
     this.fillColor = spec.fill
@@ -214,6 +302,8 @@ export class InstrumentSlider {
 
   /** Where each part frees itself and whether it has. One small tick per part. */
   syncTicks(list: SliderTick[]): void {
+    // The ticks exist only while their row shows.
+    if (!this.pop.so.enabled) return
     if (list.length !== this.ticks.length) this.buildTicks(list)
     for (let i = 0; i < list.length; i++) {
       const t = this.ticks[i]
@@ -230,32 +320,61 @@ export class InstrumentSlider {
 
   /** Whether the tick's light is really on (LEAF checks). */
   tickShows(i: number): boolean {
-    return this.ticks[i].so.enabled
+    return !!this.ticks[i] && this.ticks[i].so.enabled
   }
 
   update(dt: number): void {
     if (!this.masked) this.mask()
     this.ring.update(dt)
     this.pop.update(dt)
-    if (!this.pop.so.enabled) return
+    if (!this.pop.so.enabled) {
+      this.dropTicks()
+      return
+    }
     this.hover.update(dt)
     this.press.update(dt)
-    this.dim += (this.dimTarget - this.dim) * (1 - Math.exp(-dt / 0.05))
+    this.dim = Math.abs(this.dimTarget - this.dim) < 1e-4 ? this.dimTarget : this.dim + (this.dimTarget - this.dim) * (1 - Math.exp(-dt / 0.05))
     const a = this.amount * this.dim
     const v = this.value
     const x = (v - 0.5) * T
-    const kt = this.knob.getTransform()
-    kt.setLocalPosition(new vec3(x, 0, 0))
+    if (x !== this.knobX) {
+      this.knobX = x
+      this.knob.getTransform().setLocalPosition(new vec3(x, 0, 0))
+      if (this.fill) this.fill.set(new vec3(-T / 2, 0, 0.03), new vec3(Math.max(-T / 2 + 1e-3, x), 0, 0.03))
+    }
     const s = this.hover.value * this.press.value
-    kt.setLocalScale(new vec3(s, s, 1))
-    if (this.fill) this.fill.set(new vec3(-T / 2, 0, 0.03), new vec3(Math.max(-T / 2 + 1e-3, x), 0, 0.03))
-    setLevel(this.trackMat, a)
-    if (this.tickMat) setLevel(this.tickMat, a)
-    setTint(this.haloMat, this.spec.gradient ? this.trackColorAt(v) : this.fillColor, RAIL.knobHaloLevel * a)
+    if (s !== this.knobS) {
+      this.knobS = s
+      this.knob.getTransform().setLocalScale(new vec3(s, s, 1))
+    }
+    if (a !== this.levelA || v !== this.tintV) {
+      if (a !== this.levelA) {
+        setLevel(this.trackMat, a)
+        if (this.tickMat) setLevel(this.tickMat, a)
+      }
+      this.levelA = a
+      this.tintV = v
+      setTint(this.haloMat, this.spec.gradient ? this.trackColorAt(v) : this.fillColor, RAIL.knobHaloLevel * a)
+    }
     this.glass.setOpacity(a)
     this.glass.update(dt)
-    if (this.spec.format) this.readout = this.spec.format(v)
+    if (this.spec.format) {
+      if (v !== this.formatV) {
+        this.formatV = v
+        this.formatted = this.spec.format(v)
+      }
+      this.readout = this.formatted
+    }
     this.updateTexts(x, a)
+  }
+
+  private dropTicks(): void {
+    if (!this.dimTicks && this.ticks.length === 0) return
+    for (const t of this.ticks) t.so.destroy()
+    if (this.dimTicks) this.dimTicks.destroy()
+    this.ticks = []
+    this.dimTicks = null
+    this.tickMat = null
   }
 
   private setHover(h: boolean): void {
@@ -265,8 +384,12 @@ export class InstrumentSlider {
 
   private updateTexts(knobX: number, a: number): void {
     const base = ALPHA.secondary + (1 - ALPHA.secondary) * this.glass.hoverAmount
-    setTextAlpha(this.nameText, a, base)
-    setTextAlpha(this.valueText, a, base)
+    if (a !== this.textA || base !== this.textBase) {
+      this.textA = a
+      this.textBase = base
+      setTextAlpha(this.nameText, a, base)
+      setTextAlpha(this.valueText, a, base)
+    }
     if (this.valueText.text !== this.readout) this.valueText.text = this.readout
     if (!this.readout) return
     if (this.nameW < 0) this.nameW = textWidth(this.nameText)
@@ -278,7 +401,10 @@ export class InstrumentSlider {
     const lo = -T / 2 + this.nameW + VALUE_GAP + this.valueW / 2
     const hi = T / 2 - this.valueW / 2
     const vx = lo < hi ? Math.max(lo, Math.min(hi, knobX)) : hi
-    this.valueText.getSceneObject().getTransform().setLocalPosition(new vec3(vx, LABEL_Y, 0.08))
+    if (vx !== this.valueX) {
+      this.valueX = vx
+      this.valueText.getSceneObject().getTransform().setLocalPosition(new vec3(vx, LABEL_Y, 0.08))
+    }
   }
 
   private buildGradient(g: (v: number) => vec4): void {
@@ -314,6 +440,7 @@ export class InstrumentSlider {
   private buildTicks(list: SliderTick[]): void {
     for (const t of this.ticks) t.so.destroy()
     if (this.dimTicks) this.dimTicks.destroy()
+    this.levelA = NaN
     // Parts that free at the same moment keep a tick each: nudged apart along the track.
     const order = list.map((t, i) => ({at: t.at, i})).sort((a, b) => a.at - b.at)
     const xs: number[] = new Array(list.length)
@@ -353,6 +480,8 @@ interface RowSlot {
   row: RailRow
   y: Spring
   height: number
+  /** The y last written. */
+  shownY: number
 }
 
 /** The plate: top, stretching middle and bottom, so its height changes by transforms alone. */
@@ -412,10 +541,42 @@ export class RailColumn {
   private camera: Camera | null = null
   /** World corners of something the plate must not cover (Reset), set by CutawayMain. */
   keepClearOf: (() => vec3[]) | null = null
+  /** What a part label must not cover, beyond the rail and that (the gaze chips), set by CutawayMain. */
+  labelsKeepClearOf: (() => vec3[][]) | null = null
   private tan: {h: number; v: number} | null = null
   private cur: vec3 | null = null
   private offset = vec3.zero()
   private wasVisible = false
+  /** UI Kit elements on hidden rows would otherwise only build their parts on first show. */
+  private toInitialize: {initialize(): void}[] = []
+  private captionLines = 0
+  private tallestTop = NaN
+  private plateShown = NaN
+  private leaderShown = NaN
+  private topShown = NaN
+  // The numbers the view limit works from (prepareClamp).
+  private cx = 0
+  private cy = 0
+  private cz = 0
+  private lx = 0
+  private ly = 0
+  private lz = 0
+  private rx = 0
+  private ry = 0
+  private rz = 0
+  private ux = 0
+  private uy = 0
+  private uz = 0
+  private tanH = 1
+  private tanV = 1
+  private clearOn = false
+  private clearX0 = 0
+  private clearX1 = 0
+  private clearY0 = 0
+  private clearY1 = 0
+  private readonly want = new vec3(0, 0, 0)
+  // What place() last worked from.
+  private seen = {px: NaN, py: NaN, pz: NaN, cx: NaN, cy: NaN, cz: NaN, lx: NaN, ly: NaN, lz: NaN, tx: NaN, ty: NaN, tz: NaN, r: NaN, top: NaN, at: 0}
 
   constructor(private root: SceneObject, panelName: string, private material: Material) {
     this.panel = global.scene.createSceneObject(panelName)
@@ -438,7 +599,8 @@ export class RailColumn {
     s.bindPinch((p) => {
       if (this.onPinch) this.onPinch(p)
     })
-    this.slots.push({row: s, y: new Spring(420, 0.9, 0), height: s.height})
+    this.slots.push({row: s, y: new Spring(420, 0.9, 0), height: s.height, shownY: NaN})
+    this.toInitialize.push(s.slider)
     return s
   }
 
@@ -447,13 +609,15 @@ export class RailColumn {
     pill.onPinch = (p) => {
       if (this.onPinch) this.onPinch(p)
     }
-    this.slots.push({row: pill, y: new Spring(420, 0.9, 0), height: RAIL.pillHeight})
+    this.slots.push({row: pill, y: new Spring(420, 0.9, 0), height: RAIL.pillHeight, shownY: NaN})
+    this.toInitialize.push(pill.btn)
     return pill
   }
 
   /** The rows of one step, top to bottom (below the caption's slot). */
   defineLayout(name: string, rows: RailRow[]): void {
     this.layouts[name] = rows
+    this.tallestTop = NaN
   }
 
   /** Show one step's rows ("none" hides everything). `instant` skips the animation. */
@@ -470,7 +634,7 @@ export class RailColumn {
     }
     for (const s of this.slots) s.row.pop.show(rows.indexOf(s.row) >= 0, instant)
     const shown = rows.length > 0
-    this.topY.target = shown ? this.topOf(name) : this.topY.target
+    this.topY.target = shown ? this.fitTop(name) : this.topY.target
     if (instant || !this.plateFade.isShown) this.topY.snap(this.topY.target)
     this.plateFade.show(shown, instant)
     if (shown) this.setPlateEnabled(true)
@@ -490,24 +654,56 @@ export class RailColumn {
     return y + RAIL.captionSlot + RAIL.padding
   }
 
+  /** How many caption lines are on the rail: the glass fits them and the rows, nothing more. */
+  setCaptionLines(lines: number): void {
+    if (lines === this.captionLines) return
+    this.captionLines = lines
+    if (this.plateFade.isShown) this.topY.target = this.fitTop(this.current)
+  }
+
+  /**
+   * The top of the glass with what it holds right now. topOf stays the room it may need: the rail
+   * stands by that, so it doesn't move when a caption comes or goes.
+   */
+  private fitTop(name: string): number {
+    const rows = this.layouts[name] ?? []
+    let y = RAIL.bottom + RAIL.padding
+    for (const r of rows) y += this.slots.find((s) => s.row === r).height + RAIL.gap
+    const words = this.captionLines > 0 ? Math.min(RAIL.captionSlot, this.captionLines * CAPTION.line) : -RAIL.gap
+    return y + words + RAIL.padding
+  }
+
+  /** Where the glass's top edge is now (design units). */
+  getPlateTop(): number {
+    return this.topY.value
+  }
+
   /** The plate's outline in the rail's own space, for a step (design units). */
   extent(name: string): {x0: number; x1: number; y0: number; y1: number} {
     return {x0: -PLATE_W / 2, x1: PLATE_W / 2, y0: RAIL.bottom, y1: this.topOf(name)}
   }
 
   private tallest(): number {
+    if (this.tallestTop === this.tallestTop) return this.tallestTop
     let t = RAIL.bottom + 2 * RAIL.corner
     for (const n of Object.keys(this.layouts)) t = Math.max(t, this.topOf(n))
+    this.tallestTop = t
     return t
   }
 
   /** True while any part of the rail is still on screen (including its exit animation). */
   isVisible(): boolean {
-    return this.slots.some((s) => s.row.pop.so.enabled) || this.plate.top.enabled
+    if (this.plate.top.enabled) return true
+    for (let i = 0; i < this.slots.length; i++) if (this.slots[i].row.pop.so.enabled) return true
+    return false
   }
 
   isDragging(): boolean {
-    return this.slots.some((s) => s.row instanceof InstrumentSlider && s.row.isDragged)
+    for (let i = 0; i < this.slots.length; i++) {
+      const r = this.slots[i].row
+      if (r instanceof InstrumentSlider && r.isDragged) return true
+    }
+    return false
   }
 
   /**
@@ -520,17 +716,75 @@ export class RailColumn {
       tr.setWorldPosition(p)
       return
     }
-    const want = this.clampToView(p)
-    if (!this.cur || !this.wasVisible) this.cur = want
-    else if (this.isDragging()) this.cur = p.add(this.offset)
-    else this.cur = vec3.lerp(this.cur, want, 1 - Math.exp(-Math.max(0, getDeltaTime()) / FOLLOW_S))
-    this.offset = this.cur.sub(p)
-    this.wasVisible = this.isVisible()
+    if (!this.isVisible()) {
+      // Nothing to see: it starts from where the stage wants it when it next shows.
+      this.wasVisible = false
+      return
+    }
+    const dragging = this.isDragging()
+    this.prepareClamp()
+    this.clampedAt(p.x, p.y, p.z, this.want)
+    const want = this.want
+    if (this.atRest(p, want, target, radius, dragging)) return
+    if (!this.cur || !this.wasVisible) this.cur = new vec3(want.x, want.y, want.z)
+    else if (dragging) this.cur = p.add(this.offset)
+    else {
+      const k = 1 - Math.exp(-Math.max(0, getDeltaTime()) / FOLLOW_S)
+      const c = this.cur
+      c.x += (want.x - c.x) * k
+      c.y += (want.y - c.y) * k
+      c.z += (want.z - c.z) * k
+    }
+    const o = this.offset
+    o.x = this.cur.x - p.x
+    o.y = this.cur.y - p.y
+    o.z = this.cur.z - p.z
+    this.wasVisible = true
     tr.setWorldPosition(this.cur)
     const cam = this.camTransform.getWorldPosition()
     tr.setWorldRotation(faceToward(cam.sub(this.cur), this.camTransform.up))
     this.panel.getTransform().setLocalScale(vec3.one().uniformScale(RailColumn.scaleAt(this.cur, cam)))
     this.placeLeader(target, radius)
+  }
+
+  /** Nothing the rail stands by has changed and it has arrived: it stays as it is. */
+  private atRest(p: vec3, want: vec3, target: vec3 | undefined, radius: number, dragging: boolean): boolean {
+    const s = this.seen
+    const tx = target ? target.x : NaN
+    const ty = target ? target.y : NaN
+    const tz = target ? target.z : NaN
+    const top = this.topY.value
+    const now = getTime()
+    const same =
+      s.px === p.x && s.py === p.y && s.pz === p.z &&
+      s.cx === this.cx && s.cy === this.cy && s.cz === this.cz &&
+      s.lx === this.lx && s.ly === this.ly && s.lz === this.lz &&
+      s.r === radius && s.top === top &&
+      (target ? s.tx === tx && s.ty === ty && s.tz === tz : s.tx !== s.tx)
+    const c = this.cur
+    const arrived = !!c && this.wasVisible && !dragging && Math.abs(c.x - want.x) < 1e-3 && Math.abs(c.y - want.y) < 1e-3 && Math.abs(c.z - want.z) < 1e-3
+    if (same && arrived && now - s.at < REST_CHECK_S) return true
+    s.px = p.x
+    s.py = p.y
+    s.pz = p.z
+    s.cx = this.cx
+    s.cy = this.cy
+    s.cz = this.cz
+    s.lx = this.lx
+    s.ly = this.ly
+    s.lz = this.lz
+    s.tx = tx
+    s.ty = ty
+    s.tz = tz
+    s.r = radius
+    s.top = top
+    s.at = now
+    return false
+  }
+
+  /** Which way the user is looking. */
+  getLook(): vec3 {
+    return this.findCamera() ? this.camTransform.forward : vec3.forward()
   }
 
   /** Where the rail really stands (world). */
@@ -572,16 +826,32 @@ export class RailColumn {
   }
 
   update(dt: number): void {
-    for (const s of this.slots) {
+    const init = this.toInitialize.pop()
+    if (init) init.initialize()
+    for (let i = 0; i < this.slots.length; i++) {
+      const s = this.slots[i]
       s.row.update(dt)
-      if (s.row.pop.so.enabled) s.row.pop.so.getTransform().setLocalPosition(new vec3(0, s.y.update(dt), 0))
+      if (s.row.pop.so.enabled) {
+        const y = s.y.update(dt)
+        if (y !== s.shownY) {
+          s.shownY = y
+          s.row.pop.so.getTransform().setLocalPosition(new vec3(0, y, 0))
+        }
+      }
     }
     this.topY.update(dt)
     const a = this.plateFade.update(dt)
     if (this.plate.top.enabled) {
-      setLevel(this.plateMat, a)
-      setLevel(this.leaderMat, this.leaderOn ? a : 0)
-      this.applyPlate()
+      if (a !== this.plateShown) {
+        this.plateShown = a
+        setLevel(this.plateMat, a)
+      }
+      const l = this.leaderOn ? a : 0
+      if (l !== this.leaderShown) {
+        this.leaderShown = l
+        setLevel(this.leaderMat, l)
+      }
+      if (this.topY.value !== this.topShown) this.applyPlate()
       if (!this.plateFade.isShown && !this.plateFade.isAnimating) this.setPlateEnabled(false)
     }
   }
@@ -595,6 +865,7 @@ export class RailColumn {
 
   private applyPlate(): void {
     const top = this.topY.value
+    this.topShown = top
     const R = RAIL.corner
     this.plate.top.getTransform().setLocalPosition(new vec3(0, top - R, 0))
     this.plate.bottom.getTransform().setLocalPosition(new vec3(0, RAIL.bottom + R, 0))
@@ -629,45 +900,200 @@ export class RailColumn {
     return this.tan
   }
 
-  /** `p`, moved at the same depth until the rail's tallest layout fits inside the view. */
-  private clampToView(p: vec3): vec3 {
-    const cam = this.camTransform.getWorldPosition()
-    const look = this.camTransform.forward.uniformScale(-1)
-    const right = this.camTransform.right
-    const up = this.camTransform.up
-    const v = p.sub(cam)
-    const z = v.dot(look)
-    if (z <= 1 || z / Math.max(1e-3, v.length) < MAX_FOLLOW_COS) return p
+  /**
+   * The best spot for the rail. For each side of the copy and each step towards the user (0–36 cm),
+   * the smallest step out (0–90 cm in 3 cm steps) at which the plate, where the view limit really puts
+   * it, clears the obstacles from the user's eye by 1 view unit; of those, the one whose farthest corner
+   * is nearest the copy's centre in view (the current side keeps it unless the other is clearly
+   * closer). If no spot clears anywhere, the one that overlaps least.
+   */
+  findSpot(o: RailSearch): RailSpot {
+    const none: RailSpot = {side: o.side, shift: 0, fwd: 0, reach: 0}
+    if (!this.prepareClamp()) return none
+    const F = o.F
+    const e = F.eye
+    const c = o.center
+    const plate = this.extent(o.layout)
+    let tx = e.x - c.x
+    let tz = e.z - c.z
+    const len = Math.sqrt(tx * tx + tz * tz)
+    if (len > 1e-4) {
+      tx /= len
+      tz /= len
+    } else {
+      tx = 0
+      tz = -1
+    }
+    const rx = tz
+    const rz = -tx
+    const at = {x: 0, y: 0, z: 0}
+    let x0 = 0
+    let x1 = 0
+    let y0 = 0
+    let y1 = 0
+    const lay = (side: number, fwd: number, shift: number) => {
+      const a = o.reach + 13 + fwd
+      const b = side * (o.reach + 4 + shift)
+      this.clampedAt(c.x + tx * a + rx * b, c.y + 2, c.z + tz * a + rz * b, at)
+      const vx = at.x - e.x
+      const vy = at.y - e.y
+      const vz = at.z - e.z
+      const along = vx * F.f.x + vy * F.f.y + vz * F.f.z
+      const z = Math.max(1e-3, along)
+      const x = ((vx * F.r.x + vy * F.r.y + vz * F.r.z) / z) * F.D
+      const y = ((vx * F.u.x + vy * F.u.y + vz * F.u.z) / z) * F.D
+      const k = Math.min(6, Math.max(0.3, Math.sqrt(vx * vx + vy * vy + vz * vz) / DESIGN_D))
+      const unit = (k * F.D) / Math.max(1, along)
+      x0 = x + unit * plate.x0
+      x1 = x + unit * plate.x1
+      y0 = y + unit * plate.y0
+      y1 = y + unit * plate.y1
+    }
+    const farthest = () => {
+      const fx = Math.max(Math.abs(x0), Math.abs(x1))
+      const fy = Math.max(Math.abs(y0), Math.abs(y1))
+      return Math.sqrt(fx * fx + fy * fy)
+    }
+    const sides = o.lock ? [o.side] : [1, -1]
+    const lists = sides.map((s) => o.obstacles(s))
+    let mine: RailSpot | null = null
+    let other: RailSpot | null = null
+    for (let i = 0; i < sides.length; i++) {
+      const s = sides[i]
+      const obs = lists[i]
+      let best: RailSpot | null = null
+      for (let fwd = 0; fwd <= 36; fwd += 6) {
+        for (let shift = 0; shift <= 90; shift += 3) {
+          lay(s, fwd, shift)
+          let clear = true
+          for (let j = 0; clear && j < obs.length; j++) clear = obs[j].rectClear(x0, x1, y0, y1, 1)
+          if (!clear) continue
+          const reach = farthest()
+          if (!best || reach < best.reach - 0.5) best = {side: s, shift, fwd, reach}
+          break
+        }
+      }
+      if (s === o.side) mine = best
+      else other = best
+    }
+    if (mine && (!other || mine.reach <= other.reach + 5)) return mine
+    if (other) return other
+    // Nothing clears from here: as little overlap as there can be, the current side keeping ties.
+    let least: RailSpot = none
+    let leastArea = Infinity
+    for (let i = 0; i < sides.length; i++) {
+      const s = sides[i]
+      const obs = lists[i]
+      const favour = s === o.side ? 0.9 : 1
+      for (let fwd = 0; fwd <= 36; fwd += 6) {
+        for (let shift = 0; shift <= 90; shift += 3) {
+          lay(s, fwd, shift)
+          let area = 0
+          for (let j = 0; j < obs.length; j++) {
+            const q = obs[j]
+            const w = Math.min(x1, q.x1) - Math.max(x0, q.x0)
+            const h = Math.min(y1, q.y1) - Math.max(y0, q.y0)
+            if (w > 0 && h > 0) area += w * h
+          }
+          area *= favour
+          if (area < leastArea - 1e-6) {
+            leastArea = area
+            least = {side: s, shift, fwd, reach: farthest()}
+          }
+        }
+      }
+    }
+    return least
+  }
+
+  /** Reads the camera once for any number of clampedAt calls. False until there is a camera. */
+  prepareClamp(): boolean {
+    if (!this.findCamera()) return false
+    const t = this.camTransform
+    const c = t.getWorldPosition()
+    const f = t.forward
+    const r = t.right
+    const u = t.up
+    this.cx = c.x
+    this.cy = c.y
+    this.cz = c.z
+    this.lx = -f.x
+    this.ly = -f.y
+    this.lz = -f.z
+    this.rx = r.x
+    this.ry = r.y
+    this.rz = r.z
+    this.ux = u.x
+    this.uy = u.y
+    this.uz = u.z
     const tan = this.viewTangents()
-    const k = RailColumn.scaleAt(p, cam)
-    const hw = (k * PLATE_W) / 2 / z
-    const limX = tan.h * VIEW_X - hw
-    let tx = v.dot(right) / z
-    tx = limX > 0 ? Math.max(-limX, Math.min(limX, tx)) : 0
-    const lo = -tan.v * VIEW_Y - (k * RAIL.bottom) / z
-    const hi = tan.v * VIEW_Y - (k * this.tallest()) / z
-    let ty = v.dot(up) / z
-    ty = lo <= hi ? Math.max(lo, Math.min(hi, ty)) : (lo + hi) / 2
-    // Never over what must stay pinchable on its own (Reset): lift until it clears, inside the view.
+    this.tanH = tan.h
+    this.tanV = tan.v
     const clear = this.keepClearOf ? this.keepClearOf() : null
+    this.clearOn = !!clear
     if (clear) {
       let x0 = Infinity
       let x1 = -Infinity
       let y1 = -Infinity
       let y0 = Infinity
-      for (const q of clear) {
-        const d = q.sub(cam)
-        const qz = Math.max(1, d.dot(look))
-        x0 = Math.min(x0, d.dot(right) / qz)
-        x1 = Math.max(x1, d.dot(right) / qz)
-        y0 = Math.min(y0, d.dot(up) / qz)
-        y1 = Math.max(y1, d.dot(up) / qz)
+      for (let i = 0; i < clear.length; i++) {
+        const q = clear[i]
+        const dx = q.x - c.x
+        const dy = q.y - c.y
+        const dz = q.z - c.z
+        const qz = Math.max(1, dx * this.lx + dy * this.ly + dz * this.lz)
+        const ax = (dx * r.x + dy * r.y + dz * r.z) / qz
+        const ay = (dx * u.x + dy * u.y + dz * u.z) / qz
+        x0 = Math.min(x0, ax)
+        x1 = Math.max(x1, ax)
+        y0 = Math.min(y0, ay)
+        y1 = Math.max(y1, ay)
       }
-      const bottom = ty + (k * RAIL.bottom) / z
-      const top = ty + (k * this.tallest()) / z
-      if (tx - hw < x1 && tx + hw > x0 && bottom < y1 && top > y0) ty = Math.min(hi, ty + y1 + (k * RAIL.gap) / z - bottom)
+      this.clearX0 = x0
+      this.clearX1 = x1
+      this.clearY0 = y0
+      this.clearY1 = y1
     }
-    return cam.add(look.uniformScale(z)).add(right.uniformScale(tx * z)).add(up.uniformScale(ty * z))
+    return true
+  }
+
+  /**
+   * (x, y, z), moved at the same depth until the rail's tallest layout fits inside the view: written
+   * to `out`. Plain numbers, so a stage can try many spots in a frame (after prepareClamp).
+   */
+  clampedAt(x: number, y: number, z: number, out: {x: number; y: number; z: number}): void {
+    const vx = x - this.cx
+    const vy = y - this.cy
+    const vz = z - this.cz
+    const depth = vx * this.lx + vy * this.ly + vz * this.lz
+    const dist = Math.sqrt(vx * vx + vy * vy + vz * vz)
+    if (depth <= 1 || depth / Math.max(1e-3, dist) < MAX_FOLLOW_COS) {
+      out.x = x
+      out.y = y
+      out.z = z
+      return
+    }
+    const k = Math.min(6, Math.max(0.3, dist / DESIGN_D))
+    const hw = (k * PLATE_W) / 2 / depth
+    const limX = this.tanH * VIEW_X - hw
+    let tx = (vx * this.rx + vy * this.ry + vz * this.rz) / depth
+    tx = limX > 0 ? Math.max(-limX, Math.min(limX, tx)) : 0
+    const tall = this.tallest()
+    const lo = -this.tanV * VIEW_Y - (k * RAIL.bottom) / depth
+    const hi = this.tanV * VIEW_Y - (k * tall) / depth
+    let ty = (vx * this.ux + vy * this.uy + vz * this.uz) / depth
+    ty = lo <= hi ? Math.max(lo, Math.min(hi, ty)) : (lo + hi) / 2
+    // Never over what must stay pinchable on its own (Reset): lift until it clears, inside the view.
+    if (this.clearOn) {
+      const bottom = ty + (k * RAIL.bottom) / depth
+      const top = ty + (k * tall) / depth
+      if (tx - hw < this.clearX1 && tx + hw > this.clearX0 && bottom < this.clearY1 && top > this.clearY0) ty = Math.min(hi, ty + this.clearY1 + (k * RAIL.gap) / depth - bottom)
+    }
+    const a = tx * depth
+    const b = ty * depth
+    out.x = this.cx + this.lx * depth + this.rx * a + this.ux * b
+    out.y = this.cy + this.ly * depth + this.ry * a + this.uy * b
+    out.z = this.cz + this.lz * depth + this.rz * a + this.uz * b
   }
 
   /** The hairline from the rail's top to the copy, drawn in the rail's plane as the user sees it. */

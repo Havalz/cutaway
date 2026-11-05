@@ -139,7 +139,7 @@ export class CutawayStationUI extends BaseScriptComponent {
   private dotMat: Material
   private dotHover = 1
   private dotHoverTarget = 1
-  private ringsSo: SceneObject | null = null
+  private rings: {so: SceneObject; rmv: RenderMeshVisual} | null = null
   private chip: Piece
   private chipSpring = new Spring(553, 0.745, 0)
   private questionPieces: Piece[] = []
@@ -320,12 +320,14 @@ export class CutawayStationUI extends BaseScriptComponent {
 
   /** The explained dot gets one thin ring per energy the explanation used. */
   setEnergies(colors: vec4[]): void {
-    if (this.ringsSo) this.ringsSo.destroy()
-    this.ringsSo = null
-    if (!colors || colors.length === 0 || !this.dotMaterial) return
-    const kit = new MeshKit()
-    colors.forEach((c, i) => kit.addArcXY(0, 0, 0.95 + 0.32 * i, 0.09, 0, Math.PI * 2, ink(c, 0.95), 48))
-    this.ringsSo = spawnMesh(this.explainedDot.pop.so, "EnergyRings", kit.build(), this.dotMaterial, new vec3(0, 0, 0.03), this.dotMat).so
+    if (!this.rings) return
+    const on = !!colors && colors.length > 0
+    if (on) {
+      const kit = new MeshKit()
+      colors.forEach((c, i) => kit.addArcXY(0, 0, 0.95 + 0.32 * i, 0.09, 0, Math.PI * 2, ink(c, 0.95), 48))
+      this.rings.rmv.mesh = kit.build()
+    }
+    this.rings.so.enabled = on
   }
 
   /** Small flash at the dot: the explanation has folded back into it. */
@@ -358,6 +360,15 @@ export class CutawayStationUI extends BaseScriptComponent {
 
   getUiScale(): number {
     return this.uiScale
+  }
+
+  /** The chip's four world corners while it shows, otherwise null. */
+  getChipCorners(): vec3[] | null {
+    if (!this.chip.pop.isShown) return null
+    const m = this.chip.so.getTransform().getWorldTransform()
+    const w = this.chipWidth / 2
+    const h = this.rowHeight / 2
+    return [new vec3(-w, -h, 0), new vec3(w, -h, 0), new vec3(w, h, 0), new vec3(-w, h, 0)].map((q) => m.multiplyPoint(q))
   }
 
   // ---------------- Build helpers ----------------
@@ -413,6 +424,13 @@ export class CutawayStationUI extends BaseScriptComponent {
       const kit = new MeshKit()
       this.softDot(kit, 0.55, 1)
       spawnMesh(so, "DotGlow", kit.build(), this.dotMaterial, new vec3(0, 0, 0.02), this.dotMat)
+      // Lives as long as the station: an explanation only gives it its mesh (setEnergies).
+      const ringSo = this.child(wrap, "EnergyRings")
+      ringSo.getTransform().setLocalPosition(new vec3(0, 0, 0.03))
+      const rmv = ringSo.createComponent("Component.RenderMeshVisual") as RenderMeshVisual
+      rmv.mainMaterial = this.dotMat
+      ringSo.enabled = false
+      this.rings = {so: ringSo, rmv}
     }
     const piece: Piece = {pop, so, btn}
     this.pieces.push(piece)

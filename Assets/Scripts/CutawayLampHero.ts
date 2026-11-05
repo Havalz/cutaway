@@ -21,11 +21,12 @@ import {setFade, spawnMesh, TrailRibbon} from "./CutawayGeometry"
 import {TableSurface} from "./CutawayHeroSurface"
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
 import {LampApart, LampApartInfo} from "./CutawayLampApart"
-import {boxCorners, hull2, polyGap, toView, viewFrame} from "./CutawayLayout"
+import {BOX_NUMBERS, boxCorners, FastPoly, pointsHull, pushBox, viewFrame} from "./CutawayLayout"
 import {kelvinToWarmth, LAMP_K_DEFAULT, LampLight, LampLightInfo, LampLightTimes, RAYS_FROM, SHADE_LIFT_CM, warmthToKelvin} from "./CutawayLampLight"
 import {LAMP_GEOM, LampModel} from "./CutawayLampModel"
 import {LampPhysics} from "./CutawayLampPhysics"
 import {LampRail, LampSliderKey} from "./CutawayLampRail"
+import {RailSpot, RailWatch} from "./CutawayRail"
 import {arcControl, bezier, clampFoot, clearOfHead, contactGlowKit, DEG, fitScale, flatDir, Footprint, footprintOutlineXY, footRadius, footReach, hoverDiscKit, hullLowestY, placeGlowAndDisc, unclampFoot} from "./CutawayStageKit"
 import {ENERGY, ink} from "./CutawayStyle"
 import {clamp01, easeInOutCubic, easeOutCubic} from "./CutawayTween"
@@ -152,6 +153,11 @@ interface Look {
   group: string
   depthWrite: boolean
   twoSided: boolean
+  /** What was last written. */
+  shownK: number
+  shownRim: number
+  shownGlow: vec3 | null
+  shownSolid: boolean | null
 }
 
 /** A look group's state: solid fill 0..1, rim boost, overall fade. */
@@ -286,6 +292,14 @@ export class LampHero {
   private cordDown = false
   /** How far the copy is above its rest on the table while the cord stays down (world cm). */
   private cordDrop = 0
+  private cordShown = NaN
+  private shadeShown = NaN
+  private buttonShown = NaN
+  private lightArgs = {brightness: 0, kelvin: 0, lift: 0, apart: 0}
+  /** The copy's meshes together, in its own space: what the rail keeps clear of on the table. */
+  private railRest: number[] = []
+  /** What the last search worked from. */
+  private railWatch = new RailWatch()
   /** The driver's caption is up (apart, live, lit). */
   private driverCap = false
 
@@ -398,6 +412,11 @@ export class LampHero {
     this.cordRest = null
     this.cordDown = false
     this.cordDrop = 0
+    this.cordShown = NaN
+    this.shadeShown = NaN
+    this.buttonShown = NaN
+    this.railRest = []
+    this.railWatch.forget()
     this.driverCap = false
     this.sEff = 0
     this.retWaiting = false
@@ -607,7 +626,13 @@ export class LampHero {
       // into the gaps between its rows.
       railBoxes: () => {
         const boxes = this.ctx.rail.isVisible() ? this.ctx.rail.getBoxes() : []
-        return boxes.length ? [([] as vec3[]).concat(...boxes)] : []
+        if (!boxes.length) return []
+        const out = [([] as vec3[]).concat(...boxes)]
+        // Reset and its trio stay readable too.
+        const rail = this.ctx.rail.getRail()
+        if (rail.keepClearOf) out.push(rail.keepClearOf())
+        if (rail.labelsKeepClearOf) for (const c of rail.labelsKeepClearOf()) out.push(c)
+        return out
       },
       groupSolid: (g) => this.groupSolid(g),
       meshSolid: (rmv) => this.meshSolid(rmv),
@@ -691,7 +716,7 @@ export class LampHero {
       const pass = mat.mainPass
       const b = pass.baseColor
       const ec = pass.emissiveColor
-      const look: Look = {rmv: m.rmv, mat, base: new vec4(b.x, b.y, b.z, b.w), emis: pass.emissiveIntensity, emisCol: new vec3(ec.x, ec.y, ec.z), rim: pass.rimIntensity, group, depthWrite: pass.depthWrite, twoSided: pass.twoSided}
+      const look: Look = {rmv: m.rmv, mat, base: new vec4(b.x, b.y, b.z, b.w), emis: pass.emissiveIntensity, emisCol: new vec3(ec.x, ec.y, ec.z), rim: pass.rimIntensity, group, depthWrite: pass.depthWrite, twoSided: pass.twoSided, shownK: NaN, shownRim: NaN, shownGlow: null, shownSolid: null}
       this.looks.push(look)
       this.lookByRmv.set(m.rmv, look)
       if (!this.groupLook[group]) this.groupLook[group] = {fill: 1, rim: 1, fade: 1, glow: null}
@@ -701,23 +726,38 @@ export class LampHero {
   /** Apply the look: the shell's fill (rim-only in flight) times each part's own fill and fade. */
   private applyLooks(): void {
     const g0 = this.globalFade
-    for (const l of this.looks) {
+    const looks = this.looks
+    for (let i = 0; i < looks.length; i++) {
+      const l = looks[i]
       const gl = this.groupLook[l.group]
       const fade = g0 * (gl ? gl.fade : 1)
       const fill = this.shellFill * (gl ? gl.fill : 1)
-      const pass = l.mat.mainPass
       const k = fill * fade
-      pass.baseColor = new vec4(l.base.x * k, l.base.y * k, l.base.z * k, l.base.w)
-      pass.emissiveIntensity = l.emis * k
-      const glow = gl ? gl.glow : null
-      pass.emissiveColor = glow ? l.emisCol.add(glow) : l.emisCol
       // Rim-only in flight (edges of light); a part turned to an outline keeps a thin rim.
       const rimOnly = this.shellRim
-      const rim = fill >= 0.999 ? l.rim : rimOnly + (l.rim - rimOnly) * fill
-      pass.rimIntensity = rim * fade * (gl ? gl.rim : 1)
+      const rim = (fill >= 0.999 ? l.rim : rimOnly + (l.rim - rimOnly) * fill) * fade * (gl ? gl.rim : 1)
+      const glow = gl ? gl.glow : null
       const solid = fill > 0.95 && fade > 0.95
-      pass.depthWrite = l.depthWrite && solid
-      pass.twoSided = l.twoSided && solid
+      if (k === l.shownK && rim === l.shownRim && glow === l.shownGlow && solid === l.shownSolid) continue
+      const pass = l.mat.mainPass
+      if (k !== l.shownK) {
+        l.shownK = k
+        pass.baseColor = new vec4(l.base.x * k, l.base.y * k, l.base.z * k, l.base.w)
+        pass.emissiveIntensity = l.emis * k
+      }
+      if (rim !== l.shownRim) {
+        l.shownRim = rim
+        pass.rimIntensity = rim
+      }
+      if (glow !== l.shownGlow || l.shownSolid === null) {
+        l.shownGlow = glow
+        pass.emissiveColor = glow ? l.emisCol.add(glow) : l.emisCol
+      }
+      if (solid !== l.shownSolid) {
+        l.shownSolid = solid
+        pass.depthWrite = l.depthWrite && solid
+        pass.twoSided = l.twoSided && solid
+      }
     }
   }
 
@@ -1031,14 +1071,16 @@ export class LampHero {
     if (!this.model || !this.cordRest) return
     let down = 0
     if (this.cordDown && this.surf) down = Math.max(0, this.replica.getTransform().getWorldPosition().y - (this.surf.height + this.restGap)) * clamp01(k)
+    if (down === this.cordShown) return
     this.cordDrop = down
+    this.cordShown = down
     this.model.parts["LampCord"].getTransform().setLocalPosition(this.cordRest.add(new vec3(0, -down / this.scale, 0)))
   }
 
   /** The parts, the driver's live detail and its caption (the lamp on while apart). */
   private updateApart(dt: number, labels: boolean): void {
     if (!this.apart) return
-    const lit = this.light && this.light.isOn ? this.light.getInfo().led : 0
+    const lit = this.light && this.light.isOn ? this.light.ledLevel : 0
     this.apart.update(dt, this.sEff, lit, labels)
     const want = labels && this.state === "landed" && this.apart.live && this.lightOn && lit > 0.05
     if (want && !this.driverCap) {
@@ -1071,7 +1113,12 @@ export class LampHero {
         this.ctx.log("lamp:shadeSeated")
       }
     }
-    if (this.model && this.shadeRest) this.model.parts["LampShade"].getTransform().setLocalPosition(this.shadeRest.add(new vec3(0, this.shadeLift / this.scale, 0)))
+    // While the copy is apart the take-apart has the shade.
+    if (this.apart && this.apart.value > 1e-4) this.shadeShown = NaN
+    else if (this.model && this.shadeRest && this.shadeLift !== this.shadeShown) {
+      this.shadeShown = this.shadeLift
+      this.model.parts["LampShade"].getTransform().setLocalPosition(this.shadeRest.add(new vec3(0, this.shadeLift / this.scale, 0)))
+    }
     const k = this.shadeLift / SHADE_LIFT_CM
     const on = this.lightOn && this.state === "landed"
     if (on && !this.harsh && k > RAYS_FROM) {
@@ -1112,7 +1159,12 @@ export class LampHero {
    * the cord left down: the light on the cord and the shade's fade over its first 4 cm).
    */
   private lightParams(): {brightness: number; kelvin: number; lift: number; apart: number} {
-    return {brightness: this.ctx.rail.getValue("brightness"), kelvin: this.getKelvin(), lift: this.shadeLift / SHADE_LIFT_CM, apart: Math.max(this.sEff, 0.15 * clamp01(this.cordDrop / 4))}
+    const p = this.lightArgs
+    p.brightness = this.ctx.rail.getValue("brightness")
+    p.kelvin = this.getKelvin()
+    p.lift = this.shadeLift / SHADE_LIFT_CM
+    p.apart = Math.max(this.sEff, 0.15 * clamp01(this.cordDrop / 4))
+    return p
   }
 
   /** The lit bulb: its LED chips and frosted envelope glow in the light's colour. */
@@ -1138,7 +1190,10 @@ export class LampHero {
       else this.buttonT = -1
     }
     this.buttonDepth = d
-    if (this.model && this.buttonRest) this.model.parts["LampSwitchButton"].getTransform().setLocalPosition(this.buttonRest.add(new vec3(0, -d, 0)))
+    if (d !== this.buttonShown && this.model && this.buttonRest) {
+      this.buttonShown = d
+      this.model.parts["LampSwitchButton"].getTransform().setLocalPosition(this.buttonRest.add(new vec3(0, -d, 0)))
+    }
   }
 
   /** The caption above the rail (null hides it). */
@@ -1484,23 +1539,28 @@ export class LampHero {
 
   /**
    * Keep the rail and its caption clear of the copy as the user sees it: a few times a second, while
-   * nothing is held and the copy is assembled, find the place that clears every visible mesh of the
-   * copy (findRailShift) and glide there; the caption is on the rail and goes with it.
+   * nothing is held, on the table or hovering, when anything it stands by has moved, find the place
+   * that clears the copy together and all the way apart (findRailShift) and glide there; the caption
+   * is on the rail and goes with it. While the copy is apart it stays on its side: the driver came
+   * out away from it.
    */
   private updateRailShift(dt: number): void {
     this.railCheckT -= dt
-    const settled = !this.ctx.rail.isDragging() && this.sEff <= 0.001 && this.ctx.rail.getValue("apart") <= 0.001 && this.pose === "rest" && !this.grab
-    if (this.railCheckT <= 0 && this.ctx.rail.isVisible() && settled) {
+    const held = this.ctx.rail.isDragging() || !!this.grab
+    const steady = this.pose === "rest" || this.pose === "hover"
+    if (this.railCheckT <= 0 && this.ctx.rail.isVisible() && !held && steady) {
       this.railCheckT = 0.25
-      const want = this.findRailShift()
-      if (want.side !== this.railSide) {
-        // The other side: jump there (gliding across would sweep the rail through the copy).
-        this.railSide = want.side
-        this.railShift = want.shift
-        this.railFwd = want.fwd
+      if (this.railWatch.moved(this.ctx.rail.getRail(), this.ctx.camPos(), this.stageCenter(), this.yaw, "on")) {
+        const want = this.findRailShift(this.sEff > 0.001 || this.ctx.rail.getValue("apart") > 0.001)
+        if (want.side !== this.railSide) {
+          // The other side: jump there (gliding across would sweep the rail through the copy).
+          this.railSide = want.side
+          this.railShift = want.shift
+          this.railFwd = want.fwd
+        }
+        this.railShiftTarget = want.shift
+        this.railFwdTarget = want.fwd
       }
-      this.railShiftTarget = want.shift
-      this.railFwdTarget = want.fwd
     }
     const k = 1 - Math.exp(-Math.max(0, dt) / 0.12)
     this.railShift += (this.railShiftTarget - this.railShift) * k
@@ -1512,6 +1572,7 @@ export class LampHero {
   /** Snap the rail's place now (on landing, before the rail and caption appear). */
   private snapRailShift(): void {
     const want = this.findRailShift()
+    this.railWatch.mark(this.ctx.rail.getRail(), this.ctx.camPos(), this.stageCenter(), this.yaw, "on")
     this.railSide = want.side
     this.railShift = this.railShiftTarget = want.shift
     this.railFwd = this.railFwdTarget = want.fwd
@@ -1520,60 +1581,44 @@ export class LampHero {
   }
 
   /**
-   * Where the rail stands: for each side of the copy and each step towards the user (0–36 cm), the
-   * smallest step out (0–90 cm in 3 cm steps) at which the rail's full layout (all three slider
-   * rows, so it never has to move when the lamp comes on) and its caption clear the copy's meshes
-   * from the user's eye, and the foot switch stays uncovered; of those, the most compact. The cord
-   * itself lies on the table and may pass under it.
+   * Where the rail stands (RailColumn.findSpot): its full layout (all three slider rows, so it never
+   * has to move when the lamp comes on) and its caption clear the copy's meshes on the table, so the
+   * foot switch stays uncovered, and the whole outline of the copy taken apart, with the driver out on
+   * the far side. The cord itself lies on the table and may pass under it.
    */
-  private findRailShift(): {side: number; shift: number; fwd: number; reach: number} {
-    const none = {side: this.railSide, shift: 0, fwd: 0, reach: 0}
-    const eye = this.ctx.camPos()
-    const F = viewFrame(eye, this.stageCenter())
-    const copy: {h: vec2[]; x0: number; x1: number; y0: number; y1: number}[] = []
-    for (const b of this.meshBoxes((p) => p !== "LampCord")) {
-      const h = hull2(b.map((q) => toView(F, q)))
-      copy.push({h, x0: Math.min(...h.map((q) => q.x)), x1: Math.max(...h.map((q) => q.x)), y0: Math.min(...h.map((q) => q.y)), y1: Math.max(...h.map((q) => q.y))})
-    }
-    if (!copy.length) return none
-    const plate = this.ctx.rail.getRail().extent("on")
-    const unitAt = (p: vec3, k: number) => (k * F.D) / Math.max(1, p.sub(eye).dot(F.f))
-    const rect = (c: vec2, u: number, x0: number, x1: number, y0: number, y1: number) => [new vec2(c.x + u * x0, c.y + u * y0), new vec2(c.x + u * x1, c.y + u * y0), new vec2(c.x + u * x1, c.y + u * y1), new vec2(c.x + u * x0, c.y + u * y1)]
-    const clearOf = (r: vec2[]) => {
-      const x0 = Math.min(r[0].x, r[2].x) - 1
-      const x1 = Math.max(r[0].x, r[2].x) + 1
-      const y0 = Math.min(r[0].y, r[2].y) - 1
-      const y1 = Math.max(r[0].y, r[2].y) + 1
-      return copy.every((m) => m.x1 < x0 || m.x0 > x1 || m.y1 < y0 || m.y0 > y1 || polyGap(r, m.h) >= 1)
-    }
-    const savedSide = this.railSide
-    const saved = this.railShift
-    const savedFwd = this.railFwd
-    const best = new Map<number, {side: number; shift: number; fwd: number; reach: number}>()
-    for (const side of [1, -1]) {
-      this.railSide = side
-      for (let fwd = 0; fwd <= 36; fwd += 6) {
-        this.railFwd = fwd
-        for (let shift = 0; shift <= 90; shift += 3) {
-          this.railShift = shift
-          const a = this.railAnchor()
-          const shapes = [rect(toView(F, a), unitAt(a, LampRail.scaleAt(a, eye)), plate.x0, plate.x1, plate.y0, plate.y1)]
-          if (!shapes.every(clearOf)) continue
-          let reach = 0
-          for (const h of shapes) for (const q of h) reach = Math.max(reach, q.length)
-          const b = best.get(side)
-          if (!b || reach < b.reach - 0.5) best.set(side, {side, shift, fwd, reach})
-          break
-        }
+  private findRailShift(lockSide: boolean = false): RailSpot {
+    const none: RailSpot = {side: this.railSide, shift: 0, fwd: 0, reach: 0}
+    if (!this.model) return none
+    const root = this.model.root.getTransform()
+    if (this.pose === "rest" && this.sEff <= 0.001) {
+      const inv = root.getInvertedWorldTransform()
+      const pts = this.railRest
+      pts.length = 0
+      for (const m of this.model.meshList()) {
+        if (m.part === "LampCord") continue
+        const so = m.rmv.getSceneObject()
+        if (so.isEnabledInHierarchy) pushBox(pts, inv.mult(so.getTransform().getWorldTransform()), m.lo, m.hi)
       }
     }
-    this.railSide = savedSide
-    this.railShift = saved
-    this.railFwd = savedFwd
-    const mine = best.get(savedSide)
-    const other = best.get(-savedSide)
-    if (mine && (!other || mine.reach <= other.reach + 5)) return mine
-    return other || none
+    if (!this.railRest.length) return none
+    const center = this.stageCenter()
+    const F = viewFrame(this.ctx.camPos(), center)
+    const m = root.getWorldTransform()
+    const rest: FastPoly[] = []
+    for (let i = 0; i < this.railRest.length; i += BOX_NUMBERS) rest.push(pointsHull(F, m, this.railRest, i, 8, this.restGap - this.h))
+    return this.ctx.rail.getRail().findSpot({
+      F,
+      center,
+      reach: G.baseR * this.scale,
+      layout: "on",
+      side: this.railSide,
+      lock: lockSide,
+      obstacles: (side) => {
+        if (!this.apart) return rest
+        const pts = this.apart.explodedPoints(-side)
+        return rest.concat(pointsHull(F, m, pts, 0, pts.length / 3, HOVER_CM - this.h))
+      }
+    })
   }
 
   /** The rail: beside the copy on the user's side, in front of it and to the side `railSide` picks. */

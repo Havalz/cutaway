@@ -600,6 +600,7 @@ export class CutawayMain extends BaseScriptComponent {
       caption: (text) => this.labelsUI.setCaption(text, undefined, this.rpRail.getRail())
     })
     this.rpRail.getRail().keepClearOf = () => this.resetUI.getClearCorners()
+    this.rpRail.getRail().labelsKeepClearOf = () => this.chipCorners()
     this.rpRail.onPutBack = () => this.rpHero.putBack()
     this.rpRail.onPinch = (p) => this.playAt("tick", this.tickAudio, p)
     this.recordPlayerUI.onCloserPressed.add(() => this.launchRp())
@@ -696,6 +697,7 @@ export class CutawayMain extends BaseScriptComponent {
       caption: (text) => this.labelsUI.setCaption(text, undefined, this.lampRail.getRail())
     })
     this.lampRail.getRail().keepClearOf = () => this.resetUI.getClearCorners()
+    this.lampRail.getRail().labelsKeepClearOf = () => this.chipCorners()
     this.lampRail.onPutBack = () => this.lampHero.putBack()
     this.lampRail.onPinch = (p) => this.playAt("tick", this.tickAudio, p)
     this.lampUI.onCloserPressed.add(() => this.launchLamp())
@@ -1145,6 +1147,16 @@ export class CutawayMain extends BaseScriptComponent {
   private angleDeg(a: vec3, b: vec3): number {
     const d = Math.min(1, Math.max(-1, a.normalize().dot(b.normalize())))
     return (Math.acos(d) * 180) / Math.PI
+  }
+
+  /** The gaze chips showing, as world corners: a part label stays off them. */
+  private chipCorners(): vec3[][] {
+    const out: vec3[][] = []
+    for (const s of this.stations) {
+      const c = s.ui.getChipCorners()
+      if (c) out.push(c)
+    }
+    return out
   }
 
   private camPos(): vec3 {

@@ -22,11 +22,12 @@ import {RecordPlayerModel, RP_GEOM} from "./CutawayRecordPlayerModel"
 import {RpApart, RpApartInfo} from "./CutawayRpApart"
 import {DeckEvent, RP_CUE_CM, RpDeck} from "./CutawayRpDeck"
 import {RpPhysics} from "./CutawayRpPhysics"
+import {RailSpot, RailWatch} from "./CutawayRail"
 import {RpRail, SliderKey} from "./CutawayRpRail"
 import {pitchToFreq, RpSoundInfo, RpSoundShow} from "./CutawayRpSound"
 import {RpTone} from "./CutawayRpTone"
 import {arcControl, bezier, clampFoot, clearOfHead, contactGlowKit, DEG, fitScale, flatDir, footprint, Footprint, footprintOutlineXY, footRadius, footReach, hoverDiscKit, hullLowestY, placeGlowAndDisc, unclampFoot} from "./CutawayStageKit"
-import {hull2, meshBoxes, polyGap, toView, viewFrame} from "./CutawayLayout"
+import {BOX_NUMBERS, FastPoly, pointsHull, pushMeshBoxes, viewFrame} from "./CutawayLayout"
 import {ENERGY, ink, keyWord} from "./CutawayStyle"
 import {clamp01, easeInOutCubic, easeOutCubic} from "./CutawayTween"
 
@@ -183,6 +184,10 @@ interface Look {
   group: string
   depthWrite: boolean
   twoSided: boolean
+  /** What was last written. */
+  shownK: number
+  shownRim: number
+  shownSolid: boolean | null
 }
 
 /** A look group's state: solid fill 0..1, rim boost, overall fade. */
@@ -224,6 +229,7 @@ export class RecordPlayerHero {
   private layerMade = false
   private looks: Look[] = []
   private groupLook: {[g: string]: GroupLook} = {}
+  private soundArgs = {loudness: 0, freq: 440, speedRatio: 0, stylus: vec3.zero(), stylusR: 0}
 
   private t = 0
   private scale = 1.5
@@ -255,6 +261,9 @@ export class RecordPlayerHero {
   private h = 0
   private h0 = 0
   private restGap = 0
+  /** The copy's meshes together, in its own space: what the rail keeps clear of on the table. */
+  private railRest: number[] = []
+  private railWatch = new RailWatch()
   private holdK = 0
   private discK = 0
   private firstRest = true
@@ -379,6 +388,8 @@ export class RecordPlayerHero {
     this.sound = null
     if (this.apart) this.apart.hideLabels()
     this.apart = null
+    this.railRest = []
+    this.railWatch.forget()
     this.sEff = 0
     this.retWaiting = false
     this.railSide = 1
@@ -570,7 +581,13 @@ export class RecordPlayerHero {
       // into the gaps between its rows.
       railBoxes: () => {
         const boxes = this.ctx.rail.isVisible() ? this.ctx.rail.getBoxes() : []
-        return boxes.length ? [([] as vec3[]).concat(...boxes)] : []
+        if (!boxes.length) return []
+        const out = [([] as vec3[]).concat(...boxes)]
+        // Reset and its trio stay readable too.
+        const rail = this.ctx.rail.getRail()
+        if (rail.keepClearOf) out.push(rail.keepClearOf())
+        if (rail.labelsKeepClearOf) for (const c of rail.labelsKeepClearOf()) out.push(c)
+        return out
       },
       setGroup: (g, fill, fade) => {
         const gl = this.groupLook[g]
@@ -619,7 +636,7 @@ export class RecordPlayerHero {
       // The open dust cover is a tall box of glass: drawn additively its edges pile up, so it is toned down.
       const dim = group === "cover" && !m.accent ? 0.6 : 1
       const b = pass.baseColor
-      const look: Look = {rmv: m.rmv, mat, base: new vec4(b.x * dim, b.y * dim, b.z * dim, b.w), emis: 0, rim: 0, accent: m.accent, group, depthWrite: true, twoSided: false}
+      const look: Look = {rmv: m.rmv, mat, base: new vec4(b.x * dim, b.y * dim, b.z * dim, b.w), emis: 0, rim: 0, accent: m.accent, group, depthWrite: true, twoSided: false, shownK: NaN, shownRim: NaN, shownSolid: null}
       if (!m.accent) {
         look.emis = pass.emissiveIntensity * dim
         look.rim = pass.rimIntensity * (0.5 + 0.5 * dim)
@@ -652,25 +669,40 @@ export class RecordPlayerHero {
   /** Apply the look: the shell's fill (rim-only in flight) times each group's own fill and fade. */
   private applyLooks(): void {
     const g0 = this.globalFade
-    for (const l of this.looks) {
+    const looks = this.looks
+    for (let i = 0; i < looks.length; i++) {
+      const l = looks[i]
       const gl = this.groupLook[l.group]
       const fade = g0 * (gl ? gl.fade : 1)
       if (l.accent) {
-        setFade(l.mat, fade)
+        if (fade !== l.shownK) {
+          l.shownK = fade
+          setFade(l.mat, fade)
+        }
         continue
       }
       const fill = this.shellFill * (gl ? gl.fill : 1)
-      const pass = l.mat.mainPass
       const k = fill * fade
-      pass.baseColor = new vec4(l.base.x * k, l.base.y * k, l.base.z * k, l.base.w)
-      pass.emissiveIntensity = l.emis * k
       // Rim-only in flight (edges of light); a part turned to an outline keeps a thin rim.
       const rimOnly = this.shellRim
-      const rim = fill >= 0.999 ? l.rim : rimOnly + (l.rim - rimOnly) * fill
-      pass.rimIntensity = rim * fade * (gl ? gl.rim : 1)
+      const rim = (fill >= 0.999 ? l.rim : rimOnly + (l.rim - rimOnly) * fill) * fade * (gl ? gl.rim : 1)
       const solid = fill > 0.95 && fade > 0.95
-      pass.depthWrite = l.depthWrite && solid
-      pass.twoSided = l.twoSided && solid
+      if (k === l.shownK && rim === l.shownRim && solid === l.shownSolid) continue
+      const pass = l.mat.mainPass
+      if (k !== l.shownK) {
+        l.shownK = k
+        pass.baseColor = new vec4(l.base.x * k, l.base.y * k, l.base.z * k, l.base.w)
+        pass.emissiveIntensity = l.emis * k
+      }
+      if (rim !== l.shownRim) {
+        l.shownRim = rim
+        pass.rimIntensity = rim
+      }
+      if (solid !== l.shownSolid) {
+        l.shownSolid = solid
+        pass.depthWrite = l.depthWrite && solid
+        pass.twoSided = l.twoSided && solid
+      }
     }
   }
 
@@ -1022,13 +1054,13 @@ export class RecordPlayerHero {
   private soundParams(): {loudness: number; freq: number; speedRatio: number; stylus: vec3; stylusR: number} {
     const rail = this.ctx.rail
     const deck = this.deck
-    return {
-      loudness: rail.getValue("loudness"),
-      freq: pitchToFreq(rail.getValue("pitch")),
-      speedRatio: deck ? deck.speedRatio : 0,
-      stylus: this.stylusWorld(),
-      stylusR: deck ? deck.radiusAt(deck.yaw) : 0
-    }
+    const p = this.soundArgs
+    p.loudness = rail.getValue("loudness")
+    p.freq = pitchToFreq(rail.getValue("pitch"))
+    p.speedRatio = deck ? deck.speedRatio : 0
+    p.stylus = this.stylusWorld()
+    p.stylusR = deck ? deck.radiusAt(deck.yaw) : 0
+    return p
   }
 
   /** The stylus tip in world space (from the model's own stylus transform). */
@@ -1376,25 +1408,26 @@ export class RecordPlayerHero {
 
   /**
    * Keep the rail and its caption clear of the copy as the user sees it: a few times a second, while
-   * nothing is held and the copy is assembled, find the place that clears every visible mesh of the
-   * copy (findRailShift) and glide there; the caption is on the rail and goes with it.
+   * no slider is held, on the table or hovering, when anything it stands by has moved, find the place
+   * that clears the copy together and all the way apart (findRailShift) and glide there; the caption
+   * is on the rail and goes with it. While the copy is apart it stays on its side.
    */
   private updateRailShift(dt: number): void {
     this.railCheckT -= dt
-    // Never under a finger, and not while the parts are out: the rail keeps its place while a slider
-    // is held or the copy is apart (the part labels are laid out around it and its caption).
-    const settled = !this.ctx.rail.isDragging() && this.sEff <= 0.001 && this.ctx.rail.getValue("apart") <= 0.001 && this.pose === "rest"
-    if (this.railCheckT <= 0 && this.ctx.rail.isVisible() && settled) {
+    const steady = this.pose === "rest" || this.pose === "hover"
+    if (this.railCheckT <= 0 && this.ctx.rail.isVisible() && !this.ctx.rail.isDragging() && steady) {
       this.railCheckT = 0.25
-      const want = this.findRailShift()
-      if (want.side !== this.railSide) {
-        // The other side: jump there (gliding across would sweep the rail through the copy).
-        this.railSide = want.side
-        this.railShift = want.shift
-        this.railFwd = want.fwd
+      if (this.railWatch.moved(this.ctx.rail.getRail(), this.ctx.camPos(), this.stageCenter(), this.yaw, this.railMode())) {
+        const want = this.findRailShift(this.railMode(), this.sEff > 0.001 || this.ctx.rail.getValue("apart") > 0.001)
+        if (want.side !== this.railSide) {
+          // The other side: jump there (gliding across would sweep the rail through the copy).
+          this.railSide = want.side
+          this.railShift = want.shift
+          this.railFwd = want.fwd
+        }
+        this.railShiftTarget = want.shift
+        this.railFwdTarget = want.fwd
       }
-      this.railShiftTarget = want.shift
-      this.railFwdTarget = want.fwd
     }
     const k = 1 - Math.exp(-Math.max(0, dt) / 0.12)
     this.railShift += (this.railShiftTarget - this.railShift) * k
@@ -1403,9 +1436,14 @@ export class RecordPlayerHero {
     if (Math.abs(this.railFwdTarget - this.railFwd) < 0.05) this.railFwd = this.railFwdTarget
   }
 
+  private railMode(): "rest" | "play" {
+    return this.ctx.rail.getMode() === "play" ? "play" : "rest"
+  }
+
   /** Snap the rail's place now (on landing, before the rail and caption appear). */
   private snapRailShift(mode: "rest" | "play"): void {
     const want = this.findRailShift(mode)
+    this.railWatch.mark(this.ctx.rail.getRail(), this.ctx.camPos(), this.stageCenter(), this.yaw, mode)
     this.railSide = want.side
     this.railShift = this.railShiftTarget = want.shift
     this.railFwd = this.railFwdTarget = want.fwd
@@ -1414,64 +1452,39 @@ export class RecordPlayerHero {
   }
 
   /**
-   * Where the rail stands. For each side of the copy and each step towards the user (0–36 cm), the
-   * smallest step out (0–90 cm in 3 cm steps) at which the rail's glass plate (with the caption in
-   * its top slot) clears the copy's meshes from the user's eye; of those, the most compact: the one
-   * whose farthest corner is nearest the copy's centre in view, so it stays close to where the user
-   * is looking (the current side keeps it unless the other is clearly closer). The plate faces the
-   * eye at a constant apparent size, so its outline is a rectangle in view. The copy faces its
-   * tonearm to the user, so its open dust cover stands tall on the user's right, and the rail
-   * usually stands on the left. RailColumn then pulls that spot inside the view if it has to.
+   * Where the rail stands (RailColumn.findSpot): its glass plate (with the caption in its top slot)
+   * clears the copy's meshes on the table and the whole outline of the copy taken apart. The copy faces
+   * its tonearm to the user, so its open dust cover stands tall on the user's right, and the rail
+   * usually stands on the left. The plate faces the eye at a constant apparent size, so its outline is
+   * a rectangle in view.
    */
-  private findRailShift(mode: "rest" | "play" = this.ctx.rail.getMode() === "play" ? "play" : "rest"): {side: number; shift: number; fwd: number; reach: number} {
-    const none = {side: this.railSide, shift: 0, fwd: 0, reach: 0}
-    const eye = this.ctx.camPos()
-    const F = viewFrame(eye, this.stageCenter())
-    const copy: {h: vec2[]; x0: number; x1: number; y0: number; y1: number}[] = []
-    for (const b of meshBoxes(this.replica)) {
-      const h = hull2(b.map((q) => toView(F, q)))
-      copy.push({h, x0: Math.min(...h.map((q) => q.x)), x1: Math.max(...h.map((q) => q.x)), y0: Math.min(...h.map((q) => q.y)), y1: Math.max(...h.map((q) => q.y))})
+  private findRailShift(mode: "rest" | "play" = this.railMode(), lockSide: boolean = false): RailSpot {
+    const none: RailSpot = {side: this.railSide, shift: 0, fwd: 0, reach: 0}
+    if (!this.model) return none
+    const root = this.model.root.getTransform()
+    if (this.pose === "rest" && this.sEff <= 0.001) {
+      this.railRest.length = 0
+      pushMeshBoxes(this.railRest, this.replica, root.getInvertedWorldTransform())
     }
-    if (!copy.length) return none
-    const plate = this.ctx.rail.getRail().extent(mode)
-    const unitAt = (p: vec3, k: number) => (k * F.D) / Math.max(1, p.sub(eye).dot(F.f))
-    const rect = (c: vec2, u: number, x0: number, x1: number, y0: number, y1: number) => [new vec2(c.x + u * x0, c.y + u * y0), new vec2(c.x + u * x1, c.y + u * y0), new vec2(c.x + u * x1, c.y + u * y1), new vec2(c.x + u * x0, c.y + u * y1)]
-    // Clear of every mesh by 1 view unit (boxes far from the rectangle are skipped cheaply).
-    const clearOf = (r: vec2[]) => {
-      const x0 = Math.min(r[0].x, r[2].x) - 1
-      const x1 = Math.max(r[0].x, r[2].x) + 1
-      const y0 = Math.min(r[0].y, r[2].y) - 1
-      const y1 = Math.max(r[0].y, r[2].y) + 1
-      return copy.every((m) => m.x1 < x0 || m.x0 > x1 || m.y1 < y0 || m.y0 > y1 || polyGap(r, m.h) >= 1)
-    }
-    const savedSide = this.railSide
-    const saved = this.railShift
-    const savedFwd = this.railFwd
-    const best = new Map<number, {side: number; shift: number; fwd: number; reach: number}>()
-    for (const side of [1, -1]) {
-      this.railSide = side
-      for (let fwd = 0; fwd <= 36; fwd += 6) {
-        this.railFwd = fwd
-        for (let shift = 0; shift <= 90; shift += 3) {
-          this.railShift = shift
-          const a = this.railAnchor()
-          const shapes = [rect(toView(F, a), unitAt(a, RpRail.scaleAt(a, eye)), plate.x0, plate.x1, plate.y0, plate.y1)]
-          if (!shapes.every(clearOf)) continue
-          let reach = 0
-          for (const h of shapes) for (const q of h) reach = Math.max(reach, q.length)
-          const b = best.get(side)
-          if (!b || reach < b.reach - 0.5) best.set(side, {side, shift, fwd, reach})
-          break
-        }
+    if (!this.railRest.length) return none
+    const center = this.stageCenter()
+    const F = viewFrame(this.ctx.camPos(), center)
+    const m = root.getWorldTransform()
+    const rest: FastPoly[] = []
+    for (let i = 0; i < this.railRest.length; i += BOX_NUMBERS) rest.push(pointsHull(F, m, this.railRest, i, 8, this.restGap - this.h))
+    return this.ctx.rail.getRail().findSpot({
+      F,
+      center,
+      reach: G.plinthHalf.x * this.scale,
+      layout: mode,
+      side: this.railSide,
+      lock: lockSide,
+      obstacles: () => {
+        if (!this.apart) return rest
+        const pts = this.apart.explodedPoints()
+        return rest.concat(pointsHull(F, m, pts, 0, pts.length / 3, HOVER_CM - this.h))
       }
-    }
-    this.railSide = savedSide
-    this.railShift = saved
-    this.railFwd = savedFwd
-    const mine = best.get(savedSide)
-    const other = best.get(-savedSide)
-    if (mine && (!other || mine.reach <= other.reach + 5)) return mine
-    return other || none
+    })
   }
 
   /** The rail: beside the copy on the user's side, in front of it and to the side `railSide` picks. */

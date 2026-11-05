@@ -21,6 +21,7 @@ export interface LampRailVisual {
 }
 
 export type LampSliderKey = "apart" | "brightness" | "warmth"
+const SLIDER_KEYS: LampSliderKey[] = ["apart", "brightness", "warmth"]
 
 export class LampRail {
   readonly so: SceneObject
@@ -158,7 +159,7 @@ export class LampRail {
 
   /** Per frame (driven by the stage). */
   update(dt: number): void {
-    for (const k of Object.keys(this.sliders) as LampSliderKey[]) this.notify(k)
+    for (let i = 0; i < SLIDER_KEYS.length; i++) this.notify(SLIDER_KEYS[i])
     this.rail.update(dt)
   }
 

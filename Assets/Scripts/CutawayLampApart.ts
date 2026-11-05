@@ -15,9 +15,10 @@
  *
  * Back at 0 every part returns exactly to its rest transform.
  */
+import {LabelItem, LabelPlanner} from "./CutawayLabelPlan"
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
-import {boxCorners, hull2, polyGap, rect2, toView, viewFrame} from "./CutawayLayout"
-import {PathRibbon} from "./CutawayLampLight"
+import {boxHull, pushBox, toView, viewFrame, ViewFrame} from "./CutawayLayout"
+import {PathPoints, pathPoints, PathRibbon} from "./CutawayLampLight"
 import {LAMP_GEOM, lampShadeR, LampModel} from "./CutawayLampModel"
 import {DEG} from "./CutawayStageKit"
 import {ENERGY, ink} from "./CutawayStyle"
@@ -40,6 +41,13 @@ const WAVE_N = 3.5
 const WAVE_HZ = 1.4
 const WAVE_PTS = 48
 const FLAT_PTS = 24
+/** The live detail is redrawn at most this often. */
+const DETAIL_HZ = 30
+const LABEL_RISES = [0, 3, 4.5, 6, 8, 10, 12.5, 15, 18, 22]
+/** The exploded view's outline is worked out again once the user has walked this far round (cos 3°). */
+const SAME_VIEW = 0.9986
+/** What never leaves the table, or is not shown apart. */
+const STAYS_DOWN: {[part: string]: boolean} = {LampCord: true, LampWires: true, LampSwitch: true, LampSwitchButton: true, LampPlug: true}
 
 type Special = "halves" | "driver"
 /** Which side of the copy a label prefers, as the user sees it: fixed, or the rail's side or the other. */
@@ -90,6 +98,15 @@ const SPECS: PartSpec[] = [
   {key: "switch", label: "Switch", part: "LampSwitch", d: vec3.zero(), a: 0.56, w: 0.22, anchor: new vec3(0, G.switchHalf.y, 0), groups: ["LampSwitch"], revealWith: "socket"}
 ]
 
+/** How the copy comes apart from a view: the paper's turn, the driver's way out and its turn. */
+interface ViewPlan {
+  right: vec3
+  toCam: vec3
+  paperYaw: number
+  driverDir: vec3
+  driverYaw: number
+}
+
 interface Part {
   spec: PartSpec
   so: SceneObject
@@ -98,6 +115,12 @@ interface Part {
   e: number
   raw: number
   freed: boolean
+  /** Its label (null when it has none), and the label's anchor in the anchor object's space. */
+  item: LabelItem | null
+  anchorLocal: vec3 | null
+  moves: boolean
+  /** Its entry in freeTicks. */
+  tick: {at: number; freed: boolean} | null
 }
 
 export interface LampApartCtx {
@@ -136,9 +159,11 @@ export interface LampApartInfo {
 export class LampApart {
   private parts: Part[] = []
 
+  private ticks: {at: number; freed: boolean}[] = []
+
   /** One entry per part that frees itself: where on the slider, and whether it has (the rail's ticks). */
   freeTicks(): {at: number; freed: boolean}[] {
-    return this.parts.filter((p) => p.spec.special || p.spec.d.length > 0).map((p) => ({at: p.spec.a + 0.02 * p.spec.w, freed: p.freed}))
+    return this.ticks
   }
   private byKey: {[k: string]: Part} = {}
   /** Every part and the paper's halves: two points of each (origin, a point off it) at rest, in the copy's space. */
@@ -155,13 +180,22 @@ export class LampApart {
   private viewToCam = new vec3(0, 0, 1)
   private wave: PathRibbon | null = null
   private flat: PathRibbon | null = null
+  private wavePts: PathPoints = pathPoints(WAVE_PTS)
+  private flatPts: PathPoints = pathPoints(FLAT_PTS)
+  private waveW = new Float64Array(WAVE_PTS)
+  private flatW = new Float64Array(FLAT_PTS)
+  private nextDetail = 0
   private detail = 0
+  private detailSet = false
   private wavePhase = 0
   private flatPhase = 0
   private waveDev = 0
   private flatDev = 0
-  private labelPlans = new Map<string, {o: vec2; side: number; soft: boolean}>()
-  private labelShownOff = new Map<string, vec2>()
+  private planner: LabelPlanner
+  private want: LabelItem[] = []
+  private meshes: {rmv: RenderMeshVisual; part: string; lo: vec3; hi: vec3}[]
+  /** The exploded view's corners in the copy's space, for each side the driver can go. */
+  private exploded: {right: vec3; side: number; pts: number[]}[] = []
 
   /** Built while the model is still at the origin, unrotated, at scale 1. */
   constructor(
@@ -182,10 +216,42 @@ export class LampApart {
       if (!so) continue
       const anchorSo = spec.key === "shade" ? this.halves[0].so : so
       const tr = so.getTransform()
-      const p: Part = {spec, so, anchorSo, rest: {pos: tr.getLocalPosition(), rot: tr.getLocalRotation(), scale: tr.getLocalScale()}, e: 0, raw: 0, freed: false}
+      const moves = !!spec.special || spec.d.length > 0
+      const tick = moves ? {at: spec.a + 0.02 * spec.w, freed: false} : null
+      if (tick) this.ticks.push(tick)
+      const item: LabelItem | null = spec.label ? {key: spec.key, id: "lamp_" + spec.key, text: spec.label, anchor: vec3.zero(), sh: 1, sv: 1} : null
+      const p: Part = {spec, so, anchorSo, rest: {pos: tr.getLocalPosition(), rot: tr.getLocalRotation(), scale: tr.getLocalScale()}, e: 0, raw: 0, freed: false, item, anchorLocal: null, moves, tick}
       this.parts.push(p)
       this.byKey[spec.key] = p
     }
+    this.meshes = model.meshList()
+    this.planner = new LabelPlanner(
+      {
+        labels: ctx.labels,
+        camPos: ctx.camPos,
+        stageCenter: ctx.stageCenter,
+        pivot: () => this.model.root.getTransform().getWorldPosition(),
+        addObstacles: (F, hard, soft) => {
+          // The parts' own extents (their vertices); the long cord's box would be mostly empty table, so it is left out.
+          for (const m of this.meshes) {
+            if (m.part === "LampCord" || m.part === "LampWires") continue
+            const so = m.rmv.getSceneObject()
+            const solid = this.ctx.meshSolid(m.rmv)
+            if (solid === null || !so.isEnabledInHierarchy) continue
+            ;(solid ? hard : soft).push(boxHull(F, so.getTransform().getWorldTransform(), m.lo, m.hi))
+          }
+        },
+        railBoxes: ctx.railBoxes,
+        prefer: (item, F, ax) => {
+          const sp = this.byKey[item.key].spec
+          // The part's own side, else outward from the lamp's axis, as the user sees it.
+          const axis = toViewX(F, this.model.root.getTransform().getWorldPosition())
+          item.sh = this.sideOf(sp) || (ax - axis >= 0 ? 1 : -1)
+          item.sv = sp.below ? -1 : 1
+        }
+      },
+      LABEL_RISES
+    )
     this.wave = new PathRibbon(ctx.parent, "LampDriverWave", ctx.glowMat, WAVE_PTS, ink(SIGNAL, 1))
     this.flat = new PathRibbon(ctx.parent, "LampDriverFlat", ctx.glowMat, FLAT_PTS, ink(SIGNAL, 1))
     this.setDetail(0)
@@ -218,9 +284,17 @@ export class LampApart {
     // Together and staying so: the parts are the stage's (the shade's lift, the cord), nothing to write.
     if (!apart && was <= 1e-4) {
       if (this.detail > 0) this.setDetail(0)
-      if (this.labelPlans.size > 0) this.hideLabels()
+      if (this.planner.size > 0) this.hideLabels()
       return
     }
+    // The slider hasn't moved: the parts are where they were.
+    if (s !== was) this.layParts(s, apart)
+    this.updateDetail(dt, s, lit)
+    if (apart && labels) this.updateLabels()
+    else this.hideLabels()
+  }
+
+  private layParts(s: number, apart: boolean): void {
     const up = vec3.up()
     for (const p of this.parts) {
       const sp = p.spec
@@ -245,23 +319,19 @@ export class LampApart {
       } else {
         tr.setLocalPosition(p.rest.pos.add(sp.d.uniformScale(p.e)))
       }
-      const moves = sp.special || sp.d.length > 0
-      if (raw > 0.02 && !p.freed && moves) {
+      if (raw > 0.02 && !p.freed && p.moves) {
         p.freed = true
         this.ctx.partSound(p.so.getTransform().getWorldPosition())
         this.ctx.log("lamp:free:" + sp.key)
       } else if (raw <= 0 && p.freed) p.freed = false
+      if (p.tick) p.tick.freed = p.freed
     }
-    this.updateDetail(dt, s, lit)
-    if (apart && labels) this.updateLabels()
-    else this.hideLabels()
   }
 
   /** Every label off (Reset, put back, reassembled). */
   hideLabels(): void {
-    for (const p of this.parts) if (p.spec.label && this.ctx.labels.isShown("lamp_" + p.spec.key)) this.ctx.labels.hide("lamp_" + p.spec.key)
-    this.labelPlans.clear()
-    this.labelShownOff.clear()
+    for (const p of this.parts) if (p.item && this.ctx.labels.isShown(p.item.id)) this.ctx.labels.hide(p.item.id)
+    this.planner.clear()
   }
 
   destroy(): void {
@@ -315,6 +385,17 @@ export class LampApart {
   // =====================================================================================
 
   private planView(): void {
+    const v = this.viewPlan(this.ctx.driverSide())
+    this.viewRight = v.right
+    this.viewToCam = v.toCam
+    this.paperYaw = v.paperYaw
+    this.driverDir = v.driverDir
+    this.driverYaw = v.driverYaw
+    for (const p of this.parts) p.anchorLocal = null
+  }
+
+  /** How it would come apart from where the user is now. */
+  private viewPlan(driverSide: number): ViewPlan {
     const cam = this.ctx.camPos()
     const c = this.ctx.stageCenter()
     const F = viewFrame(cam, c)
@@ -325,14 +406,59 @@ export class LampApart {
     }
     const right = flat(inv.multiplyVec3(F.r))
     const toCam = flat(inv.multiplyVec3(cam.sub(c)))
-    this.viewRight = right
-    this.viewToCam = toCam
     const yawOf = (v: vec3) => Math.atan2(v.x, v.z)
-    // A turn about +Y by θ adds θ to atan2(x, z): half A turns onto the user's right.
-    this.paperYaw = yawOf(right) - yawOf(this.halves[0].dir)
-    this.driverDir = right.uniformScale(this.ctx.driverSide() >= 0 ? 1 : -1)
-    // The driver's parts are on its +Z face: turn that face to the user.
-    this.driverYaw = yawOf(toCam)
+    return {
+      right,
+      toCam,
+      // A turn about +Y by θ adds θ to atan2(x, z): half A turns onto the user's right.
+      paperYaw: yawOf(right) - yawOf(this.halves[0].dir),
+      driverDir: right.uniformScale(driverSide >= 0 ? 1 : -1),
+      // The driver's parts are on its +Z face: turn that face to the user.
+      driverYaw: yawOf(toCam)
+    }
+  }
+
+  /**
+   * The copy all the way apart with the driver on `driverSide`: the corners (x, y, z, in the copy's
+   * space) of every part that leaves the table. The rail stands clear of them before the first part
+   * moves, so it never has to move under the user's finger. Lays the parts out and back within the
+   * call, so nothing ever draws that way; kept until the user has walked round.
+   */
+  explodedPoints(driverSide: number): number[] {
+    const side = driverSide >= 0 ? 1 : -1
+    const apart = this.s > 1e-4
+    const plan: ViewPlan = apart ? {right: this.viewRight, toCam: this.viewToCam, paperYaw: this.paperYaw, driverDir: this.driverDir, driverYaw: this.driverYaw} : this.viewPlan(side)
+    for (const e of this.exploded) if (e.side === side && e.right.dot(plan.right) > SAME_VIEW) return e.pts
+    const up = vec3.up()
+    const saved = this.parts.map((p) => {
+      const tr = p.so.getTransform()
+      return {tr, pos: tr.getLocalPosition(), rot: tr.getLocalRotation(), scale: tr.getLocalScale()}
+    })
+    const halves = this.halves.map((h) => h.so.getTransform().getLocalPosition())
+    for (const p of this.parts) {
+      const sp = p.spec
+      const tr = p.so.getTransform()
+      if (sp.special === "halves") {
+        tr.setLocalRotation(p.rest.rot.multiply(quat.angleAxis(plan.paperYaw, up)))
+        for (const h of this.halves) h.so.getTransform().setLocalPosition(h.dir.uniformScale(OPEN_CM))
+      } else if (sp.special === "driver") {
+        tr.setLocalPosition(p.rest.pos.add(plan.driverDir.uniformScale(DRIVER_OUT)))
+        tr.setLocalRotation(p.rest.rot.multiply(quat.angleAxis(plan.driverYaw, up)))
+        tr.setLocalScale(p.rest.scale.uniformScale(DRIVER_ZOOM))
+      } else tr.setLocalPosition(p.rest.pos.add(sp.d))
+    }
+    const inv = this.model.root.getTransform().getInvertedWorldTransform()
+    const pts: number[] = []
+    for (const m of this.meshes) if (!STAYS_DOWN[m.part]) pushBox(pts, inv.mult(m.rmv.getSceneObject().getTransform().getWorldTransform()), m.lo, m.hi)
+    saved.forEach((b) => {
+      b.tr.setLocalPosition(b.pos)
+      b.tr.setLocalRotation(b.rot)
+      b.tr.setLocalScale(b.scale)
+    })
+    this.halves.forEach((h, i) => h.so.getTransform().setLocalPosition(halves[i]))
+    this.exploded = this.exploded.filter((e) => e.side !== side)
+    this.exploded.push({right: plan.right, side, pts})
+    return pts
   }
 
   // =====================================================================================
@@ -340,61 +466,102 @@ export class LampApart {
   // =====================================================================================
 
   private setDetail(k: number): void {
+    if (k === this.detail && this.detailSet) return
+    this.detailSet = true
     this.detail = k
-    for (const r of [this.wave, this.flat]) {
-      if (!r) continue
-      r.so.enabled = k > 1e-4
-      r.mat.mainPass.baseColor = new vec4(k, k, k, k)
-    }
+    if (this.wave) this.wave.setLevel(k)
+    if (this.flat) this.flat.setLevel(k)
   }
 
   private updateDetail(dt: number, s: number, lit: number): void {
     const k = clamp01((s - LIVE_AT) / (1 - LIVE_AT)) * clamp01(lit)
     this.setDetail(k)
-    this.waveDev = 0
-    this.flatDev = 0
-    if (k <= 1e-4 || !this.wave || !this.flat) return
+    if (k <= 1e-4 || !this.wave || !this.flat) {
+      this.waveDev = 0
+      this.flatDev = 0
+      return
+    }
     this.wavePhase += WAVE_HZ * dt
     this.flatPhase += dt
+    const now = getTime()
+    if (now < this.nextDetail) return
+    this.nextDetail = now - this.nextDetail < 1 / DETAIL_HZ ? this.nextDetail + 1 / DETAIL_HZ : now + 1 / DETAIL_HZ
+    this.drawDetail()
+  }
+
+  private drawDetail(): void {
     const cam = this.ctx.camPos()
     const m = this.model.parts
     // From the socket's top (wall power comes up the stem) into the foot of the driver board.
     const a = m["LampSocket"].getTransform().getWorldTransform().multiplyPoint(new vec3(0, 4.6, 0))
     const drv = m["LampDriver"].getTransform().getWorldTransform()
     const b = drv.multiplyPoint(new vec3(0, -0.1, 0))
-    const ab = b.sub(a)
-    const side = ab.cross(cam.sub(vec3.lerp(a, b, 0.5)))
-    const sideN = side.length > 1e-6 ? side.normalize() : vec3.right()
-    const pts: vec3[] = []
-    const al: number[] = []
-    const wd: number[] = []
+    const abx = b.x - a.x
+    const aby = b.y - a.y
+    const abz = b.z - a.z
+    // side = ab × (cam − the middle of ab)
+    const vx = cam.x - (a.x + b.x) / 2
+    const vy = cam.y - (a.y + b.y) / 2
+    const vz = cam.z - (a.z + b.z) / 2
+    let sx = aby * vz - abz * vy
+    let sy = abz * vx - abx * vz
+    let sz = abx * vy - aby * vx
+    const sl = Math.sqrt(sx * sx + sy * sy + sz * sz)
+    if (sl > 1e-6) {
+      sx /= sl
+      sy /= sl
+      sz /= sl
+    } else {
+      sx = 1
+      sy = 0
+      sz = 0
+    }
+    const w = this.wavePts
+    let dev = 0
     for (let i = 0; i < WAVE_PTS; i++) {
       const t = i / (WAVE_PTS - 1)
       // Pinned at both ends, flowing toward the driver.
       const env = Math.sqrt(Math.sin(Math.PI * t))
       const off = WAVE_AMP * env * Math.sin(2 * Math.PI * (WAVE_N * t - this.wavePhase))
-      this.waveDev = Math.max(this.waveDev, Math.abs(off))
-      pts.push(a.add(ab.uniformScale(t)).add(sideN.uniformScale(off)))
-      al.push(0.85)
-      wd.push(Math.max(0.14, 0.0016 * pts[i].distance(cam)))
+      const abs = off < 0 ? -off : off
+      if (abs > dev) dev = abs
+      const x = a.x + abx * t + sx * off
+      const y = a.y + aby * t + sy * off
+      const z = a.z + abz * t + sz * off
+      w.x[i] = x
+      w.y[i] = y
+      w.z[i] = z
+      w.a[i] = 0.85
+      const dx = x - cam.x
+      const dy = y - cam.y
+      const dz = z - cam.z
+      const d = 0.0016 * Math.sqrt(dx * dx + dy * dy + dz * dz)
+      this.waveW[i] = d > 0.14 ? d : 0.14
     }
-    this.wave.update(pts, cam, wd, al)
+    this.waveDev = dev
+    this.wave.commit(w, cam, this.waveW, true)
     // Out of the top of the driver board to the LED chips: a flat line, even pulses moving steadily.
     const c0 = drv.multiplyPoint(new vec3(0, 4.75, 0))
     const c1 = this.model.ledCenter()
-    const fp: vec3[] = []
-    const fa: number[] = []
-    const fw: number[] = []
+    const f = this.flatPts
     const L = c1.distance(c0)
     for (let i = 0; i < FLAT_PTS; i++) {
       const t = i / (FLAT_PTS - 1)
-      const p = vec3.lerp(c0, c1, t)
-      fp.push(p)
+      const x = c0.x + (c1.x - c0.x) * t
+      const y = c0.y + (c1.y - c0.y) * t
+      const z = c0.z + (c1.z - c0.z) * t
+      f.x[i] = x
+      f.y[i] = y
+      f.z[i] = z
       const u = (((t * L) / 1.2 - this.flatPhase * 3) % 1 + 1) % 1
-      fa.push(0.55 + 0.45 * Math.pow(1 - u, 2))
-      fw.push(Math.max(0.12, 0.0014 * p.distance(cam)))
+      f.a[i] = 0.55 + 0.45 * (1 - u) * (1 - u)
+      const dx = x - cam.x
+      const dy = y - cam.y
+      const dz = z - cam.z
+      const d = 0.0014 * Math.sqrt(dx * dx + dy * dy + dz * dz)
+      this.flatW[i] = d > 0.12 ? d : 0.12
     }
-    this.flat.update(fp, cam, fw, fa)
+    this.flat.commit(f, cam, this.flatW, true)
   }
 
   // =====================================================================================
@@ -405,85 +572,28 @@ export class LampApart {
     const sp = p.spec
     if (!sp.label) return false
     const by = sp.revealWith ? this.byKey[sp.revealWith] : p
-    if (!by || by.e < 0.8) return false
-    return p.so.isEnabledInHierarchy && sp.groups.every((g) => this.ctx.groupSolid(g))
+    if (!by || by.e < 0.8 || !p.so.isEnabledInHierarchy) return false
+    for (let i = 0; i < sp.groups.length; i++) if (!this.ctx.groupSolid(sp.groups[i])) return false
+    return true
   }
 
   private updateLabels(): void {
     const labels = this.ctx.labels
-    const want: Part[] = []
-    for (const p of this.parts) {
-      if (!p.spec.label) continue
-      const id = "lamp_" + p.spec.key
-      if (this.labelled(p)) want.push(p)
-      else {
-        if (labels.isShown(id)) labels.hide(id)
-        this.labelPlans.delete(p.spec.key)
+    let n = 0
+    for (let i = 0; i < this.parts.length; i++) {
+      const p = this.parts[i]
+      const it = p.item
+      if (!it) continue
+      if (this.labelled(p)) {
+        if (!p.anchorLocal) p.anchorLocal = this.anchorOf(p)
+        it.anchor = p.anchorSo.getTransform().getWorldTransform().multiplyPoint(p.anchorLocal)
+        this.want[n++] = it
+      } else {
+        if (labels.isShown(it.id)) labels.hide(it.id)
+        this.planner.drop(it.key)
       }
     }
-    if (!want.length) return
-    const center = this.ctx.stageCenter()
-    const F = viewFrame(this.ctx.camPos(), center)
-    const view = (pts: vec3[]) => hull2(pts.map((q) => toView(F, q)))
-    const hard: vec2[][] = []
-    const soft: vec2[][] = []
-    // The parts' own extents (their vertices); the long cord's box would be mostly empty table, so it is left out.
-    for (const m of this.model.meshList()) {
-      if (m.part === "LampCord" || m.part === "LampWires") continue
-      const so = m.rmv.getSceneObject()
-      const solid = this.ctx.meshSolid(m.rmv)
-      if (solid === null || !so.isEnabledInHierarchy) continue
-      ;(solid ? hard : soft).push(view(boxCorners(so.getTransform().getWorldTransform(), m.lo, m.hi)))
-    }
-    const cap = labels.getCaptionQuad()
-    if (cap) hard.push(view(cap))
-    for (const b of this.ctx.railBoxes()) hard.push(view(b))
-    const axis = toView(F, this.model.root.getTransform().getWorldPosition())
-
-    const dd = labels.getDesignDistance()
-    const M = 0.8
-    const placed: vec2[][] = []
-    const dt = getDeltaTime()
-    for (const p of want) {
-      const id = "lamp_" + p.spec.key
-      const anchorW = p.anchorSo.getTransform().getWorldTransform().multiplyPoint(this.anchorOf(p))
-      const A = toView(F, anchorW)
-      const dA = Math.max(1, anchorW.sub(F.eye).dot(F.f))
-      const size = labels.measure(p.spec.label).uniformScale(F.D / dd)
-      const g = (0.6 * F.D) / dd
-      // The part's own side, else outward from the lamp's axis, as the user sees it.
-      const sh = this.sideOf(p.spec) || (A.x - axis.x >= 0 ? 1 : -1)
-
-      const sv = p.spec.below ? -1 : 1
-      const box = (o: vec2, side: number) => {
-        const e = A.add(o)
-        return side > 0 ? rect2(e.x + g, e.x + g + size.x, e.y - size.y / 2, e.y + size.y / 2) : rect2(e.x - g - size.x, e.x - g, e.y - size.y / 2, e.y + size.y / 2)
-      }
-      const clear = (o: vec2, side: number, useSoft: boolean) => {
-        const b = box(o, side)
-        for (const h of hard) if (polyGap(b, h) < M) return false
-        for (const h of placed) if (polyGap(b, h) < M) return false
-        const seg = [A, A.add(o)]
-        for (const h of placed) if (polyGap(seg, h) < 0.3) return false
-        if (useSoft) for (const h of soft) if (polyGap(b, h) < M) return false
-        return true
-      }
-      let plan = this.labelPlans.get(p.spec.key) ?? null
-      if (plan && !clear(plan.o, plan.side, plan.soft)) plan = null
-      if (!plan) plan = this.search(clear, sv, sh)
-      if (!plan) plan = {o: new vec2(sh * 3, sv * 6), side: sh, soft: false}
-      this.labelPlans.set(p.spec.key, plan)
-      placed.push(box(plan.o, plan.side))
-      placed.push([A, A.add(plan.o)])
-      let o = this.labelShownOff.get(p.spec.key)
-      const fresh = !labels.isShown(id) || !o
-      o = fresh ? plan.o : o.add(plan.o.sub(o).uniformScale(1 - Math.exp(-dt / 0.07)))
-      this.labelShownOff.set(p.spec.key, o)
-      const k = dA / F.D
-      const textPos = anchorW.add(F.r.uniformScale(o.x * k)).add(F.u.uniformScale(o.y * k))
-      if (fresh) labels.show(id, p.spec.label, textPos, anchorW, plan.side)
-      else labels.move(id, textPos, anchorW, plan.side)
-    }
+    if (n > 0) this.planner.update(this.want, n, this.s)
   }
 
   /** The side a part's label prefers (+1 the user's right, −1 left; 0 outward from the axis). */
@@ -541,20 +651,8 @@ export class LampApart {
     if (sp.round) return toward(65).uniformScale(sp.round.r).add(new vec3(0, sp.round.y, 0))
     return sp.anchor ?? vec3.zero()
   }
+}
 
-  private search(clear: (o: vec2, side: number, soft: boolean) => boolean, sv: number, sh: number): {o: vec2; side: number; soft: boolean} | null {
-    for (const useSoft of [true, false]) {
-      for (const v of [sv, -sv]) {
-        for (const rise of [0, 3, 4.5, 6, 8, 10, 12.5, 15, 18, 22]) {
-          for (const lat of [0, 2.5, 5, 8, 11, 14]) {
-            for (const side of [sh, -sh]) {
-              const o = new vec2(side * lat, v * rise)
-              if (clear(o, side, useSoft)) return {o, side, soft: useSoft}
-            }
-          }
-        }
-      }
-    }
-    return null
-  }
+function toViewX(F: ViewFrame, p: vec3): number {
+  return toView(F, p).x
 }

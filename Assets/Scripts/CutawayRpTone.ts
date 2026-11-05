@@ -6,10 +6,16 @@
  * with a few soft harmonics, the same shape the groove, the signal and the cone draw
  * (RP_TONE_SHAPE). Frequency and gain glide per sample (no clicks), and the phase is continuous
  * across frames and frequency changes.
+ *
+ * The samples come from a one-period table (rpToneAt, within about 1e-6 of rpToneShape: well under
+ * one 16-bit step), written into one buffer that is reused every frame.
  */
 
 export const RP_SAMPLE_RATE = 44100
+/** A power of two. */
 const HIST_N = 8192
+/** The most samples queued in one frame (about 190 ms, far more than a frame asks for). */
+export const MAX_SAMPLES_PER_FRAME = 8192
 
 /** The tone's harmonics: [multiple, amplitude, phase]. The groove, signal and cone draw this same shape. */
 const HARMONICS: [number, number, number][] = [
@@ -26,6 +32,30 @@ export function rpToneShape(x: number): number {
   for (const [m, a, p] of HARMONICS) v += a * Math.sin(m * x + p)
   return v / NORM
 }
+
+const TAU = Math.PI * 2
+const TABLE_N = 4096
+const TO_TABLE = TABLE_N / TAU
+/** One period of rpToneShape, with one extra entry past the end so interpolation can always read i + 1. */
+const TABLE = (() => {
+  const t = new Float32Array(TABLE_N + 2)
+  for (let i = 0; i < t.length; i++) t[i] = rpToneShape((i / TABLE_N) * TAU)
+  return t
+})()
+
+/** rpToneShape from the table, for any x. What the audio and every per-frame drawing use. */
+export function rpToneAt(x: number): number {
+  let u = x * TO_TABLE
+  u -= Math.floor(u / TABLE_N) * TABLE_N
+  const i = u | 0
+  const a = TABLE[i]
+  return a + (TABLE[i + 1] - a) * (u - i)
+}
+
+/** Glide over ~20 ms (frequency) and ~30 ms (gain): one-pole smoothing per sample. */
+const GLIDE_F = 1 - Math.exp(-1 / (0.02 * RP_SAMPLE_RATE))
+const GLIDE_G = 1 - Math.exp(-1 / (0.03 * RP_SAMPLE_RATE))
+const PHASE_STEP = TAU / RP_SAMPLE_RATE
 
 /** Loudness 0..1 → linear gain: a perceptual curve from silence through quiet to comfortable. */
 export function loudnessGain(l: number): number {
@@ -45,7 +75,10 @@ export class RpTone {
   private frames = 0
   private samples = 0
   private lastAsk = 0
-  private lastBuf: Float32Array | null = null
+  private lastN = 0
+  /** The one output buffer (shape.x says how much of it each frame is). */
+  private buf = new Float32Array(MAX_SAMPLES_PER_FRAME)
+  private shape = new vec3(0, 1, 1)
   /** The most recent output samples, oldest first once full (tests measure the played frequency). */
   private hist = new Float32Array(HIST_N)
   private histAt = 0
@@ -120,7 +153,7 @@ export class RpTone {
 
   /** The last block of samples sent to the output (tests measure its frequency). */
   getLastBlock(): Float32Array | null {
-    return this.lastBuf
+    return this.lastN > 0 ? this.buf.subarray(0, this.lastN) : null
   }
 
   /** Per frame: fill what the output asks for. */
@@ -134,24 +167,38 @@ export class RpTone {
     }
     this.lastAsk = n
     if (!(n > 0)) return
-    const buf = new Float32Array(n)
-    // Glide over ~20 ms (frequency) and ~30 ms (gain): one-pole smoothing per sample.
-    const kf = 1 - Math.exp(-1 / (0.02 * RP_SAMPLE_RATE))
-    const kg = 1 - Math.exp(-1 / (0.03 * RP_SAMPLE_RATE))
-    const tau = Math.PI * 2
+    if (n > MAX_SAMPLES_PER_FRAME) n = MAX_SAMPLES_PER_FRAME
+    const buf = this.buf
+    const hist = this.hist
+    const targetF = this.targetF
+    const targetG = this.targetG
+    let f = this.f
+    let g = this.g
+    let phase = this.phase
+    let at = this.histAt
     for (let i = 0; i < n; i++) {
-      this.f += (this.targetF - this.f) * kf
-      this.g += (this.targetG - this.g) * kg
-      this.phase += (tau * this.f) / RP_SAMPLE_RATE
-      if (this.phase > tau) this.phase -= tau
-      buf[i] = this.g * rpToneShape(this.phase)
-      this.hist[this.histAt] = buf[i]
-      this.histAt = (this.histAt + 1) % HIST_N
+      f += (targetF - f) * GLIDE_F
+      g += (targetG - g) * GLIDE_G
+      phase += PHASE_STEP * f
+      if (phase > TAU) phase -= TAU
+      // rpToneAt, inline: the phase is already in range.
+      const u = phase * TO_TABLE
+      const j = u | 0
+      const a = TABLE[j]
+      const v = g * (a + (TABLE[j + 1] - a) * (u - j))
+      buf[i] = v
+      hist[at] = v
+      at = (at + 1) & (HIST_N - 1)
     }
+    this.f = f
+    this.g = g
+    this.phase = phase
+    this.histAt = at
     this.histCount = Math.min(HIST_N, this.histCount + n)
-    this.provider.enqueueAudioFrame(buf, new vec3(n, 1, 1))
+    this.shape.x = n
+    this.provider.enqueueAudioFrame(buf, this.shape)
     this.frames++
     this.samples += n
-    this.lastBuf = buf
+    this.lastN = n
   }
 }

@@ -13,6 +13,16 @@ const LAYOUT = [
   {name: "color", components: 4}
 ]
 
+/**
+ * Replace all of a mesh's vertices at once (10 numbers each: position, normal, colour); its indices
+ * stay. Measured at 0.14 µs per vertex, against 5.6 µs through setVertexInterleaved one at a time.
+ */
+export function rewriteVertices(mb: MeshBuilder, data: number[]): void {
+  mb.eraseVertices(0, data.length / 10)
+  mb.appendVerticesInterleaved(data)
+  mb.updateMesh()
+}
+
 function perpBasis(n: vec3): {u: vec3; v: vec3} {
   const ref = Math.abs(n.y) < 0.95 ? vec3.up() : vec3.right()
   const u = n.cross(ref).normalize()
@@ -789,6 +799,20 @@ export class GlowPath {
   setOpacity(k: number): void {
     setFade(this.mat, k)
   }
+
+  /** Its points and lengths along it as plain numbers, to walk along it without making anything. */
+  flatPoints(): {n: number; x: Float64Array; y: Float64Array; z: Float64Array; cum: Float64Array} {
+    const n = this.pts.length
+    const out = {n, x: new Float64Array(n), y: new Float64Array(n), z: new Float64Array(n), cum: new Float64Array(n)}
+    for (let i = 0; i < n; i++) {
+      const p = this.pts[i]
+      out.x[i] = p.x
+      out.y[i] = p.y
+      out.z[i] = p.z
+      out.cum[i] = this.cum[i]
+    }
+    return out
+  }
 }
 
 /** Flat line of light in the local XY plane whose sample points are rewritten each frame. */
@@ -798,6 +822,8 @@ export class DynamicRibbon {
   private mb: MeshBuilder
   private prof: ProfileStop[]
   private cols: vec4[]
+  private off: Float64Array
+  private data: number[] = []
 
   constructor(
     parent: SceneObject,
@@ -811,10 +837,12 @@ export class DynamicRibbon {
     this.prof = lightProfile(width / 2, width * glow)
     this.cols = this.prof.map((q) => lightColor(color, q.k, q.hot))
     const P = this.prof.length
+    this.off = new Float64Array(P)
+    for (let k = 0; k < P; k++) this.off[k] = this.prof[k].o
     this.mb = new MeshBuilder(LAYOUT)
     this.mb.topology = MeshTopology.Triangles
     this.mb.indexType = MeshIndexType.UInt16
-    const data: number[] = []
+    const data = this.data
     for (let i = 0; i < count; i++) for (const c of this.cols) data.push(0, 0, 0, 0, 0, 1, c.x, c.y, c.z, c.w)
     this.mb.appendVerticesInterleaved(data)
     const idx: number[] = []
@@ -835,6 +863,35 @@ export class DynamicRibbon {
     rmv.mainMaterial = this.mat
   }
 
+  /** As update(), from plain numbers in the XY plane at depth z. */
+  writeXY(xs: Float64Array, ys: Float64Array, z: number): void {
+    const P = this.prof.length
+    const n = this.count
+    const data = this.data
+    for (let i = 0; i < n; i++) {
+      const a = i > 0 ? i - 1 : 0
+      const b = i < n - 1 ? i + 1 : n - 1
+      let px = -(ys[b] - ys[a])
+      let py = xs[b] - xs[a]
+      const l = Math.sqrt(px * px + py * py)
+      if (l > 1e-6) {
+        px /= l
+        py /= l
+      } else {
+        px = 0
+        py = 1
+      }
+      for (let k = 0; k < P; k++) {
+        const o = this.off[k]
+        const at = (i * P + k) * 10
+        data[at] = xs[i] + px * o
+        data[at + 1] = ys[i] + py * o
+        data[at + 2] = z
+      }
+    }
+    rewriteVertices(this.mb, data)
+  }
+
   update(pointAt: (i: number) => vec3): void {
     const P = this.prof.length
     const pts: vec3[] = []
@@ -847,11 +904,13 @@ export class DynamicRibbon {
       perp = perp.length > 1e-6 ? perp.normalize() : new vec3(0, 1, 0)
       for (let k = 0; k < P; k++) {
         const p = pts[i].add(perp.uniformScale(this.prof[k].o))
-        const c = this.cols[k]
-        this.mb.setVertexInterleaved(i * P + k, [p.x, p.y, p.z, 0, 0, 1, c.x, c.y, c.z, c.w])
+        const at = (i * P + k) * 10
+        this.data[at] = p.x
+        this.data[at + 1] = p.y
+        this.data[at + 2] = p.z
       }
     }
-    this.mb.updateMesh()
+    rewriteVertices(this.mb, this.data)
   }
 }
 
@@ -873,6 +932,9 @@ export class TrailRibbon {
   private mb: MeshBuilder
   private rmv: RenderMeshVisual
   private cols: vec4[]
+  private flat: Float64Array
+  private data: number[] = []
+  private visible: boolean | null = null
 
   constructor(
     parent: SceneObject,
@@ -884,10 +946,18 @@ export class TrailRibbon {
   ) {
     const P = TRAIL_PROFILE.length
     this.cols = TRAIL_PROFILE.map((q) => lightColor(color, q.k, q.hot))
+    this.flat = new Float64Array(P * 4)
+    for (let k = 0; k < P; k++) {
+      const c = this.cols[k]
+      this.flat[k * 4] = c.x
+      this.flat[k * 4 + 1] = c.y
+      this.flat[k * 4 + 2] = c.z
+      this.flat[k * 4 + 3] = c.w
+    }
     this.mb = new MeshBuilder(LAYOUT)
     this.mb.topology = MeshTopology.Triangles
     this.mb.indexType = MeshIndexType.UInt16
-    const data: number[] = []
+    const data = this.data
     for (let i = 0; i < count * P; i++) data.push(0, 0, 0, 0, 0, 1, 0, 0, 0, 0)
     this.mb.appendVerticesInterleaved(data)
     const idx: number[] = []
@@ -921,14 +991,76 @@ export class TrailRibbon {
       const k = alphas ? alphas[Math.min(i, alphas.length - 1)] : 1
       for (let j = 0; j < P; j++) {
         const q = p.add(side.uniformScale(TRAIL_PROFILE[j].o))
-        const c = this.cols[j]
-        this.mb.setVertexInterleaved(i * P + j, [q.x, q.y, q.z, 0, 0, 1, c.x * k, c.y * k, c.z * k, c.w * k])
+        const at = (i * P + j) * 10
+        const d = this.data
+        d[at] = q.x
+        d[at + 1] = q.y
+        d[at + 2] = q.z
+        d[at + 6] = this.flat[j * 4] * k
+        d[at + 7] = this.flat[j * 4 + 1] * k
+        d[at + 8] = this.flat[j * 4 + 2] * k
+        d[at + 9] = this.flat[j * 4 + 3] * k
       }
     }
-    this.mb.updateMesh()
+    rewriteVertices(this.mb, this.data)
+  }
+
+  /** As update(), from plain numbers: `alphas` per point, toViewer (vx, vy, vz). */
+  writeFlat(xs: Float64Array, ys: Float64Array, zs: Float64Array, vx: number, vy: number, vz: number, alphas: Float64Array): void {
+    const P = TRAIL_PROFILE.length
+    const n = this.count
+    const hw = this.width / 2
+    for (let i = 0; i < n; i++) {
+      const a = i > 0 ? i - 1 : 0
+      const b = i < n - 1 ? i + 1 : n - 1
+      const tx = xs[b] - xs[a]
+      const ty = ys[b] - ys[a]
+      const tz = zs[b] - zs[a]
+      let sx = ty * vz - tz * vy
+      let sy = tz * vx - tx * vz
+      let sz = tx * vy - ty * vx
+      const l = Math.sqrt(sx * sx + sy * sy + sz * sz)
+      if (l > 1e-6) {
+        sx = (sx / l) * hw
+        sy = (sy / l) * hw
+        sz = (sz / l) * hw
+      } else {
+        sx = 0
+        sy = hw
+        sz = 0
+      }
+      this.writeRow(i, xs[i], ys[i], zs[i], sx, sy, sz, alphas[i])
+    }
+    rewriteVertices(this.mb, this.data)
+  }
+
+  /** A whole circle: centre (cx, cy, cz), radius r, with the same strength all round; unit directions and sides per point. */
+  writeCircle(cx: number, cy: number, cz: number, r: number, dx: Float64Array, dy: Float64Array, dz: Float64Array, sx: Float64Array, sy: Float64Array, sz: Float64Array, alpha: number): void {
+    const hw = this.width / 2
+    for (let i = 0; i < this.count; i++) this.writeRow(i, cx + dx[i] * r, cy + dy[i] * r, cz + dz[i] * r, sx[i] * hw, sy[i] * hw, sz[i] * hw, alpha)
+    rewriteVertices(this.mb, this.data)
+  }
+
+  private writeRow(i: number, x: number, y: number, z: number, sx: number, sy: number, sz: number, k: number): void {
+    const P = TRAIL_PROFILE.length
+    const flat = this.flat
+    const d = this.data
+    for (let j = 0; j < P; j++) {
+      const o = TRAIL_PROFILE[j].o
+      const at = (i * P + j) * 10
+      d[at] = x + sx * o
+      d[at + 1] = y + sy * o
+      d[at + 2] = z + sz * o
+      d[at + 6] = flat[j * 4] * k
+      d[at + 7] = flat[j * 4 + 1] * k
+      d[at + 8] = flat[j * 4 + 2] * k
+      d[at + 9] = flat[j * 4 + 3] * k
+    }
   }
 
   setVisible(v: boolean): void {
+    if (v === this.visible) return
+    this.visible = v
     this.rmv.enabled = v
   }
 }
