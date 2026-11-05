@@ -2,11 +2,13 @@ import {Scenario} from "Leaf.lspkg/Scenarios/scenario/Scenario"
 import {ScenarioConfig} from "Leaf.lspkg/Scenarios/scenario/ScenarioConfig"
 import {sleep} from "Leaf.lspkg/Utils/common/Utils"
 import {getMain} from "./CutawayTestUtils"
-import {lampCleanStart, landLamp} from "./LampHeroTestUtils"
+import {waitForPhase} from "./CutawayTestUtils"
+import {lampCleanStart, landLamp, pressLampSwitch} from "./LampHeroTestUtils"
 
 /**
  * Helper (not a test): drive the lamp stage to one beat and freeze it there for the _review/lamp_*
- * captures. Beats: rest (more come with each step). The stage stays frozen (setHoldLamp) until the
+ * captures. Beats: rest; on (the real lamp lit too, 1.2 s after it came on); bubble (the bubble open,
+ * 1.4 s after the bulb lit). The stage stays frozen (setHoldLamp) until the
  * next scenario's lampCleanStart.
  */
 @component
@@ -22,6 +24,18 @@ export class LampCaptureScenario extends Scenario {
     switch (beat) {
       case "rest":
         await sleep(600)
+        break
+      case "on":
+        await sleep(300)
+        await pressLampSwitch()
+        await waitForPhase(main, "lamp:realOn", 4000)
+        await sleep(1200)
+        break
+      case "bubble":
+        await sleep(300)
+        await pressLampSwitch()
+        await waitForPhase(main, "lamp:bulb", 4000)
+        await sleep(1400)
         break
       default:
         throw new Error(`unknown beat "${beat}"`)

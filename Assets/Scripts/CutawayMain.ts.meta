@@ -55,8 +55,11 @@
     heroUI: false
     labelsUI: false
     lampBaseMarker: false
+    lampClickAudio: false
     lampMarker: false
     lampPaperMaterial: false
+    lampRiseAudio: false
+    lampRustleAudio: false
     lampShellMaterial: false
     lampSteelMaterial: false
     lampUI: false
@@ -137,6 +140,9 @@
       clickAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       powerUpAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       crackleAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
+      lampClickAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
+      lampRiseAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
+      lampRustleAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       tickAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       scanAudio: !<reference.AudioComponent> 00000000-0000-0000-0000-000000000000
       gazeEnterDeg: !<float> 12.000000
@@ -204,6 +210,9 @@
     - '// @input Component.AudioComponent clickAudio {"hint":"Spatial AudioComponent at the camera body: mirror flip and shutter click"}'
     - '// @input Component.AudioComponent powerUpAudio {"hint":"Spatial AudioComponent at the lamp: soft rising power-up tone as the light comes on"}'
     - '// @input Component.AudioComponent crackleAudio {"hint":"Spatial AudioComponent at the stylus: the needle-drop crackle"}'
+    - "// @input Component.AudioComponent lampClickAudio {\"hint\":\"Spatial AudioComponent for the lamp copy's foot switch: a soft click (LampSwitchClick)\"}"
+    - "// @input Component.AudioComponent lampRiseAudio {\"hint\":\"Spatial AudioComponent for the lamp copy's bulb: a gentle rising power-up tone (LampBulbRise)\"}"
+    - "// @input Component.AudioComponent lampRustleAudio {\"hint\":\"Spatial AudioComponent for the lamp copy's shade: a faint paper rustle (LampRustle)\"}"
     - '// @input Component.AudioComponent tickAudio {"hint":"Spatial AudioComponent for the soft tick on every pinch (moved to the pinched control)"}'
     - '// @input Component.AudioComponent scanAudio {"hint":"Spatial AudioComponent for the scan sweep (moved to the scanned object)"}'
     - '// @ui {"widget":"group_end"}'

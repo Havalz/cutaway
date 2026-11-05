@@ -83,7 +83,28 @@ export async function waitLampHome(main: CutawayMain): Promise<void> {
 }
 
 /** Every object the lamp stage makes (none may be left once it is gone). */
-export const LAMP_STAGE_OBJECTS = ["LampStage", "LampReplica", "LampTrail", "LampGrab", "LampTurnGrab", "LampSwitchGrab", "LampContactGlow", "LampHoverDisc"]
+export const LAMP_STAGE_OBJECTS = ["LampStage", "LampReplica", "LampTrail", "LampGrab", "LampTurnGrab", "LampSwitchGrab", "LampContactGlow", "LampHoverDisc", ...lampLightObjects()]
+
+/** Every object the light makes (none may be left once it is off). */
+export function lampLightObjects(): string[] {
+  return ["LampLight", "LampCurrent", "LampCurrentGlow", "LampShadeGlow", "LampBulbPoint", "LampTablePool", "LampBubble", "LampBubbleLeader", "LampThread", "LampThreadGlow", "LampRealGlow", "LampRealBloom", "LampFloorPool"]
+}
+
+/** Pinch the copy's foot switch. */
+export async function pressLampSwitch(): Promise<void> {
+  await press("LampSwitchGrab")
+}
+
+/** The light is off: nothing of it is drawn or left, the rail shows no Brightness or Warmth. */
+export function expectLampDark(main: CutawayMain, what: string): void {
+  const lamp = getLamp(main)
+  const li = lamp.getLight()
+  check(!!li && li.phase === "off", () => `${what}: the light is ${li ? li.phase : "missing"}`)
+  check(li.led === 0 && li.shadeGlow === 0 && li.realGlow === 0 && li.floorPool === 0 && li.pulseLevel === 0 && li.bubbleOpen === 0, () => `${what}: still lit: ${JSON.stringify({led: li.led, shade: li.shadeGlow, real: li.realGlow, floor: li.floorPool, pulses: li.pulseLevel, bubble: li.bubbleOpen})}`)
+  for (const n of lampLightObjects()) check(findSceneObjectByName(n) === undefined, () => `${what}: ${n} is still in the scene`)
+  const rail = main.getLampRailVisual()
+  check(!!rail && !rail.brightness && !rail.warmth, () => `${what}: the rail still shows Brightness or Warmth: ${JSON.stringify(rail)}`)
+}
 
 /** Nothing of the lamp stage left: no copy, light, rail or caption. */
 export function expectLampGone(main: CutawayMain): void {

@@ -929,6 +929,23 @@
   MaxDistance: 1500.000000
   EnableDirectivityEffect: false
   EnablePositionEffect: true
+- !<AudioComponent/30b3f36d-3756-44ab-8bbc-e47c2d25e870>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> b7f3b4ec-312f-4847-9651-046087c68b9d
+  EnableAutoplayLoop: false
+  Volume: 0.600000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<RenderMeshVisual/335c5f8b-2917-49e8-8af5-220696e9bc09>
   PrefabRemaps:
     []
@@ -1315,6 +1332,21 @@
     - !<own> 46b79537-a269-46f1-9483-500d7a4170d6
   Components:
     []
+- !<SceneObject/5890ada0-a17f-46bf-8710-9afd05fd355d>
+  PrefabRemaps:
+    []
+  Name: LampRustleSound
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 30b3f36d-3756-44ab-8bbc-e47c2d25e870
 - !<ScriptComponent/58d36f5e-d149-4e4f-ba83-1ecaafcb2aee>
   PrefabRemaps:
     []
@@ -1669,6 +1701,21 @@
     - !<own> 0e778a10-bd57-4a2a-b20a-b6f4326e8058
   Components:
     []
+- !<SceneObject/6d3c43d5-e0c7-42fb-8037-059f64b69122>
+  PrefabRemaps:
+    []
+  Name: LampClickSound
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> b8699994-ebde-4ab0-b8e9-fb29821a5faa
 - !<SceneObject/6dba24fb-289e-4c5b-add8-4c35b943f5a5>
   PrefabRemaps:
     []
@@ -1989,6 +2036,9 @@
     Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
     HasSegmentScaleCompensation: false
   Children:
+    - !<own> 5890ada0-a17f-46bf-8710-9afd05fd355d
+    - !<own> dd4aff2a-5d6b-416b-9819-32bc63a3691c
+    - !<own> 6d3c43d5-e0c7-42fb-8037-059f64b69122
     - !<own> aef893f7-6976-4703-a8ac-bd96481bfb27
     - !<own> 6dba24fb-289e-4c5b-add8-4c35b943f5a5
     - !<own> c0bba8b7-6549-43fc-8d37-b6c6200626c7
@@ -2700,6 +2750,23 @@
     - !<own> 44097eaf-01da-45fb-8973-3bd8172618de
   Components:
     []
+- !<AudioComponent/b8699994-ebde-4ab0-b8e9-fb29821a5faa>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> 9022e5d3-3e4f-4a0e-87dd-00f6f0303e01
+  EnableAutoplayLoop: false
+  Volume: 0.600000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<SceneObject/b93dfa60-41bd-4999-ac0f-4b2f1df2bdaf>
   PrefabRemaps:
     []
@@ -2822,6 +2889,23 @@
     []
   Components:
     - !<own> cdd90f4e-64d3-4299-b6a2-373444021987
+- !<AudioComponent/c4af5cea-1a2d-45f1-bc83-cae4fbddcba5>
+  PrefabRemaps:
+    []
+  Name: Audio
+  Enabled: true
+  AudioTrack: !<reference> 80d0b333-09d5-4bba-b069-0ed67145df0f
+  EnableAutoplayLoop: false
+  Volume: 0.500000
+  EnableMixToSnap: false
+  RecordVolume: 1.000000
+  EnableSpatialAudio: true
+  EnableDistanceEffect: true
+  CurveType: Logarithm
+  MinDistance: 60.000000
+  MaxDistance: 1500.000000
+  EnableDirectivityEffect: false
+  EnablePositionEffect: true
 - !<ScriptComponent/c8e031d3-a8a1-468a-a419-427f8556de4c>
   PrefabRemaps:
     []
@@ -3218,6 +3302,21 @@
     - !<own> d4a9c5e3-fe96-4824-9b20-59f5ad39eabd
   Components:
     []
+- !<SceneObject/dd4aff2a-5d6b-416b-9819-32bc63a3691c>
+  PrefabRemaps:
+    []
+  Name: LampRiseSound
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> c4af5cea-1a2d-45f1-bc83-cae4fbddcba5
 - !<SceneObject/dd9eb017-3a69-4647-b9a7-43aebf6ce018>
   PrefabRemaps:
     []
@@ -3444,6 +3543,9 @@
       clickAudio: !<reference.AudioComponent> d82ccb31-db1e-48d9-9fdd-b85665cf5b58
       powerUpAudio: !<reference.AudioComponent> 2f092ccd-f45f-4aa6-902f-124777517814
       crackleAudio: !<reference.AudioComponent> 1d1ac4cd-1458-4046-ac27-af5586f5ac76
+      lampClickAudio: !<reference.AudioComponent> b8699994-ebde-4ab0-b8e9-fb29821a5faa
+      lampRiseAudio: !<reference.AudioComponent> c4af5cea-1a2d-45f1-bc83-cae4fbddcba5
+      lampRustleAudio: !<reference.AudioComponent> 30b3f36d-3756-44ab-8bbc-e47c2d25e870
       tickAudio: !<reference.AudioComponent> 744f8ada-3799-49f4-a365-ee5d6f5d3cc5
       scanAudio: !<reference.AudioComponent> b302f3a5-ca80-4723-9014-a15c4cdc23e9
       gazeEnterDeg: !<float> 12.000000

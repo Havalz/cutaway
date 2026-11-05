@@ -21,6 +21,7 @@ import {setFade, spawnMesh, TrailRibbon} from "./CutawayGeometry"
 import {TableSurface} from "./CutawayHeroSurface"
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
 import {boxCorners, hull2, polyGap, toView, viewFrame} from "./CutawayLayout"
+import {kelvinToWarmth, LAMP_K_DEFAULT, LampLight, LampLightInfo, LampLightTimes, warmthToKelvin} from "./CutawayLampLight"
 import {LAMP_GEOM, LampModel} from "./CutawayLampModel"
 import {LampPhysics} from "./CutawayLampPhysics"
 import {LampRail, LampSliderKey} from "./CutawayLampRail"
@@ -47,6 +48,8 @@ export interface LampContext {
   realOrigin: () => vec3
   /** The real lamp's shade (lampMarker). */
   realShade: () => vec3
+  /** The real lamp's bulb (bulbMarker): where the thread from the copy ends. */
+  realBulb: () => vec3
   surface: () => TableSurface
   survey: (done: (s: TableSurface) => void) => void
   matter: Matter | null
@@ -114,7 +117,10 @@ const LIGHT = ENERGY.light
 
 /** Captions, one line each (lamp-hero.md §2–§5). */
 export const LAMP_CAPTIONS = {
-  press: "Press the switch on the cord."
+  press: "Press the switch on the cord.",
+  flow: "Electric energy flows up the cord.",
+  chip: "The chip glows blue. A coating turns it white.",
+  glow: "The paper scatters it into a soft glow."
 }
 /**
  * Half the width of the widest caption, in caption design units: centred text runs about 0.34
@@ -123,12 +129,19 @@ export const LAMP_CAPTIONS = {
 const CAPTION_HALF_W = 10.5
 /** How fast the parts follow the "Take apart" slider (slider units per second), as the other stages. */
 const APART_RATE = 1.6
+/** The foot switch's button (model cm): its stroke when pinched, and how far it stays down while on (push-push latch). */
+const BUTTON_STROKE = 0.42
+const BUTTON_LATCH = 0.16
+/** How much brighter the LED chips and the frosted envelope's emissive get when lit (× the light's colour). */
+const CHIP_GLOW = 2.4
+const GLASS_GLOW = 1.7
 
 interface Look {
   rmv: RenderMeshVisual
   mat: Material
   base: vec4
   emis: number
+  emisCol: vec3
   rim: number
   group: string
   depthWrite: boolean
@@ -140,6 +153,8 @@ interface GroupLook {
   fill: number
   rim: number
   fade: number
+  /** Added to the part's emissive colour (the lit bulb). */
+  glow: vec3 | null
 }
 
 export interface LampInfo {
@@ -241,6 +256,13 @@ export class LampHero {
   private launchedAt = -1
   private landedAt = -1
   private homeAt = -1
+  // The light, and the foot switch's button
+  private light: LampLight | null = null
+  private buttonRest: vec3 | null = null
+  private buttonT = -1
+  private buttonFrom = 0
+  private buttonDepth = 0
+  private buttonOn = false
 
   constructor(private ctx: LampContext) {
     ctx.rail.onChange = (k, v) => this.onSlider(k, v)
@@ -312,6 +334,12 @@ export class LampHero {
     this.state = "returning"
     this.t = 0
     this.retWaiting = true
+    if (this.light && this.light.isOn) {
+      this.light.turnOff()
+      this.buttonOn = false
+      this.buttonT = -1
+      this.ctx.log("lamp:off")
+    }
     this.ctx.rail.setMode("none")
     this.showCaption(null)
     this.ctx.log("lamp:putBack")
@@ -319,6 +347,13 @@ export class LampHero {
 
   /** Reset: remove everything instantly, from any state. */
   clear(): void {
+    if (this.light) this.light.clear()
+    this.light = null
+    this.buttonRest = null
+    this.buttonT = -1
+    this.buttonFrom = 0
+    this.buttonDepth = 0
+    this.buttonOn = false
     this.sEff = 0
     this.retWaiting = false
     this.railSide = 1
@@ -365,6 +400,7 @@ export class LampHero {
         break
     }
     if ((this.state as LampState) === "none") return
+    if (this.light) this.light.update(dt, this.lightParams())
     this.syncGrabs()
     this.updateGlowAndDisc()
     this.updateTrail()
@@ -436,6 +472,30 @@ export class LampHero {
     return this.caption
   }
 
+  /** The light's state (pulses, bulb, bubble, glows, the thread and the real lamp). */
+  getLight(): LampLightInfo | null {
+    return this.light ? this.light.getInfo() : null
+  }
+
+  /** When the light's beats happened (on, bulb, real lamp on, off, dark), or null before a light exists. */
+  getLightTimes(): LampLightTimes | null {
+    return this.light ? this.light.getTimes() : null
+  }
+
+  get lightOn(): boolean {
+    return !!this.light && this.light.isOn
+  }
+
+  /** How far the foot switch's button is down (model cm). */
+  getButtonDepth(): number {
+    return this.buttonDepth
+  }
+
+  /** The colour temperature the Warmth slider asks for (K). */
+  getKelvin(): number {
+    return warmthToKelvin(this.ctx.rail.getValue("warmth"))
+  }
+
   /** The direction (flat, world) from the base's centre to the foot switch. */
   getSwitchSide(): vec3 {
     if (this.state === "none") return vec3.zero()
@@ -477,6 +537,28 @@ export class LampHero {
     if (!this.foot0) this.foot0 = {pts: this.model.floorOutline(), center: vec2.zero()}
     this.buildLooks()
     this.buildGlowAndDisc()
+    this.buttonRest = this.model.parts["LampSwitchButton"].getTransform().getLocalPosition()
+    const model = this.model
+    this.light = new LampLight({
+      parent: root,
+      glowMat: this.ctx.glowMat,
+      camPos: this.ctx.camPos,
+      model,
+      replica: this.replica,
+      scale: () => this.scale,
+      surface: () => this.getSurface(),
+      foot: () => this.foot,
+      realOrigin: this.ctx.realOrigin,
+      realBulb: this.ctx.realBulb,
+      bubbleSide: () => -this.railSide,
+      setBulbGlow: (k, c) => this.setBulbGlow(k, c),
+      sound: (s, p) => this.ctx.sound(s, p),
+      log: (p) => this.ctx.log(p),
+      caption: (stage) => {
+        if (this.state !== "landed") return
+        this.showCaption(stage === 1 ? LAMP_CAPTIONS.flow : stage === 2 ? LAMP_CAPTIONS.chip : LAMP_CAPTIONS.glow)
+      }
+    })
   }
 
   private node(parent: SceneObject, name: string, localPos: vec3): SceneObject {
@@ -505,10 +587,11 @@ export class LampHero {
       m.rmv.mainMaterial = mat
       const pass = mat.mainPass
       const b = pass.baseColor
-      const look: Look = {rmv: m.rmv, mat, base: new vec4(b.x, b.y, b.z, b.w), emis: pass.emissiveIntensity, rim: pass.rimIntensity, group, depthWrite: pass.depthWrite, twoSided: pass.twoSided}
+      const ec = pass.emissiveColor
+      const look: Look = {rmv: m.rmv, mat, base: new vec4(b.x, b.y, b.z, b.w), emis: pass.emissiveIntensity, emisCol: new vec3(ec.x, ec.y, ec.z), rim: pass.rimIntensity, group, depthWrite: pass.depthWrite, twoSided: pass.twoSided}
       this.looks.push(look)
       this.lookByRmv.set(m.rmv, look)
-      if (!this.groupLook[group]) this.groupLook[group] = {fill: 1, rim: 1, fade: 1}
+      if (!this.groupLook[group]) this.groupLook[group] = {fill: 1, rim: 1, fade: 1, glow: null}
     }
   }
 
@@ -523,6 +606,8 @@ export class LampHero {
       const k = fill * fade
       pass.baseColor = new vec4(l.base.x * k, l.base.y * k, l.base.z * k, l.base.w)
       pass.emissiveIntensity = l.emis * k
+      const glow = gl ? gl.glow : null
+      pass.emissiveColor = glow ? l.emisCol.add(glow) : l.emisCol
       // Rim-only in flight (edges of light); a part turned to an outline keeps a thin rim.
       const rimOnly = this.shellRim
       const rim = fill >= 0.999 ? l.rim : rimOnly + (l.rim - rimOnly) * fill
@@ -736,6 +821,8 @@ export class LampHero {
       this.placeRail()
       this.ctx.rail.setMode("rest")
       this.ctx.rail.setValue("apart", 0)
+      this.ctx.rail.setValue("brightness", 1)
+      this.ctx.rail.setValue("warmth", kelvinToWarmth(LAMP_K_DEFAULT))
       this.showCaption(LAMP_CAPTIONS.press)
       this.ctx.log("lamp:landed")
     }
@@ -816,12 +903,43 @@ export class LampHero {
     const step = APART_RATE * dt
     this.sEff = Math.abs(target - this.sEff) <= step ? target : this.sEff + Math.sign(target - this.sEff) * step
     this.updatePose(dt, this.sEff <= 0.001)
+    this.updateButton(dt)
   }
 
   /** A slider moved: everything it drives, in the same frame. */
   private onSlider(k: LampSliderKey, v: number): void {
-    void k
-    void v
+    if (k === "warmth") this.ctx.rail.setLabel("warmth", "Warmth  " + Math.round(warmthToKelvin(v)) + " K")
+  }
+
+  /** What the light follows each frame: the rail's Brightness and Warmth, the shade's lift (step 4). */
+  private lightParams(): {brightness: number; kelvin: number; lift: number} {
+    return {brightness: this.ctx.rail.getValue("brightness"), kelvin: this.getKelvin(), lift: 0}
+  }
+
+  /** The lit bulb: its LED chips and frosted envelope glow in the light's colour. */
+  private setBulbGlow(k: number, c: vec3): void {
+    const set = (g: string, gain: number) => {
+      const gl = this.groupLook[g]
+      if (gl) gl.glow = k > 1e-4 ? c.uniformScale(k * gain) : null
+    }
+    set("LampLedChips", CHIP_GLOW)
+    set("LampBulbGlass", GLASS_GLOW)
+  }
+
+  /** The button's push-push stroke: down when pinched, back up to the latch (on) or to the top (off). */
+  private updateButton(dt: number): void {
+    const end = this.buttonOn ? BUTTON_LATCH : 0
+    let d = end
+    if (this.buttonT >= 0) {
+      this.buttonT += dt
+      const t = this.buttonT
+      if (t < 0.05) d = this.buttonFrom + (BUTTON_STROKE - this.buttonFrom) * easeOutCubic(t / 0.05)
+      else if (t < 0.11) d = BUTTON_STROKE
+      else if (t < 0.23) d = BUTTON_STROKE + (end - BUTTON_STROKE) * easeInOutCubic((t - 0.11) / 0.12)
+      else this.buttonT = -1
+    }
+    this.buttonDepth = d
+    if (this.model && this.buttonRest) this.model.parts["LampSwitchButton"].getTransform().setLocalPosition(this.buttonRest.add(new vec3(0, -d, 0)))
   }
 
   /** The caption above the rail (null hides it). */
@@ -943,10 +1061,28 @@ export class LampHero {
     if (this.pose === "rest") this.startDrop()
   }
 
-  /** The foot switch was pinched (step 3 turns the lamp on and off). */
+  /**
+   * The foot switch was pinched: a soft click from the switch and its button goes down; the lamp
+   * turns on (the current leaves the switch, the rail shows Brightness and Warmth) or off.
+   */
   private onSwitch(): void {
-    if (this.state !== "landed") return
+    if (this.state !== "landed" || !this.light || !this.model) return
+    const on = !this.light.isOn
     this.ctx.log("lamp:switch")
+    this.buttonFrom = this.buttonDepth
+    this.buttonT = 0
+    this.buttonOn = on
+    this.ctx.sound("click", this.model.switchButtonTop())
+    if (on) {
+      this.ctx.rail.setMode("on")
+      this.light.turnOn()
+      this.ctx.log("lamp:on")
+    } else {
+      this.light.turnOff()
+      this.ctx.rail.setMode("rest")
+      this.showCaption(LAMP_CAPTIONS.press)
+      this.ctx.log("lamp:off")
+    }
   }
 
   private clampFoot(target: vec3, rot: quat): vec3 {
@@ -1023,7 +1159,7 @@ export class LampHero {
 
   /** Whether everything that must stop before the flight home has stopped (the light, the parts). */
   private readyToFly(): boolean {
-    return this.sEff <= 0
+    return this.sEff <= 0 && (!this.light || this.light.isOff)
   }
 
   private updateReturn(dt: number): void {
@@ -1031,6 +1167,7 @@ export class LampHero {
       this.t = 0
       // The parts gather (twice the take-apart rate) while the light fades.
       this.sEff = Math.max(0, this.sEff - 2 * APART_RATE * dt)
+      this.updateButton(dt)
       if (!this.readyToFly()) return
       this.retWaiting = false
       this.retFrom = {rot: this.replica.getTransform().getWorldRotation(), h: this.h}

@@ -273,6 +273,21 @@ export class CutawayMain extends BaseScriptComponent {
 
   @input
   @allowUndefined
+  @hint("Spatial AudioComponent for the lamp copy's foot switch: a soft click (LampSwitchClick)")
+  lampClickAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent for the lamp copy's bulb: a gentle rising power-up tone (LampBulbRise)")
+  lampRiseAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent for the lamp copy's shade: a faint paper rustle (LampRustle)")
+  lampRustleAudio: AudioComponent
+
+  @input
+  @allowUndefined
   @hint("Spatial AudioComponent for the soft tick on every pinch (moved to the pinched control)")
   tickAudio: AudioComponent
 
@@ -320,7 +335,7 @@ export class CutawayMain extends BaseScriptComponent {
       {key: "camera", ui: this.cameraUI, target: this.cameraMarker, mode: "rest", explained: false, armed: true},
       {key: "lamp", ui: this.lampUI, target: this.lampMarker, mode: "rest", explained: false, armed: true}
     ]
-    for (const a of [this.chimeAudio, this.clickAudio, this.powerUpAudio, this.crackleAudio, this.tickAudio, this.scanAudio, ...this.heroAudios()]) {
+    for (const a of [this.chimeAudio, this.clickAudio, this.powerUpAudio, this.crackleAudio, this.tickAudio, this.scanAudio, this.lampClickAudio, this.lampRiseAudio, this.lampRustleAudio, ...this.heroAudios()]) {
       if (!a) continue
       try {
         a.playbackMode = Audio.PlaybackMode.LowLatency
@@ -462,9 +477,9 @@ export class CutawayMain extends BaseScriptComponent {
       land: this.heroLandAudio,
       tap: this.heroTapAudio,
       part: this.heroPartAudio,
-      click: null,
-      rise: null,
-      rustle: null
+      click: this.lampClickAudio ?? null,
+      rise: this.lampRiseAudio ?? null,
+      rustle: this.lampRustleAudio ?? null
     }
     return map[s] ?? null
   }
@@ -488,6 +503,7 @@ export class CutawayMain extends BaseScriptComponent {
       camera: camProvider.getComponent(),
       realOrigin: () => ROOM_LAMP.origin,
       realShade: () => this.pos(this.lampMarker),
+      realBulb: () => (this.bulbMarker ? this.pos(this.bulbMarker) : this.pos(this.lampMarker)),
       surface: () => this.surface ?? this.fallbackSurface(),
       survey: (done) => {
         const fb = this.fallbackSurface()
