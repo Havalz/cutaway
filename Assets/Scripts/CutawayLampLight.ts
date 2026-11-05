@@ -26,7 +26,7 @@ import {lightColor, MeshKit, setFade, spawnMesh, STRUCT_GLOW} from "./CutawayGeo
 import {TableSurface} from "./CutawayHeroSurface"
 import {LAMP_GEOM, lampShadeR, LampModel} from "./CutawayLampModel"
 import {bezier} from "./CutawayStageKit"
-import {ENERGY, ink, UI_WHITE} from "./CutawayStyle"
+import {ENERGY, ink, INK} from "./CutawayStyle"
 import {clamp01, easeIn, easeInOut, easeOutCubic, faceToward, yawToward} from "./CutawayTween"
 
 const G = LAMP_GEOM
@@ -769,32 +769,32 @@ class LedBubble {
     this.face.getTransform().setLocalScale(vec3.one().uniformScale(this.S))
     // Frame: thin double rim and a faint inner glow (as the other bubbles).
     const fk = new MeshKit()
-    fk.addArcXY(0, 0, BR, 0.2, 0, Math.PI * 2, ink(UI_WHITE, 0.85), 96)
-    fk.addArcXY(0, 0, BR - 0.55, 0.1, 0, Math.PI * 2, ink(UI_WHITE, 0.4), 96)
-    fk.addFanXY(0, 0, 8, 0, Math.PI * 2, ink(UI_WHITE, 0.02), ink(UI_WHITE, 0.03), 48)
-    fk.addSoftRingXY(0, 0, 8, BR - 0.6, ink(UI_WHITE, 0.03), ink(UI_WHITE, 0.1), 64)
+    fk.addArcXY(0, 0, BR, 0.2, 0, Math.PI * 2, ink(INK, 0.85), 96)
+    fk.addArcXY(0, 0, BR - 0.55, 0.1, 0, Math.PI * 2, ink(INK, 0.4), 96)
+    fk.addFanXY(0, 0, 8, 0, Math.PI * 2, ink(INK, 0.02), ink(INK, 0.03), 48)
+    fk.addSoftRingXY(0, 0, 8, BR - 0.6, ink(INK, 0.03), ink(INK, 0.1), 64)
     this.frameMats.push(this.glow("LampBubbleFrame", fk))
     // The LED board and the chip on it (structure).
     const bk = new MeshKit(STRUCT_GLOW)
-    bk.addLineXY(-9.6, BOARD_Y, 9.6, BOARD_Y, 0.16, ink(UI_WHITE, 0.45))
-    bk.addPolylineXY([new vec2(-CHIP_HW, BOARD_Y), new vec2(-CHIP_HW, CHIP_TOP), new vec2(CHIP_HW, CHIP_TOP), new vec2(CHIP_HW, BOARD_Y)], 0.14, ink(UI_WHITE, 0.8))
+    bk.addLineXY(-9.6, BOARD_Y, 9.6, BOARD_Y, 0.16, ink(INK, 0.45))
+    bk.addPolylineXY([new vec2(-CHIP_HW, BOARD_Y), new vec2(-CHIP_HW, CHIP_TOP), new vec2(CHIP_HW, CHIP_TOP), new vec2(CHIP_HW, BOARD_Y)], 0.14, ink(INK, 0.8))
     this.frameMats.push(this.glow("LampBubbleBoard", bk))
     // The chip's blue glow (lit with the LED).
     const ck = new MeshKit()
-    ck.addRectXY(-CHIP_HW + 0.08, BOARD_Y + 0.06, CHIP_HW - 0.08, CHIP_TOP - 0.06, ink(UI_WHITE, 0.9))
-    ck.addFanXY(0, CHIP_TOP - 0.4, 2.6, 0, Math.PI * 2, ink(UI_WHITE, 0.35), ZERO, 32)
+    ck.addRectXY(-CHIP_HW + 0.08, BOARD_Y + 0.06, CHIP_HW - 0.08, CHIP_TOP - 0.06, ink(INK, 0.9))
+    ck.addFanXY(0, CHIP_TOP - 0.4, 2.6, 0, Math.PI * 2, ink(INK, 0.35), ZERO, 32)
     this.chipMat = this.glow("LampBubbleChip", ck)
     // The phosphor coating over the chip: a dome, filled faintly, its edge brighter.
     const ok = new MeshKit()
-    ok.addFanXY(0, BOARD_Y, COAT_R, 0, Math.PI, ink(UI_WHITE, 0.2), ink(UI_WHITE, 0.12), 40)
-    ok.addArcXY(0, BOARD_Y, COAT_R, 0.14, 0, Math.PI, ink(UI_WHITE, 0.75), 40)
+    ok.addFanXY(0, BOARD_Y, COAT_R, 0, Math.PI, ink(INK, 0.2), ink(INK, 0.12), 40)
+    ok.addArcXY(0, BOARD_Y, COAT_R, 0.14, 0, Math.PI, ink(INK, 0.75), 40)
     this.coatMat = this.glow("LampBubbleCoating", ok)
     // Together they come out white: the light leaving the coating fills the upper bubble.
     const wk = new MeshKit()
-    wk.addFanXY(0, BOARD_Y, PHOTON_MAX_R + 0.3, (22 * Math.PI) / 180, (158 * Math.PI) / 180, ZERO, ink(UI_WHITE, 0.5), 48)
+    wk.addFanXY(0, BOARD_Y, PHOTON_MAX_R + 0.3, (22 * Math.PI) / 180, (158 * Math.PI) / 180, ZERO, ink(INK, 0.5), 48)
     this.whiteMat = this.glow("LampBubbleWhite", wk)
     this.cloud = new CometCloud(this.face, "LampBubblePhotons", glowMat, PHOTONS)
-    this.leader = new PathRibbon(parent, "LampBubbleLeader", glowMat, 8, ink(UI_WHITE, 0.55))
+    this.leader = new PathRibbon(parent, "LampBubbleLeader", glowMat, 8, ink(INK, 0.55))
     for (const m of [...this.frameMats, this.chipMat, this.coatMat, this.whiteMat, this.cloud.mat, this.leader.mat]) setFade(m, 0)
   }
 
@@ -1044,7 +1044,7 @@ export class LampLight {
     this.shadeMat = this.shadeMesh.mat
     // The bare bulb's point of light (hidden by the paper while the shade is on) and its rays.
     const bk = new MeshKit(1.5)
-    bk.addSparkXY(0, 0, 0.5, ink(UI_WHITE, 1), 24)
+    bk.addSparkXY(0, 0, 0.5, ink(INK, 1), 24)
     const bl = spawnMesh(root, "LampBulbPoint", bk.build(), glow)
     bl.rmv.setRenderOrder(ORDER)
     this.bloom = bl.so
@@ -1060,8 +1060,8 @@ export class LampLight {
     this.realGlow = rg.so
     this.realMat = rg.mat
     const sk = new MeshKit()
-    sk.addFanXY(0, 0, 0.45, 0, Math.PI * 2, ink(UI_WHITE, 1), ink(UI_WHITE, 0.5), 48)
-    sk.addSoftRingXY(0, 0, 0.45, 1, ink(UI_WHITE, 0.5), ZERO, 48)
+    sk.addFanXY(0, 0, 0.45, 0, Math.PI * 2, ink(INK, 1), ink(INK, 0.5), 48)
+    sk.addSoftRingXY(0, 0, 0.45, 1, ink(INK, 0.5), ZERO, 48)
     const rb = spawnMesh(root, "LampRealBloom", sk.build(), glow)
     rb.mat.mainPass.twoSided = true
     rb.rmv.setRenderOrder(ORDER + 1)

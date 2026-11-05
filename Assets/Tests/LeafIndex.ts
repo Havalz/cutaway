@@ -43,6 +43,8 @@ import {R8RpPutBackResetScenario} from "./R8RpPutBackResetScenario"
 import {RpCaptureScenario} from "./RpCaptureScenario"
 import {L0LampModelScenario} from "./L0LampModelScenario"
 import {LampModelScenario} from "./LampModelScenario"
+import {U1TokensScenario} from "./U1TokensScenario"
+import {U3StatesScenario} from "./U3StatesScenario"
 
 @component
 export class LeafIndex extends BaseScriptComponent {
@@ -90,6 +92,8 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "l7-lamp-put-back-reset", typename: L7LampPutBackResetScenario.getTypeName()},
     {id: "helper-lamp-capture", typename: LampCaptureScenario.getTypeName(), parameters: {beat: "rest", extraMs: ""}},
     {id: "helper-lamp-model", typename: LampModelScenario.getTypeName(), parameters: {dx: "", dz: "", interior: "", hide: "", at: "", scale: "", yaw: ""}},
+    {id: "u1-ui-tokens", typename: U1TokensScenario.getTypeName()},
+    {id: "u3-ui-states", typename: U3StatesScenario.getTypeName()},
     {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer", step: "", untilPhase: "", extraMs: "", layout: ""}}
   ]
 }

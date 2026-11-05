@@ -4,7 +4,7 @@
  * - Fader / Pop: enter 300 ms ease-out cubic, exit 220 ms ease-in, no bounce (visual direction).
  * Only transforms and opacity are animated (no width/height/layout changes).
  */
-import {ENTER_S, EXIT_S} from "./CutawayStyle"
+import {ENTER_S, EXIT_S, HOVER, PRESS} from "./CutawayStyle"
 
 export class Spring {
   value: number
@@ -117,11 +117,13 @@ export interface PopOptions {
 
 /**
  * Shows / hides a SceneObject: scale (and optional opacity via onAmount) follow a Fader, with a
- * critically damped spring for the 0.97 press feedback. Disabled once fully hidden.
+ * critically damped spring for the 0.97 press feedback and another for the 1.04 hover. Disabled
+ * once fully hidden.
  */
 export class Pop {
   private fader: Fader
   private press: Spring
+  private hover: Spring
   private minScale: number
   private onAmount: ((a: number) => void) | null
 
@@ -133,6 +135,7 @@ export class Pop {
   ) {
     this.fader = new Fader(startShown)
     this.press = new Spring(900, 1.0, 1)
+    this.hover = new Spring(HOVER.stiffness, 1.0, 1)
     this.minScale = opts.minScale ?? 0
     this.onAmount = opts.onAmount ?? null
     this.apply()
@@ -151,6 +154,7 @@ export class Pop {
   show(v: boolean, instant: boolean = false, delay: number = 0): void {
     if (v === this.fader.isShown && !instant && (this.fader.isAnimating || this.fader.value === (v ? 1 : 0))) return
     this.press.snap(1)
+    this.hover.snap(1)
     if (v) this.so.enabled = true
     this.fader.show(v, instant, delay)
     this.apply()
@@ -158,7 +162,12 @@ export class Pop {
   }
 
   setPressed(p: boolean): void {
-    this.press.target = p ? 0.97 : 1
+    this.press.target = p ? PRESS.scale : 1
+  }
+
+  /** Aimed at: 1.04 over 120 ms. */
+  setHovered(h: boolean): void {
+    this.hover.target = h ? HOVER.scale : 1
   }
 
   setBaseScale(s: vec3): void {
@@ -170,13 +179,14 @@ export class Pop {
     if (!this.so.enabled) return
     this.fader.update(dt)
     this.press.update(dt)
+    this.hover.update(dt)
     this.apply()
     if (!this.fader.isShown && !this.fader.isAnimating) this.so.enabled = false
   }
 
   private apply(): void {
     const a = this.fader.value
-    const s = Math.max(0.0001, (this.minScale + (1 - this.minScale) * a) * this.press.value)
+    const s = Math.max(0.0001, (this.minScale + (1 - this.minScale) * a) * this.press.value * this.hover.value)
     this.so.getTransform().setLocalScale(this.baseScale.uniformScale(s))
     if (this.onAmount) this.onAmount(a)
   }

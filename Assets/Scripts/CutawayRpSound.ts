@@ -20,7 +20,7 @@
  */
 import {DynamicRibbon, GlowPath, MeshKit, setFade, spawnMesh, Spawned, STRUCT_GLOW, TrailRibbon, UnitLine} from "./CutawayGeometry"
 import {loudnessGain, RpTone, rpToneShape} from "./CutawayRpTone"
-import {ENERGY, ink, UI_WHITE} from "./CutawayStyle"
+import {ENERGY, ink, INK} from "./CutawayStyle"
 import {clamp01, easeIn, easeOutCubic, faceToward, Pop} from "./CutawayTween"
 
 // ---------------- The two display factors (reported) and the physics ----------------
@@ -398,14 +398,14 @@ export class RpSoundShow {
     face.getTransform().setLocalScale(vec3.one().uniformScale(S))
     const mats: Material[] = []
     const fk = new MeshKit()
-    fk.addArcXY(0, 0, R, 0.2, 0, Math.PI * 2, ink(UI_WHITE, 0.85), 96)
-    fk.addArcXY(0, 0, R - 0.55, 0.1, 0, Math.PI * 2, ink(UI_WHITE, 0.4), 96)
-    fk.addFanXY(0, 0, 8, 0, Math.PI * 2, ink(UI_WHITE, 0.02), ink(UI_WHITE, 0.03), 48)
-    fk.addSoftRingXY(0, 0, 8, R - 0.6, ink(UI_WHITE, 0.03), ink(UI_WHITE, 0.1), 64)
+    fk.addArcXY(0, 0, R, 0.2, 0, Math.PI * 2, ink(INK, 0.85), 96)
+    fk.addArcXY(0, 0, R - 0.55, 0.1, 0, Math.PI * 2, ink(INK, 0.4), 96)
+    fk.addFanXY(0, 0, 8, 0, Math.PI * 2, ink(INK, 0.02), ink(INK, 0.03), 48)
+    fk.addSoftRingXY(0, 0, 8, R - 0.6, ink(INK, 0.03), ink(INK, 0.1), 64)
     mats.push(this.glow(face, "RpBubbleFrame", fk).mat)
     // The cartridge's underside above the groove (structure, faint), where the cantilever goes in.
     const ck = new MeshKit(STRUCT_GLOW)
-    ck.addPolylineXY([new vec2(-4.5, 3.2), new vec2(6.5, 3.2), new vec2(6.5, 7.5), new vec2(-4.5, 7.5), new vec2(-4.5, 3.2)], 0.1, ink(UI_WHITE, 0.45))
+    ck.addPolylineXY([new vec2(-4.5, 3.2), new vec2(6.5, 3.2), new vec2(6.5, 7.5), new vec2(-4.5, 7.5), new vec2(-4.5, 3.2)], 0.1, ink(INK, 0.45))
     mats.push(this.glow(face, "RpBubbleCartridge", ck).mat)
     const walls: DynamicRibbon[] = []
     for (let i = 0; i < 2; i++) {
@@ -480,7 +480,7 @@ export class RpSoundShow {
     if (!b.leader && this.t > 0.32 && this.root) {
       const rim = b.target.add(p.stylus.sub(b.target).normalize().uniformScale(R * b.S))
       const hair = this.hairAt(p.stylus)
-      b.leader = new GlowPath(this.root, "RpBubbleLeader", this.glowMat, [p.stylus, rim], {radius: hair * 0.6, color: ink(UI_WHITE, 0.5), halo: hair * 1.5, step: 3, eye: cam})
+      b.leader = new GlowPath(this.root, "RpBubbleLeader", this.glowMat, [p.stylus, rim], {radius: hair * 0.6, color: ink(INK, 0.5), halo: hair * 1.5, step: 3, eye: cam})
       b.leader.setRange(0, 0)
     }
     if (b.leader) {

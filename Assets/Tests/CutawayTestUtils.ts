@@ -56,6 +56,14 @@ export async function drag(name: string, perUpdate: vec3, ms: number): Promise<v
   await sleep(200)
 }
 
+/** Aim at a control by its SceneObject name for `ms`, without pinching. */
+export async function hoverOver(name: string, ms: number): Promise<void> {
+  const it = findInteractableByName(name, undefined, true)
+  if (!it) throw new Error(`Interactable "${name}" not found or not enabled`)
+  if (!interactor) throw new Error("No LEAF interactor: call cleanStart() at the start of the scenario")
+  await interactor.hover(it, ms)
+}
+
 export function isEnabled(name: string): boolean {
   const so = findSceneObjectByName(name)
   return !!so && so.isEnabledInHierarchy

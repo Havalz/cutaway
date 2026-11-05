@@ -19,7 +19,7 @@ import {TableSurface} from "./CutawayHeroSurface"
 import {addPoly, bevelBox, bevelFrame, Blade, chamferRect, clipPoly, extrudeStrip, extrudeX, irisBlades, irisOpening, latheLoop, latheSmooth, lensProfile, lensRim, ringPts} from "./CutawayHeroParts"
 import {circle2, hull2, meshBoxes, polyGap, rect2, toView, viewFrame} from "./CutawayLayout"
 import {BODY_BOX_CENTER, BODY_BOX_SIZE, BODY_MIN_Y, FOOT_CENTER, FOOT_SIZE, FOOTPRINT, footReach, HeroPhysics, hullLowestY, LENS_LENGTH, LENS_RADIUS, LENS_Z0, maxFootDistance} from "./CutawayHeroPhysics"
-import {applyType, ENERGY, ink, keyWord, UI_WHITE} from "./CutawayStyle"
+import {applyType, ENERGY, ink, keyWord, INK} from "./CutawayStyle"
 import {clamp01, easeIn, easeInOutCubic, easeOutCubic, faceToward} from "./CutawayTween"
 
 export type HeroSound = "lift" | "bayonet" | "flight" | "land" | "tap" | "part" | "mirror" | "shutter" | "print"
@@ -1452,7 +1452,7 @@ export class CameraHero {
   private buildParts(): void {
     const R = this.replica
     const glassCol = ink(LIGHT, 0.1)
-    const metalCol = ink(UI_WHITE, 0.3)
+    const metalCol = ink(INK, 0.3)
     // ---- Lens (the model's barrel): unlock twist, then forward. ----
     this.lensPart = this.part("lens", "Lens", this.barrelSo, vec3.zero(), new vec3(0, 0, BARREL_APART), 0.0, 0.3, [], vec3.zero(), vec3.zero())
 
@@ -1524,7 +1524,7 @@ export class CameraHero {
       }
       this.spawnPartMesh(so, "MountMesh", k, chrome, "mount")
       const a = new MeshKit()
-      a.addTube(ringPts(2.72, 0.004, 72), 0.012, ink(UI_WHITE, 0.55), 4, 50)
+      a.addTube(ringPts(2.72, 0.004, 72), 0.012, ink(INK, 0.55), 4, 50)
       this.spawnPartMesh(so, "MountEdge", a, edge, "mount")
       this.part("mount", "Lens mount", so, vec3.zero(), new vec3(0, 0, 0.5), 0.5, 0.2, [chrome, edge], new vec3(0, -3.3, -0.25), new vec3(0, -2.4, 0.9))
     }
@@ -1565,7 +1565,7 @@ export class CameraHero {
       const ks = [0, 0.3, 1, 0.3, 0]
       const base = sk.vertexCount
       for (let r = 0; r < rows.length; r++) {
-        for (const sx of [-1, 1]) sk.vert(X.uniformScale(sx * (MIRROR_W - 0.06)).add(d.uniformScale(rows[r])).add(face.uniformScale(0.06)), face, ink(UI_WHITE, ks[r]))
+        for (const sx of [-1, 1]) sk.vert(X.uniformScale(sx * (MIRROR_W - 0.06)).add(d.uniformScale(rows[r])).add(face.uniformScale(0.06)), face, ink(INK, ks[r]))
       }
       for (let r = 0; r < rows.length - 1; r++) {
         const i0 = base + r * 2
@@ -1938,9 +1938,9 @@ export class CameraHero {
       for (const sy of [-1, 1])
         for (const sz of [-1, 1]) {
           const p = new vec3(sx * h.x, sy * h.y, sz * h.z)
-          k.addTube([p, p.add(new vec3(-sx * arm(h.x), 0, 0))], 0.12, ink(UI_WHITE, 0.9), 4, 50)
-          k.addTube([p, p.add(new vec3(0, -sy * arm(h.y), 0))], 0.12, ink(UI_WHITE, 0.9), 4, 50)
-          k.addTube([p, p.add(new vec3(0, 0, -sz * arm(h.z)))], 0.12, ink(UI_WHITE, 0.9), 4, 50)
+          k.addTube([p, p.add(new vec3(-sx * arm(h.x), 0, 0))], 0.12, ink(INK, 0.9), 4, 50)
+          k.addTube([p, p.add(new vec3(0, -sy * arm(h.y), 0))], 0.12, ink(INK, 0.9), 4, 50)
+          k.addTube([p, p.add(new vec3(0, 0, -sz * arm(h.z)))], 0.12, ink(INK, 0.9), 4, 50)
         }
     spawnMesh(so, "Brackets", k.build(), this.ctx.glowMat, undefined, this.bracketMat)
     this.brackets = so
@@ -2741,7 +2741,7 @@ export class CameraHero {
     const B = -h / 2
     const T = CANDLE_TOP
     const R = CANDLE_R
-    const fallback = ink(UI_WHITE, 0.4)
+    const fallback = ink(INK, 0.4)
     this.waxLook = this.solidLook("wax")
     // Wax: a lathe around the candle's axis (built around +Z, stood upright), its top dished where
     // it has melted.
@@ -2780,8 +2780,8 @@ export class CameraHero {
     gk.addLathe(vec3.zero(), vec3.up(), [[0.001, T - 0.035], [R * 0.84, T + 0.004]], [ink(WAX_GLOW, 0.5), ink(WAX_GLOW, 0.12)], 32)
     gk.addTube([new vec3(0, T - 0.04, 0), new vec3(0.008, WICK_TOP - 0.05, 0), new vec3(0.024, WICK_TOP, 0)], 0.011, ink(new vec4(0.55, 0.38, 0.22, 1), 0.45), 5, 50)
     gk.addSphere(new vec3(0.024, WICK_TOP, 0), 0.017, ink(FLAME_AMBER, 0.9), 5, 6)
-    gk.addTube(circle(new vec3(0, B + 0.42, 0), vec3.right(), vec3.forward(), 0.52, 40), 0.026, ink(UI_WHITE, 0.5), 4, 50)
-    gk.addTube(circle(new vec3(0, B + 0.27, 0), vec3.right(), vec3.forward(), 0.52, 40), 0.018, ink(UI_WHITE, 0.22), 4, 50)
+    gk.addTube(circle(new vec3(0, B + 0.42, 0), vec3.right(), vec3.forward(), 0.52, 40), 0.026, ink(INK, 0.5), 4, 50)
+    gk.addTube(circle(new vec3(0, B + 0.27, 0), vec3.right(), vec3.forward(), 0.52, 40), 0.018, ink(INK, 0.22), 4, 50)
     spawnMesh(so, "CandleGlow", gk.build(), this.ctx.glowMat, undefined, this.subjectMat)
     // The flame: a billboard at the wick (it turns about the candle's axis to face the user).
     const H = h / 2 - FLAME_BASE
@@ -3075,9 +3075,9 @@ export class CameraHero {
     this.bubbleMat = this.glowMat()
     const R = BUBBLE_R
     const k = new MeshKit()
-    k.addArcXY(0, 0, R, 0.22, 0, Math.PI * 2, ink(UI_WHITE, 0.85), 96)
-    k.addArcXY(0, 0, R - 0.6, 0.11, 0, Math.PI * 2, ink(UI_WHITE, 0.4), 96)
-    k.addFanXY(0, 0, R - 0.7, 0, Math.PI * 2, ink(UI_WHITE, 0.02), ink(UI_WHITE, 0.035), 64)
+    k.addArcXY(0, 0, R, 0.22, 0, Math.PI * 2, ink(INK, 0.85), 96)
+    k.addArcXY(0, 0, R - 0.6, 0.11, 0, Math.PI * 2, ink(INK, 0.4), 96)
+    k.addFanXY(0, 0, R - 0.7, 0, Math.PI * 2, ink(INK, 0.02), ink(INK, 0.035), 64)
     // The sensor face-on, magnified like a loupe: cyan outline, faint fill and pixel grid, cut to
     // the bubble's round window.
     const M = BUBBLE_M
@@ -3120,7 +3120,7 @@ export class CameraHero {
     spawnMesh(this.bubbleSharp, "Outline", ok.build(), this.ctx.glowMat, undefined, this.bubbleSharpMat)
     // Leader from the sensor to the bubble's rim.
     const lk = new MeshKit()
-    lk.addTube([new vec3(0, 0, 0), new vec3(0, 0, 1)], 1, ink(UI_WHITE, 0.5), 4, 50)
+    lk.addTube([new vec3(0, 0, 0), new vec3(0, 0, 1)], 1, ink(INK, 0.5), 4, 50)
     const lso = this.node(this.root, "BubbleLeader", vec3.zero())
     const lrmv = lso.createComponent("Component.RenderMeshVisual") as RenderMeshVisual
     lrmv.mesh = lk.build()
@@ -3296,7 +3296,7 @@ export class CameraHero {
       for (let i = 0; i <= nx; i++) {
         const x = -W + (2 * W * i) / nx
         const y = -H + (2 * H * j) / ny
-        sk.vert(new vec3(x, y, 0), nz, ink(UI_WHITE, gloss(x, y)))
+        sk.vert(new vec3(x, y, 0), nz, ink(INK, gloss(x, y)))
       }
     const gi = (i: number, j: number) => g0 + j * (nx + 1) + i
     for (let j = 0; j < ny; j++)

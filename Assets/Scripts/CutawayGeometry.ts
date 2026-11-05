@@ -626,6 +626,11 @@ export function setFade(mat: Material, k: number, alphaOnly: boolean = false): v
   mat.mainPass.baseColor = alphaOnly ? new vec4(1, 1, 1, f) : new vec4(f, f, f, f)
 }
 
+/** Fade a glow material so its light lands at `level` (see lit in CutawayStyle). */
+export function setLevel(mat: Material, level: number): void {
+  setFade(mat, Math.sqrt(Math.max(0, level)))
+}
+
 export interface GlowOpts {
   /** Core half-width. */
   radius: number

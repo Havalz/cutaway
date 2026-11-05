@@ -12,7 +12,7 @@
  */
 import {CutawayLabelsUI} from "./CutawayLabelsUI"
 import {DynamicRibbon, GlowPath, LIGHT_GLOW, MeshKit, setFade, spawnMesh, Spawned, STRUCT_GLOW, TrailRibbon, UnitLine} from "./CutawayGeometry"
-import {ENERGY, ink, keyWord, UI_WHITE, wave} from "./CutawayStyle"
+import {ENERGY, ink, keyWord, INK, wave} from "./CutawayStyle"
 import {clamp01, easeIn, easeInOutCubic, easeOutCubic, faceToward, Pop} from "./CutawayTween"
 
 export interface ExplainContext {
@@ -263,15 +263,15 @@ export abstract class Explanation {
     const exit = () => 1 - easeIn((this.t - until) / 0.22)
     const open = () => easeOutCubic((this.t - at) / 0.3) * exit()
     const fk = new MeshKit()
-    fk.addArcXY(0, 0, R, 0.2, 0, Math.PI * 2, ink(UI_WHITE, 0.85), 96)
-    fk.addArcXY(0, 0, R - 0.55, 0.1, 0, Math.PI * 2, ink(UI_WHITE, 0.4), 96)
-    fk.addFanXY(0, 0, 8, 0, Math.PI * 2, ink(UI_WHITE, 0.02), ink(UI_WHITE, 0.03), 48)
-    fk.addSoftRingXY(0, 0, 8, R - 0.6, ink(UI_WHITE, 0.03), ink(UI_WHITE, 0.1), 64)
+    fk.addArcXY(0, 0, R, 0.2, 0, Math.PI * 2, ink(INK, 0.85), 96)
+    fk.addArcXY(0, 0, R - 0.55, 0.1, 0, Math.PI * 2, ink(INK, 0.4), 96)
+    fk.addFanXY(0, 0, 8, 0, Math.PI * 2, ink(INK, 0.02), ink(INK, 0.03), 48)
+    fk.addSoftRingXY(0, 0, 8, R - 0.6, ink(INK, 0.03), ink(INK, 0.1), 64)
     const frame = this.glow(face, name + "Frame", fk)
     this.inkBeat(frame.mat, beat, open)
     const hair = this.hairAt(spot)
     const rimPt = target.add(spot.sub(target).normalize().uniformScale(R * S))
-    const leader = this.path(name + "Leader", [spot, rimPt], hair * 0.6, ink(UI_WHITE, 0.5), hair * 1.5)
+    const leader = this.path(name + "Leader", [spot, rimPt], hair * 0.6, ink(INK, 0.5), hair * 1.5)
     const leaderIn = () => easeOutCubic((this.t - at - 0.3) / 0.25) * exit()
     this.inkBeat(leader.mat, beat, leaderIn)
     this.tick(() => {
@@ -310,13 +310,13 @@ export abstract class Explanation {
     const ay = Y.uniformScale(h.y)
     const az = Z.uniformScale(h.z)
     const edges = this.kit(STRUCT_GLOW, this.eyeIn(shell))
-    edges.addBoxEdges(vec3.zero(), ax, ay, az, r, ink(UI_WHITE, 0.2))
+    edges.addBoxEdges(vec3.zero(), ax, ay, az, r, ink(INK, 0.2))
     const e = this.glow(shell, "ShellEdges", edges)
     this.inkBeat(e.mat, beat, this.ramp(at + 0.15, 0.3))
     const corners = this.node("ShellCorners", vec3.zero(), shell)
     const ck = this.kit(STRUCT_GLOW, this.eyeIn(corners))
     const arm = (v: number) => Math.max(1.2, v * 0.3)
-    const c = ink(UI_WHITE, 0.6)
+    const c = ink(INK, 0.6)
     for (const sx of [-1, 1])
       for (const sy of [-1, 1])
         for (const sz of [-1, 1]) {
@@ -389,10 +389,10 @@ export class RecordPlayerExplanation extends Explanation {
     const disc = this.node("PlatterDisc", vec3.zero(), spin)
     const tilt = quat.angleAxis(-Math.PI / 2, vec3.right())
     const pk = this.kit()
-    pk.addArcXY(0, 0, Rp, hair * 2, 0, Math.PI * 2, ink(UI_WHITE, 0.32), 96)
-    pk.addArcXY(0, 0, Rp, hair * 2.6, 0, 0.75, ink(UI_WHITE, 0.95), 16)
-    pk.addArcXY(0, 0, 4, hair * 1.6, 0, Math.PI * 2, ink(UI_WHITE, 0.22), 40)
-    pk.addFanXY(0, 0, 0.6, 0, Math.PI * 2, ink(UI_WHITE, 0.7), ink(UI_WHITE, 0.3), 12)
+    pk.addArcXY(0, 0, Rp, hair * 2, 0, Math.PI * 2, ink(INK, 0.32), 96)
+    pk.addArcXY(0, 0, Rp, hair * 2.6, 0, 0.75, ink(INK, 0.95), 16)
+    pk.addArcXY(0, 0, 4, hair * 1.6, 0, Math.PI * 2, ink(INK, 0.22), 40)
+    pk.addFanXY(0, 0, 0.6, 0, Math.PI * 2, ink(INK, 0.7), ink(INK, 0.3), 12)
     const pm = this.glow(disc, "PlatterRing", pk)
     this.inkBeat(pm.mat, 0, this.ramp(B[0] + 0.25))
     // The groove: one turn of the spiral, its wiggle exaggerated so it reads from the room.
@@ -431,9 +431,9 @@ export class RecordPlayerExplanation extends Explanation {
     })
     this.cue(B[0] + 0.55, () => ctx.log("cutaway"))
     const xrk = new MeshKit()
-    xrk.addArcXY(0, 0, RX, hair * 1.1, 0, Math.PI * 2, ink(UI_WHITE, 0.6), 96)
-    xrk.addFanXY(0, 0, RX * 0.72, 0, Math.PI * 2, ink(UI_WHITE, 0.02), ink(UI_WHITE, 0.03), 48)
-    xrk.addSoftRingXY(0, 0, RX * 0.72, RX - hair, ink(UI_WHITE, 0.03), ink(UI_WHITE, 0.09), 64)
+    xrk.addArcXY(0, 0, RX, hair * 1.1, 0, Math.PI * 2, ink(INK, 0.6), 96)
+    xrk.addFanXY(0, 0, RX * 0.72, 0, Math.PI * 2, ink(INK, 0.02), ink(INK, 0.03), 48)
+    xrk.addSoftRingXY(0, 0, RX * 0.72, RX - hair, ink(INK, 0.03), ink(INK, 0.09), 64)
     const xrim = this.flat(xwin, "XrayRim", xrk)
     this.inkBeat(xrim.mat, 0, xOpen)
     // Parts, in window coordinates: the body and headshell (structure), the cantilever and stylus
@@ -446,11 +446,11 @@ export class RecordPlayerExplanation extends Explanation {
     const cby0 = 0.75
     const cby1 = 2.35
     const xsk = this.kit(STRUCT_GLOW)
-    xsk.addPolylineXY([xp(cbx0, cby0), xp(cbx1, cby0), xp(cbx1, cby1), xp(cbx0, cby1), xp(cbx0, cby0)], LWc, ink(UI_WHITE, 0.5))
-    xsk.addPolylineXY([xp(cbx0 - 0.2, cby1 + 0.45), xp(3.9, cby1 + 0.85)], LWc * 0.8, ink(UI_WHITE, 0.35))
+    xsk.addPolylineXY([xp(cbx0, cby0), xp(cbx1, cby0), xp(cbx1, cby1), xp(cbx0, cby1), xp(cbx0, cby0)], LWc, ink(INK, 0.5))
+    xsk.addPolylineXY([xp(cbx0 - 0.2, cby1 + 0.45), xp(3.9, cby1 + 0.85)], LWc * 0.8, ink(INK, 0.35))
     const hs0 = xp(cbx0 + 0.3, cby1)
     const hs1 = xp(cbx0 + 0.3, cby1 + 0.5)
-    xsk.addLineXY(hs0.x, hs0.y, hs1.x, hs1.y, LWc * 0.8, ink(UI_WHITE, 0.35))
+    xsk.addLineXY(hs0.x, hs0.y, hs1.x, hs1.y, LWc * 0.8, ink(INK, 0.35))
     const xStruct = this.flat(xwin, "CartridgeBody", xsk)
     this.inkBeat(xStruct.mat, 0, xPartsIn)
     const xak = this.kit(1.6)
@@ -496,10 +496,10 @@ export class RecordPlayerExplanation extends Explanation {
     const bubbleOpen = () => clamp01(bubble.getTransform().getLocalScale().x)
     // Frame: thin double rim and a faint inner glow (stays bright through beat 3).
     const fk = new MeshKit()
-    fk.addArcXY(0, 0, R, 0.2, 0, Math.PI * 2, ink(UI_WHITE, 0.85), 96)
-    fk.addArcXY(0, 0, R - 0.55, 0.1, 0, Math.PI * 2, ink(UI_WHITE, 0.4), 96)
-    fk.addFanXY(0, 0, 8, 0, Math.PI * 2, ink(UI_WHITE, 0.02), ink(UI_WHITE, 0.03), 48)
-    fk.addSoftRingXY(0, 0, 8, R - 0.6, ink(UI_WHITE, 0.03), ink(UI_WHITE, 0.1), 64)
+    fk.addArcXY(0, 0, R, 0.2, 0, Math.PI * 2, ink(INK, 0.85), 96)
+    fk.addArcXY(0, 0, R - 0.55, 0.1, 0, Math.PI * 2, ink(INK, 0.4), 96)
+    fk.addFanXY(0, 0, 8, 0, Math.PI * 2, ink(INK, 0.02), ink(INK, 0.03), 48)
+    fk.addSoftRingXY(0, 0, 8, R - 0.6, ink(INK, 0.03), ink(INK, 0.1), 64)
     const frame = this.glow(face, "BubbleFrame", fk)
     this.inkBeat(frame.mat, 2, bubbleOpen)
     // Contents at 5x: the groove (seen from above) scrolling under the stylus tip, low in the
@@ -566,7 +566,7 @@ export class RecordPlayerExplanation extends Explanation {
     this.cue(B[1] + 0.35, () => {
       // Hairline from the bubble's rim to the exact spot it magnifies.
       const leaderTo = bubbleTarget.add(bubbleTarget.sub(needle).normalize().uniformScale(-RS))
-      const lp = this.path("BubbleLeaderLine", [needle, leaderTo], hair * 0.6, ink(UI_WHITE, 0.5), hair * 1.5)
+      const lp = this.path("BubbleLeaderLine", [needle, leaderTo], hair * 0.6, ink(INK, 0.5), hair * 1.5)
       this.inkBeat(lp.mat, 2, () => clamp01((this.t - B[1] - 0.35) / 0.25) * bubbleOpen())
       this.tick((t) => {
         const k = Math.min(easeOutCubic((t - B[1] - 0.35) / 0.25), bubble.enabled ? bubbleOpen() : 0)
@@ -611,7 +611,7 @@ export class RecordPlayerExplanation extends Explanation {
     const bx1 = 4.6
     const by0 = -0.9
     const by1 = 5.0
-    const bodyInk = ink(UI_WHITE, 0.45)
+    const bodyInk = ink(INK, 0.45)
     body.addLineXY(bx0, by0, bx1, by0, 0.1, bodyInk)
     body.addLineXY(bx1, by0, bx1, by1, 0.1, bodyInk)
     body.addLineXY(bx1, by1, bx0, by1, 0.1, bodyInk)
@@ -921,9 +921,9 @@ export class CameraExplanation extends Explanation {
     })
     this.cue(B[0] + 0.15, () => ctx.log("cutaway"))
     const rk = new MeshKit()
-    rk.addArcXY(0, 0, RW, hair * 1.4, 0, Math.PI * 2, ink(UI_WHITE, 0.6), 128)
-    rk.addFanXY(0, 0, RW * 0.72, 0, Math.PI * 2, ink(UI_WHITE, 0.02), ink(UI_WHITE, 0.03), 64)
-    rk.addSoftRingXY(0, 0, RW * 0.72, RW - hair, ink(UI_WHITE, 0.03), ink(UI_WHITE, 0.09), 96)
+    rk.addArcXY(0, 0, RW, hair * 1.4, 0, Math.PI * 2, ink(INK, 0.6), 128)
+    rk.addFanXY(0, 0, RW * 0.72, 0, Math.PI * 2, ink(INK, 0.02), ink(INK, 0.03), 64)
+    rk.addSoftRingXY(0, 0, RW * 0.72, RW - hair, ink(INK, 0.03), ink(INK, 0.09), 96)
     const rim = this.flat(win, "XrayRim", rk)
     this.inkBeat(rim.mat, 0, winOpen)
 
@@ -936,7 +936,7 @@ export class CameraExplanation extends Explanation {
     const partsIn = (delay: number) => () => winOpen() * easeOutCubic((this.t - B[0] - 0.35 - delay) / 0.3)
 
     // Context (faint): lens barrel, focusing screen and pentaprism (the viewfinder path).
-    const faint = ink(UI_WHITE, 0.45)
+    const faint = ink(INK, 0.45)
     const ck = this.kit(STRUCT_GLOW)
     poly(ck, [[xMount, -barrelR], [xFront, -barrelR], [xFront, barrelR], [xMount, barrelR]], LWF, faint)
     seg(ck, xMount, -barrelR - Y(0.4), xMount, barrelR + Y(0.4), LWF, faint)
@@ -1386,9 +1386,9 @@ export class LampExplanation extends Explanation {
     })
     this.cue(B[0] + 0.15, () => ctx.log("cutaway"))
     const rk = new MeshKit()
-    rk.addArcXY(0, 0, RW, hair * 1.4, 0, Math.PI * 2, ink(UI_WHITE, 0.6), 128)
-    rk.addFanXY(0, 0, RW * 0.72, 0, Math.PI * 2, ink(UI_WHITE, 0.02), ink(UI_WHITE, 0.03), 64)
-    rk.addSoftRingXY(0, 0, RW * 0.72, RW - hair, ink(UI_WHITE, 0.03), ink(UI_WHITE, 0.09), 96)
+    rk.addArcXY(0, 0, RW, hair * 1.4, 0, Math.PI * 2, ink(INK, 0.6), 128)
+    rk.addFanXY(0, 0, RW * 0.72, 0, Math.PI * 2, ink(INK, 0.02), ink(INK, 0.03), 64)
+    rk.addSoftRingXY(0, 0, RW * 0.72, RW - hair, ink(INK, 0.03), ink(INK, 0.09), 96)
     const rim = this.flat(win, "XrayRim", rk)
     // The window frames the bulb through beat 3 (on bright paper a dimmed rim would vanish).
     this.inkBeat(rim.mat, 2, winOpen)
@@ -1398,14 +1398,14 @@ export class LampExplanation extends Explanation {
     // screw base and socket (structure, faint white), the LED board and its chip, the globe (light).
     const bulb = this.node("Bulb", new vec3(xB - winC.x, yB - winC.y, 0.01), win)
     const pl = (k: MeshKit, pts: number[][], w: number, c: vec4) => k.addPolylineXY(pts.map((p) => new vec2(p[0], p[1])), w, c)
-    const structure = ink(UI_WHITE, 0.45)
+    const structure = ink(INK, 0.45)
     const bk = this.kit(STRUCT_GLOW)
     pl(bk, [[-2.4, 0], [-1.35, -3], [1.35, -3], [2.4, 0]], LWF, structure)
     pl(bk, [[-1.35, -3], [-1.35, -5.5], [-0.6, -6.2], [0.6, -6.2], [1.35, -5.5], [1.35, -3]], LWF, structure)
-    bk.addLineXY(-1.35, -4.3, 1.35, -4.0, LWF * 0.8, ink(UI_WHITE, 0.3))
-    pl(bk, [[-1.9, -5.4], [-1.9, -10], [1.9, -10], [1.9, -5.4]], LWF, ink(UI_WHITE, 0.35))
-    bk.addLineXY(-2.4, 0, 2.4, 0, LW, ink(UI_WHITE, 0.6))
-    pl(bk, [[-0.5, 0.05], [-0.5, 0.65], [0.5, 0.65], [0.5, 0.05]], LWF, ink(UI_WHITE, 0.85))
+    bk.addLineXY(-1.35, -4.3, 1.35, -4.0, LWF * 0.8, ink(INK, 0.3))
+    pl(bk, [[-1.9, -5.4], [-1.9, -10], [1.9, -10], [1.9, -5.4]], LWF, ink(INK, 0.35))
+    bk.addLineXY(-2.4, 0, 2.4, 0, LW, ink(INK, 0.6))
+    pl(bk, [[-0.5, 0.05], [-0.5, 0.65], [0.5, 0.65], [0.5, 0.05]], LWF, ink(INK, 0.85))
     const bulbParts = this.flat(bulb, "BulbParts", bk)
     this.inkBeat(bulbParts.mat, 2, partsIn(0))
     const GC = new vec3(0, 2.6, 0)
@@ -1424,7 +1424,7 @@ export class LampExplanation extends Explanation {
     const floorY = base.y - 1.1
     const axisAt = (y: number) => new vec3(chipAt.x, y, chipAt.z)
     const cordPts = [outlet, new vec3(outlet.x, floorY, outlet.z), axisAt(floorY).add(toOutlet.uniformScale(RM)), axisAt(base.y - 0.6), axisAt(chipAt.y - 4.5)]
-    const cord = this.path("Cord", cordPts, hair * 0.6, ink(UI_WHITE, 0.45), hair * 1.6)
+    const cord = this.path("Cord", cordPts, hair * 0.6, ink(INK, 0.45), hair * 1.6)
     this.inkBeat(cord.mat, 0)
     const cordIn = () => easeInOutCubic(phase(this.t, B[0] + 0.6, B[0] + 1.5))
     this.tick(() => {
@@ -1530,9 +1530,9 @@ export class LampExplanation extends Explanation {
     const bubIn = (d: number) => () => bub.open() * easeOutCubic((this.t - B[2] - 0.2 - d) / 0.3)
     // The board and the chip on it (about 6x).
     const ck = this.kit(STRUCT_GLOW)
-    ck.addLineXY(-10.2, -3, 10.2, -3, 0.16, ink(UI_WHITE, 0.45))
-    ck.addPolylineXY([new vec2(-2.7, -3), new vec2(-2.7, -0.6), new vec2(2.7, -0.6), new vec2(2.7, -3)], 0.18, ink(UI_WHITE, 0.85))
-    ck.addRectXY(-2.6, -2.95, 2.6, -0.65, ink(UI_WHITE, 0.05))
+    ck.addLineXY(-10.2, -3, 10.2, -3, 0.16, ink(INK, 0.45))
+    ck.addPolylineXY([new vec2(-2.7, -3), new vec2(-2.7, -0.6), new vec2(2.7, -0.6), new vec2(2.7, -3)], 0.18, ink(INK, 0.85))
+    ck.addRectXY(-2.6, -2.95, 2.6, -0.65, ink(INK, 0.05))
     const chipMesh = this.glow(face, "LedChip", ck)
     this.inkBeat(chipMesh.mat, 2, bubIn(0))
     // Traces: the conductors that bring the electricity in (faint cyan), from both sides.

@@ -1,17 +1,13 @@
-import {Button} from "SpectaclesUIKit.lspkg/Scripts/Components/Button/Button"
 import Event from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import WorldCameraFinderProvider from "SpectaclesInteractionKit.lspkg/Providers/CameraProvider/WorldCameraFinderProvider"
-import {CapsuleGlow} from "./CutawayStationUI"
-import {applyType, setTextAlpha} from "./CutawayStyle"
-import {Pop} from "./CutawayTween"
+import {UiPill} from "./CutawayUiKit"
 
 /**
  * The "Reset" pill: floats low and to the left of the user (body-locked on yaw), in the lower-left
  * of the view: about 15° below and 10° left of a level gaze, so it is fully in view from the
  * default pose (§9) and clear of the middle, where the objects and their explanations are.
- * Styled like the chips: a hairline capsule of light with a faint fill and 85% white text,
- * brightening when aimed at and pressing to 97%. Built at the chips' 110 cm design scale and
- * scaled with distance, so its type and stroke match the chips exactly.
+ * A secondary pill: outline only, in the one UI language (CutawayUiKit). Built at the chips' 110 cm
+ * design scale and scaled with distance, so its type and stroke match the chips exactly.
  */
 @component
 export class CutawayResetUI extends BaseScriptComponent {
@@ -73,11 +69,7 @@ export class CutawayResetUI extends BaseScriptComponent {
   /** Fired on every pinch of the pill (world position of the pill). */
   readonly onPinch = new Event<vec3>()
 
-  private holder: SceneObject
-  private pop: Pop
-  private glow: CapsuleGlow | null = null
-  private btn: Button
-  private visualMasked = false
+  private pill: UiPill
   private camTransform: Transform | null = null
   private placed = false
   private anchorDir: vec3 = new vec3(0, 0, -1)
@@ -85,56 +77,20 @@ export class CutawayResetUI extends BaseScriptComponent {
 
   onAwake(): void {
     this.sceneObject.createComponent("Component.Canvas")
-    this.holder = global.scene.createSceneObject("ResetPop")
-    this.holder.setParent(this.sceneObject)
-    const so = global.scene.createSceneObject("ResetPill")
-    so.setParent(this.holder)
-    const btn = so.createComponent(Button.getTypeName()) as Button
-    // Ghost: no fill of its own; its visual is masked and the outline is drawn with light instead.
-    btn.setVariant({theme: "SnapOS2", shape: "Capsule", style: "Ghost"})
-    btn.size = new vec3(this.pillWidth, this.pillHeight, 1)
-    this.btn = btn
-
-    if (this.glowMaterial) {
-      this.glow = new CapsuleGlow(so, "ResetGlow", this.glowMaterial, this.pillHeight)
-      this.glow.setShape(this.pillWidth, this.pillHeight)
-      this.glow.setOpacity(1)
-    }
-
-    const labelSo = global.scene.createSceneObject("ButtonLabel")
-    labelSo.setParent(so)
-    labelSo.getTransform().setLocalPosition(new vec3(0, 0, 0.08))
-    const t = labelSo.createComponent("Component.Text") as Text
-    t.text = this.label
-    t.depthTest = true
-    applyType(t, "ui")
-    setTextAlpha(t, 1)
-    t.horizontalAlignment = HorizontalAlignment.Center
-    t.verticalAlignment = VerticalAlignment.Center
-    t.horizontalOverflow = HorizontalOverflow.Overflow
-    t.verticalOverflow = VerticalOverflow.Overflow
-    const hw = this.pillWidth / 2 - 0.3
-    t.layoutRect = Rect.create(-hw, hw, -1.2, 1.2)
-
-    this.pop = new Pop(this.holder, vec3.one(), true, {
-      onAmount: (a) => {
-        if (this.glow) this.glow.setOpacity(a)
-        setTextAlpha(t, a)
-      }
+    this.pill = new UiPill({
+      parent: this.sceneObject,
+      name: "ResetPill",
+      popName: "ResetPop",
+      glassName: "ResetGlow",
+      label: this.label,
+      width: this.pillWidth,
+      height: this.pillHeight,
+      material: this.glowMaterial,
+      kind: "outline",
+      startShown: true
     })
-    btn.onTriggerDown.add(() => {
-      this.pop.setPressed(true)
-      this.onPinch.invoke(so.getTransform().getWorldPosition())
-    })
-    btn.onTriggerUp.add(() => {
-      this.pop.setPressed(false)
-      this.onResetPressed.invoke()
-    })
-    btn.onHoverEnter.add(() => this.glow && this.glow.setHover(true))
-    btn.onHoverExit.add(() => {
-      this.pop.setPressed(false)
-      if (this.glow) this.glow.setHover(false)
-    })
+    this.pill.onPinch = (p) => this.onPinch.invoke(p)
+    this.pill.btn.onTriggerUp.add(() => this.onResetPressed.invoke())
 
     this.createEvent("OnStartEvent").bind(() => {
       this.camTransform = WorldCameraFinderProvider.getInstance().getTransform()
@@ -144,25 +100,15 @@ export class CutawayResetUI extends BaseScriptComponent {
 
   /** The pill's four world corners (layout tests). */
   getCorners(): vec3[] {
-    const m = this.btn.getSceneObject().getTransform().getWorldTransform()
+    const m = this.pill.so.getTransform().getWorldTransform()
     const w = this.pillWidth / 2
     const h = this.pillHeight / 2
     return [new vec3(-w, -h, 0), new vec3(w, -h, 0), new vec3(w, h, 0), new vec3(-w, h, 0)].map((q) => m.multiplyPoint(q))
   }
 
-  /** Masks the UIKit button's own visual once UIKit has created it. */
-  private maskVisual(): void {
-    const v = this.btn.visual
-    if (!v || !v.renderMeshVisual) return
-    v.renderMeshVisual.mainPass.colorMask = new vec4b(false, false, false, false)
-    this.visualMasked = true
-  }
-
   private onUpdate(): void {
     const dt = getDeltaTime()
-    if (!this.visualMasked) this.maskVisual()
-    this.pop.update(dt)
-    if (this.glow) this.glow.update(dt)
+    this.pill.update(dt)
     if (!this.camTransform) return
     const camPos = this.camTransform.getWorldPosition()
     const look = this.camTransform.forward.uniformScale(-1)
@@ -191,6 +137,6 @@ export class CutawayResetUI extends BaseScriptComponent {
     if (toCam.length > 1e-3) tr.setWorldRotation(quat.lookAt(toCam.normalize(), vec3.up()))
     // Same angular size as the chips: design scale at 110 cm, scaled with distance.
     const s = Math.min(6, Math.max(0.3, toCam.length / this.designDistance))
-    this.pop.setBaseScale(vec3.one().uniformScale(s))
+    this.pill.pop.setBaseScale(vec3.one().uniformScale(s))
   }
 }

@@ -1,10 +1,9 @@
-import {Button} from "SpectaclesUIKit.lspkg/Scripts/Components/Button/Button"
 import {Slider} from "SpectaclesUIKit.lspkg/Scripts/Components/Slider/Slider"
 import Event from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import WorldCameraFinderProvider from "SpectaclesInteractionKit.lspkg/Providers/CameraProvider/WorldCameraFinderProvider"
 import {MeshKit, setFade, spawnMesh, UnitLine} from "./CutawayGeometry"
-import {CapsuleGlow} from "./CutawayStationUI"
-import {applyType, FILL_ALPHA, ink, setTextAlpha, STROKE_ALPHA, UI_WHITE} from "./CutawayStyle"
+import {ALPHA, applyType, GLASS, ink, INK, setTextAlpha} from "./CutawayStyle"
+import {PillKind, UiPill} from "./CutawayUiKit"
 import {faceToward, Pop, Spring} from "./CutawayTween"
 
 export type HeroRailMode = "none" | "apart" | "viewfinder" | "light"
@@ -26,15 +25,6 @@ interface LightSlider {
   trackMat: Material
   masked: boolean
   hover: Spring
-}
-
-interface Pill {
-  pop: Pop
-  so: SceneObject
-  btn: Button
-  glow: CapsuleGlow | null
-  label: Text
-  masked: boolean
 }
 
 /**
@@ -96,8 +86,8 @@ export class CutawayHeroUI extends BaseScriptComponent {
   private panel: SceneObject
   private apart: LightSlider
   private focus: LightSlider
-  private putBack: Pill
-  private photo: Pill
+  private putBack: UiPill
+  private photo: UiPill
   private putBackX: Spring
   /** The take-apart slider's row: level with Focus until the light path, then above it. */
   private apartY: Spring
@@ -111,8 +101,8 @@ export class CutawayHeroUI extends BaseScriptComponent {
     this.apart = this.buildSlider("HeroApartSlider", this.apartLabel)
     this.focus = this.buildSlider("HeroFocusSlider", this.focusLabel)
     const pillY = -(this.rowHeight + 1.6)
-    this.putBack = this.buildPill("HeroPutBack", this.putBackLabel, 10.5)
-    this.photo = this.buildPill("HeroPhoto", this.photoLabel, 11)
+    this.putBack = this.buildPill("HeroPutBack", this.putBackLabel, 10.5, "outline")
+    this.photo = this.buildPill("HeroPhoto", this.photoLabel, 11, "primary")
     this.putBackX = new Spring(420, 0.9, 0)
     this.apartY = new Spring(420, 0.9, 0)
     this.putBack.pop.so.getTransform().setLocalPosition(new vec3(0, pillY, 0))
@@ -259,19 +249,19 @@ export class CutawayHeroUI extends BaseScriptComponent {
 
     const trackMat = this.glowMaterial.clone()
     const tk = new MeshKit()
-    tk.addRectXY(-track / 2, -0.045, track / 2, 0.045, ink(UI_WHITE, STROKE_ALPHA))
+    tk.addRectXY(-track / 2, -0.045, track / 2, 0.045, ink(INK, ALPHA.hairline))
     // End ticks so the track's range reads.
-    tk.addRectXY(-track / 2 - 0.045, -0.35, -track / 2 + 0.045, 0.35, ink(UI_WHITE, STROKE_ALPHA))
-    tk.addRectXY(track / 2 - 0.045, -0.35, track / 2 + 0.045, 0.35, ink(UI_WHITE, STROKE_ALPHA))
+    tk.addRectXY(-track / 2 - 0.045, -0.35, -track / 2 + 0.045, 0.35, ink(INK, ALPHA.hairline))
+    tk.addRectXY(track / 2 - 0.045, -0.35, track / 2 + 0.045, 0.35, ink(INK, ALPHA.hairline))
     spawnMesh(so, name + "Track", tk.build(), this.glowMaterial, new vec3(0, 0, 0.02), trackMat)
-    const fill = new UnitLine(so, name + "Fill", this.glowMaterial, 0.22, ink(UI_WHITE, 0.85), 0, trackMat)
+    const fill = new UnitLine(so, name + "Fill", this.glowMaterial, 0.22, ink(INK, 0.85), 0, trackMat)
     fill.so.getTransform().setLocalPosition(new vec3(-track / 2, 0, 0.03))
 
     const knob = this.child(so, name + "Knob")
     const kk = new MeshKit()
     const r = this.rowHeight * 0.36
-    kk.addArcXY(0, 0, r, 0.13, 0, Math.PI * 2, ink(UI_WHITE, 0.9), 40)
-    kk.addFanXY(0, 0, r - 0.07, 0, Math.PI * 2, ink(UI_WHITE, 0.16), ink(UI_WHITE, FILL_ALPHA), 40)
+    kk.addArcXY(0, 0, r, 0.13, 0, Math.PI * 2, ink(INK, 0.9), 40)
+    kk.addFanXY(0, 0, r - 0.07, 0, Math.PI * 2, ink(INK, 0.16), ink(INK, GLASS.fill), 40)
     const knobMat = this.glowMaterial.clone()
     spawnMesh(knob, name + "KnobRing", kk.build(), this.glowMaterial, new vec3(0, 0, 0.04), knobMat)
 
@@ -291,34 +281,10 @@ export class CutawayHeroUI extends BaseScriptComponent {
     return ls
   }
 
-  private buildPill(name: string, labelText: string, width: number): Pill {
-    const wrap = this.child(this.panel, name + "Pop")
-    const so = this.child(wrap, name)
-    const btn = so.createComponent(Button.getTypeName()) as Button
-    btn.setVariant({theme: "SnapOS2", shape: "Capsule", style: "Ghost"})
-    btn.size = new vec3(width, this.rowHeight, 1)
-    const glow = this.glowMaterial ? new CapsuleGlow(so, name + "Glow", this.glowMaterial, this.rowHeight) : null
-    if (glow) glow.setShape(width, this.rowHeight)
-    const hw = width / 2 - 0.3
-    const label = this.text(so, labelText, HorizontalAlignment.Center, Rect.create(-hw, hw, -1.2, 1.2))
-    const pop = new Pop(wrap, vec3.one(), false, {
-      minScale: 0.85,
-      onAmount: (a) => {
-        if (glow) glow.setOpacity(a)
-        setTextAlpha(label, a)
-      }
-    })
-    btn.onTriggerDown.add(() => {
-      pop.setPressed(true)
-      this.onPinch.invoke(so.getTransform().getWorldPosition())
-    })
-    btn.onTriggerUp.add(() => pop.setPressed(false))
-    btn.onHoverEnter.add(() => glow && glow.setHover(true))
-    btn.onHoverExit.add(() => {
-      pop.setPressed(false)
-      if (glow) glow.setHover(false)
-    })
-    return {pop, so, btn, glow, label, masked: false}
+  private buildPill(name: string, labelText: string, width: number, kind: PillKind): UiPill {
+    const pill = new UiPill({parent: this.panel, name, label: labelText, width, height: this.rowHeight, material: this.glowMaterial, kind, minScale: 0.85})
+    pill.onPinch = (p) => this.onPinch.invoke(p)
+    return pill
   }
 
   // ---------------- Frame loop ----------------
@@ -328,13 +294,6 @@ export class CutawayHeroUI extends BaseScriptComponent {
     if (vs.some((v) => !v || !v.renderMeshVisual)) return
     for (const v of vs) v.renderMeshVisual.mainPass.colorMask = new vec4b(false, false, false, false)
     s.masked = true
-  }
-
-  private maskPill(p: Pill): void {
-    const v = p.btn.visual
-    if (!v || !v.renderMeshVisual) return
-    v.renderMeshVisual.mainPass.colorMask = new vec4b(false, false, false, false)
-    p.masked = true
   }
 
   private updateSlider(s: LightSlider, dt: number): void {
@@ -357,11 +316,8 @@ export class CutawayHeroUI extends BaseScriptComponent {
     }
     this.updateSlider(this.apart, dt)
     this.updateSlider(this.focus, dt)
-    for (const p of [this.putBack, this.photo]) {
-      if (!p.masked) this.maskPill(p)
-      p.pop.update(dt)
-      if (p.glow && p.so.isEnabledInHierarchy) p.glow.update(dt)
-    }
+    this.putBack.update(dt)
+    this.photo.update(dt)
     const x = this.putBackX.update(dt)
     const ptr = this.putBack.pop.so.getTransform()
     const lp = ptr.getLocalPosition()

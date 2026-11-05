@@ -1,6 +1,6 @@
 import WorldCameraFinderProvider from "SpectaclesInteractionKit.lspkg/Providers/CameraProvider/WorldCameraFinderProvider"
 import {MeshKit, setFade, spawnMesh} from "./CutawayGeometry"
-import {applyType, ink, setTextAlpha, UI_WHITE} from "./CutawayStyle"
+import {applyType, colorTagsWithAlpha, ink, INK, setTextAlpha} from "./CutawayStyle"
 import {clamp01, easeOutCubic, Fader, faceToward} from "./CutawayTween"
 
 interface Label {
@@ -148,7 +148,7 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     c.text.enableRichText = true
     // The key word's colour tag (#RRGGBB) gets an alpha byte that follows the caption's fade, so
     // the coloured word fades in and out with the white words around it.
-    c.rich = /<color=#[0-9A-Fa-f]{6}>/.test(text) ? text.replace(/<color=(#[0-9A-Fa-f]{6})>/g, "<color=$1{A}>") : null
+    c.rich = colorTagsWithAlpha(text)
     c.richA = ""
     c.text.text = c.rich ? c.rich.split("{A}").join("00") : text
     const tr = c.so.getTransform()
@@ -304,15 +304,15 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     ltr.setWorldPosition(anchor)
     if (len > 1e-3) ltr.setWorldRotation(quat.lookAt(d.normalize(), Math.abs(d.normalize().y) > 0.95 ? vec3.forward() : vec3.up()))
     const lk = new MeshKit()
-    lk.addTube([new vec3(0, 0, 0), new vec3(0, 0, 1)], 0.05 * k, ink(UI_WHITE, 0.45), 4, 2)
+    lk.addTube([new vec3(0, 0, 0), new vec3(0, 0, 1)], 0.05 * k, ink(INK, 0.45), 4, 2)
     spawnMesh(leader, "Line", lk.build(), this.lineMaterial, undefined, mat)
     ltr.setLocalScale(new vec3(1, 1, 0.0001))
     const dot = global.scene.createSceneObject("AnchorDot")
     dot.setParent(this.sceneObject)
     dot.getTransform().setWorldPosition(anchor)
     const dk = new MeshKit()
-    dk.addSphere(vec3.zero(), 0.12 * k, ink(UI_WHITE, 0.9), 6, 10)
-    dk.addSphere(vec3.zero(), 0.3 * k, ink(UI_WHITE, 0.15), 6, 10)
+    dk.addSphere(vec3.zero(), 0.12 * k, ink(INK, 0.9), 6, 10)
+    dk.addSphere(vec3.zero(), 0.3 * k, ink(INK, 0.15), 6, 10)
     spawnMesh(dot, "Dot", dk.build(), this.lineMaterial, undefined, mat)
     label.leader = leader
     label.dot = dot

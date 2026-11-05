@@ -2,10 +2,9 @@ import {Button} from "SpectaclesUIKit.lspkg/Scripts/Components/Button/Button"
 import Event from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import WorldCameraFinderProvider from "SpectaclesInteractionKit.lspkg/Providers/CameraProvider/WorldCameraFinderProvider"
 import {MeshKit, setFade, spawnMesh} from "./CutawayGeometry"
-import {applyType, FILL_ALPHA, ink, setTextAlpha, STROKE_ALPHA, TextRole, UI_WHITE} from "./CutawayStyle"
+import {ink, INK, NO_LIGHT} from "./CutawayStyle"
+import {PillKind, UiPill} from "./CutawayUiKit"
 import {clamp01, easeInOutCubic, easeOutCubic, Fader, faceToward, Pop, Spring} from "./CutawayTween"
-
-const BUTTON_LABEL_Z = 0.08
 
 export interface StationVisual {
   idleDot: boolean
@@ -16,89 +15,18 @@ export interface StationVisual {
   closer: boolean
 }
 
-/**
- * A capsule drawn with light: a hairline outline plus a faint fill. Its width changes by moving
- * the two end caps and scaling the straight middle, so only transforms animate. Shared by the
- * chips, questions, Stop and the Reset pill so every pill reads the same.
- */
-export class CapsuleGlow {
-  readonly root: SceneObject
-  readonly mat: Material
-  private left: SceneObject
-  private right: SceneObject
-  private mid: SceneObject
-  private opacity = 1
-  private hover = 1
-  private hoverTarget = 1
-
-  constructor(
-    parent: SceneObject,
-    name: string,
-    material: Material,
-    private height: number
-  ) {
-    this.root = global.scene.createSceneObject(name)
-    this.root.setParent(parent)
-    this.root.getTransform().setLocalPosition(new vec3(0, 0, 0.02))
-    this.mat = material.clone()
-    const r = height / 2
-    const stroke = 0.09
-    const line = ink(UI_WHITE, STROKE_ALPHA)
-    const fill = ink(UI_WHITE, FILL_ALPHA)
-    const cap = (sign: number) => {
-      const k = new MeshKit()
-      const a0 = sign < 0 ? Math.PI / 2 : -Math.PI / 2
-      k.addArcXY(0, 0, r - stroke / 2, stroke, a0, a0 + Math.PI, line, 20)
-      k.addFanXY(0, 0, r - stroke, a0, a0 + Math.PI, fill, fill, 20)
-      return k
-    }
-    this.left = spawnMesh(this.root, "CapL", cap(-1).build(), material, undefined, this.mat).so
-    this.right = spawnMesh(this.root, "CapR", cap(1).build(), material, undefined, this.mat).so
-    const m = new MeshKit()
-    m.addRectXY(-0.5, r - stroke, 0.5, r, line)
-    m.addRectXY(-0.5, -r, 0.5, -r + stroke, line)
-    m.addRectXY(-0.5, -r + stroke, 0.5, r - stroke, fill)
-    this.mid = spawnMesh(this.root, "Mid", m.build(), material, undefined, this.mat).so
-  }
-
-  /** Current outer width and height (design cm). */
-  setShape(w: number, h: number): void {
-    const s = Math.max(1e-4, h / this.height)
-    const straight = Math.max(0, w - h) / s
-    this.root.getTransform().setLocalScale(new vec3(s, s, 1))
-    this.left.getTransform().setLocalPosition(new vec3(-straight / 2, 0, 0))
-    this.right.getTransform().setLocalPosition(new vec3(straight / 2, 0, 0))
-    this.mid.getTransform().setLocalScale(new vec3(Math.max(1e-4, straight), 1, 1))
-  }
-
-  setOpacity(a: number): void {
-    this.opacity = a
-  }
-
-  /** Aimed at: strokes brighten from 50% to ~80%. */
-  setHover(h: boolean): void {
-    this.hoverTarget = h ? 1.6 : 1
-  }
-
-  update(dt: number): void {
-    this.hover += (this.hoverTarget - this.hover) * (1 - Math.exp(-dt / 0.06))
-    setFade(this.mat, this.opacity * this.hover)
-  }
-}
-
 interface Piece {
   pop: Pop
   so: SceneObject
-  btn?: Button
-  glow?: CapsuleGlow
-  label?: Text
+  btn: Button
+  pill?: UiPill
 }
 
 /**
  * The UI for one explained object: idle dot, name chip, questions, Stop pill, the scan and the
  * "explained" dot. Pure view: CutawayMain decides what is shown and listens to the events.
  * The panel is built at the 110 cm design scale and scaled with distance so it reads the same
- * from ~3–5 m. Everything is drawn with light (additive): outlines, never filled panels.
+ * from ~3–5 m. Everything is drawn with light (additive): glass, never dark panels.
  */
 @component
 export class CutawayStationUI extends BaseScriptComponent {
@@ -202,7 +130,7 @@ export class CutawayStationUI extends BaseScriptComponent {
 
   private panel: SceneObject
   private stopAnchor: SceneObject
-  private idleDot: Piece
+  private idleDot: {pop: Pop; so: SceneObject}
   private idleMat: Material
   private idleMesh: SceneObject
   private explainedDot: Piece
@@ -216,8 +144,8 @@ export class CutawayStationUI extends BaseScriptComponent {
   private questionSlots: vec3[] = []
   private stop: Piece
   private closer: Piece | null = null
-  private pieces: Piece[] = []
-  private pendingVisuals: Button[] = []
+  private pieces: {pop: Pop; so: SceneObject; pill?: UiPill}[] = []
+  private dotVisualMasked = false
   private camTransform: Transform | null = null
   private firstFrame = true
   private uiScale = 1
@@ -246,24 +174,22 @@ export class CutawayStationUI extends BaseScriptComponent {
     this.breathT = Math.random() * 2.5
 
     this.idleDot = this.buildIdleDot()
-    this.chip = this.buildButton(this.panel, this.namePrefix + "Chip", new vec3(this.chipWidth, this.rowHeight, 1), "Capsule", this.objectName, "ui", 1)
+    this.chip = this.buildPill(this.panel, this.namePrefix + "Chip", this.chipWidth, this.rowHeight, this.objectName, "glass", 1)
     this.chip.pop.so.getTransform().setLocalPosition(new vec3(0, this.chipLift, 0))
     const qs = (this.questions ?? []).filter((q) => q && q.trim().length > 0).slice(0, 3)
     for (let i = 0; i < qs.length; i++) {
-      const p = this.buildButton(this.panel, this.namePrefix + "Q" + i, new vec3(this.questionWidth, this.rowHeight, 1), "Capsule", qs[i], "ui", 0.85)
+      const p = this.buildPill(this.panel, this.namePrefix + "Q" + i, this.questionWidth, this.rowHeight, qs[i], "glass", 0.85)
       const y = this.chipLift + this.rowHeight / 2 + this.rowGap + this.rowHeight / 2 + i * (this.rowHeight + this.rowGap)
       const slot = new vec3(0, y, 0)
       p.pop.so.getTransform().setLocalPosition(slot)
       this.questionSlots.push(slot)
       this.questionPieces.push(p)
     }
-    const dotSize = this.rowHeight * 0.85
-    this.explainedDot = this.buildButton(this.panel, this.namePrefix + "Dot", new vec3(dotSize, dotSize, 1), "Round", null, "ui", 0.5)
-    this.buildExplainedDotVisual()
-    this.stop = this.buildButton(this.stopAnchor, this.namePrefix + "Stop", new vec3(6.5, this.rowHeight * 0.8, 1), "Capsule", this.stopLabel, "ui", 0.85)
-    // Same style as Stop, in the same spot under the object (the two never show together).
+    this.explainedDot = this.buildExplainedDot()
+    this.stop = this.buildPill(this.stopAnchor, this.namePrefix + "Stop", 6.5, this.rowHeight * 0.8, this.stopLabel, "outline", 0.85)
+    // In the same spot as Stop, under the object (the two never show together). The primary action.
     if (this.closerLabel && this.closerLabel.trim().length > 0) {
-      this.closer = this.buildButton(this.stopAnchor, this.namePrefix + "Closer", new vec3(this.closerWidth, this.rowHeight * 0.8, 1), "Capsule", this.closerLabel, "ui", 0.85)
+      this.closer = this.buildPill(this.stopAnchor, this.namePrefix + "Closer", this.closerWidth, this.rowHeight * 0.8, this.closerLabel, "primary", 0.85)
       this.closer.btn.onTriggerUp.add(() => {
         if (this.closer.pop.isShown) this.onCloserPressed.invoke()
       })
@@ -434,11 +360,11 @@ export class CutawayStationUI extends BaseScriptComponent {
 
   /** Soft white dot: bright core fading to its edge, plus a faint halo. */
   private softDot(kit: MeshKit, r: number, k: number): void {
-    kit.addFanXY(0, 0, r, 0, Math.PI * 2, ink(UI_WHITE, k), ink(UI_WHITE, k * 0.55), 32)
-    kit.addSoftRingXY(0, 0, r, r * 2.4, ink(UI_WHITE, k * 0.55 * 0.35), new vec4(0, 0, 0, 0), 32)
+    kit.addFanXY(0, 0, r, 0, Math.PI * 2, ink(INK, k), ink(INK, k * 0.55), 32)
+    kit.addSoftRingXY(0, 0, r, r * 2.4, ink(INK, k * 0.55 * 0.35), NO_LIGHT, 32)
   }
 
-  private buildIdleDot(): Piece {
+  private buildIdleDot(): {pop: Pop; so: SceneObject} {
     const wrap = this.child(this.panel, this.namePrefix + "IdleDot")
     this.idleMesh = this.child(wrap, "IdleDotMesh")
     if (this.dotMaterial) {
@@ -453,14 +379,34 @@ export class CutawayStationUI extends BaseScriptComponent {
     return piece
   }
 
-  private buildExplainedDotVisual(): void {
-    if (!this.dotMaterial) return
-    this.dotMat = this.dotMaterial.clone()
-    const kit = new MeshKit()
-    this.softDot(kit, 0.55, 1)
-    spawnMesh(this.explainedDot.pop.so, "DotGlow", kit.build(), this.dotMaterial, new vec3(0, 0, 0.02), this.dotMat)
-    this.explainedDot.btn.onHoverEnter.add(() => (this.dotHoverTarget = 1.6))
-    this.explainedDot.btn.onHoverExit.add(() => (this.dotHoverTarget = 1))
+  /** The explained dot: a round UI Kit button whose visual is masked and drawn with light. */
+  private buildExplainedDot(): Piece {
+    const dotSize = this.rowHeight * 0.85
+    const wrap = this.child(this.panel, this.namePrefix + "DotPop")
+    const so = this.child(wrap, this.namePrefix + "Dot")
+    const btn = so.createComponent(Button.getTypeName()) as Button
+    btn.setVariant({theme: "SnapOS2", shape: "Round", style: "Ghost"})
+    btn.size = new vec3(dotSize, dotSize, 1)
+    const pop = new Pop(wrap, vec3.one(), false, {minScale: 0.5})
+    btn.onTriggerDown.add(() => {
+      pop.setPressed(true)
+      this.onPinch.invoke(so.getTransform().getWorldPosition())
+    })
+    btn.onTriggerUp.add(() => pop.setPressed(false))
+    btn.onHoverEnter.add(() => (this.dotHoverTarget = 1.6))
+    btn.onHoverExit.add(() => {
+      pop.setPressed(false)
+      this.dotHoverTarget = 1
+    })
+    if (this.dotMaterial) {
+      this.dotMat = this.dotMaterial.clone()
+      const kit = new MeshKit()
+      this.softDot(kit, 0.55, 1)
+      spawnMesh(so, "DotGlow", kit.build(), this.dotMaterial, new vec3(0, 0, 0.02), this.dotMat)
+    }
+    const piece: Piece = {pop, so, btn}
+    this.pieces.push(piece)
+    return piece
   }
 
   private buildFlash(): void {
@@ -468,69 +414,26 @@ export class CutawayStationUI extends BaseScriptComponent {
     this.flash.getTransform().setLocalPosition(new vec3(0, 0, 0.05))
     if (this.dotMaterial) {
       const kit = new MeshKit()
-      kit.addFanXY(0, 0, 1.4, 0, Math.PI * 2, ink(UI_WHITE, 0.9), new vec4(0, 0, 0, 0), 40)
+      kit.addFanXY(0, 0, 1.4, 0, Math.PI * 2, ink(INK, 0.9), NO_LIGHT, 40)
       this.flashMat = spawnMesh(this.flash, "FlashMesh", kit.build(), this.dotMaterial).mat
     }
     this.flash.enabled = false
   }
 
-  private buildButton(parent: SceneObject, name: string, size: vec3, shape: string, label: string | null, role: TextRole, minScale: number): Piece {
-    const wrap = this.child(parent, name + "Pop")
-    const so = this.child(wrap, name)
-    const btn = so.createComponent(Button.getTypeName()) as Button
-    // Ghost: no fill; its own visual is masked below, the outline is drawn with light instead.
-    btn.setVariant({theme: "SnapOS2", shape, style: "Ghost"})
-    btn.size = size
-    this.pendingVisuals.push(btn)
-    const text = label ? this.addButtonLabel(so, label, size.x - 0.6, role) : undefined
-    const glow = label && this.dotMaterial ? new CapsuleGlow(so, name + "Glow", this.dotMaterial, size.y) : undefined
-    if (glow) glow.setShape(size.x, size.y)
-    const pop = new Pop(wrap, vec3.one(), false, {
-      minScale,
-      onAmount: (a) => {
-        if (glow) glow.setOpacity(a)
-        if (text) setTextAlpha(text, a)
-      }
-    })
-    btn.onTriggerDown.add(() => {
-      pop.setPressed(true)
-      this.onPinch.invoke(so.getTransform().getWorldPosition())
-    })
-    btn.onTriggerUp.add(() => pop.setPressed(false))
-    btn.onHoverEnter.add(() => glow && glow.setHover(true))
-    btn.onHoverExit.add(() => {
-      pop.setPressed(false)
-      if (glow) glow.setHover(false)
-    })
-    const piece: Piece = {pop, so, btn, glow, label: text}
+  private buildPill(parent: SceneObject, name: string, width: number, height: number, label: string, kind: PillKind, minScale: number): Piece {
+    const pill = new UiPill({parent, name, label, width, height, material: this.dotMaterial, kind, minScale})
+    pill.onPinch = (p) => this.onPinch.invoke(p)
+    const piece: Piece = {pop: pill.pop, so: pill.so, btn: pill.btn, pill}
     this.pieces.push(piece)
     return piece
   }
 
-  private addButtonLabel(parent: SceneObject, text: string, widthCM: number, role: TextRole): Text {
-    const so = this.child(parent, "ButtonLabel")
-    so.getTransform().setLocalPosition(new vec3(0, 0, BUTTON_LABEL_Z))
-    const t = so.createComponent("Component.Text") as Text
-    t.text = text
-    t.depthTest = true
-    applyType(t, role)
-    setTextAlpha(t, 0)
-    t.horizontalAlignment = HorizontalAlignment.Center
-    t.verticalAlignment = VerticalAlignment.Center
-    t.horizontalOverflow = HorizontalOverflow.Overflow
-    t.verticalOverflow = VerticalOverflow.Overflow
-    t.layoutRect = Rect.create(-widthCM / 2, widthCM / 2, -1.2, 1.2)
-    return t
-  }
-
-  /** Masks the UIKit button's own visual (retried until UIKit has created it). */
-  private hidePendingVisuals(): void {
-    this.pendingVisuals = this.pendingVisuals.filter((btn) => {
-      const v = btn.visual
-      if (!v || !v.renderMeshVisual) return true
-      v.renderMeshVisual.mainPass.colorMask = new vec4b(false, false, false, false)
-      return false
-    })
+  /** Masks the explained dot's UI Kit visual (retried until UI Kit has created it). */
+  private maskDotVisual(): void {
+    const v = this.explainedDot.btn.visual
+    if (!v || !v.renderMeshVisual) return
+    v.renderMeshVisual.mainPass.colorMask = new vec4b(false, false, false, false)
+    this.dotVisualMasked = true
   }
 
   // ---------------- Scan ----------------
@@ -570,18 +473,17 @@ export class CutawayStationUI extends BaseScriptComponent {
     const hh = this.scanHH
     // Sweep: a thin line with a soft trail above it (it moves down).
     const s = new MeshKit()
-    s.addLineXY(-hw, 0, hw, 0, lw, ink(UI_WHITE, 0.9), lw * 2.5)
+    s.addLineXY(-hw, 0, hw, 0, lw, ink(INK, 0.9), lw * 2.5)
     const trail = Math.min(hh * 0.5, 8 * lw)
-    const zero = new vec4(0, 0, 0, 0)
-    const tc = ink(UI_WHITE, 0.14)
-    s.addRectXY(-hw, lw / 2, hw, lw / 2 + trail, tc, tc, zero, zero)
+    const tc = ink(INK, 0.14)
+    s.addRectXY(-hw, lw / 2, hw, lw / 2 + trail, tc, tc, NO_LIGHT, NO_LIGHT)
     this.sweep.mesh = s.build()
     // Corner brackets: arms run inward from each corner.
     const arm = Math.min(hw, hh) * 0.3
     for (const br of this.brackets) {
       const k = new MeshKit()
-      k.addLineXY(0, 0, -br.sx * arm, 0, lw, ink(UI_WHITE, 0.85), lw * 1.5)
-      k.addLineXY(0, -br.sy * lw * 0.5, 0, -br.sy * arm, lw, ink(UI_WHITE, 0.85), lw * 1.5)
+      k.addLineXY(0, 0, -br.sx * arm, 0, lw, ink(INK, 0.85), lw * 1.5)
+      k.addLineXY(0, -br.sy * lw * 0.5, 0, -br.sy * arm, lw, ink(INK, 0.85), lw * 1.5)
       br.rmv.mesh = k.build()
     }
     this.scanT = 0
@@ -649,12 +551,12 @@ export class CutawayStationUI extends BaseScriptComponent {
       this.firstFrame = false
       for (const p of this.pieces) if (!p.pop.isShown) p.pop.show(false, true)
     }
-    if (this.pendingVisuals.length > 0) this.hidePendingVisuals()
+    if (!this.dotVisualMasked) this.maskDotVisual()
     const dt = getDeltaTime()
     for (const p of this.pieces) p.pop.update(dt)
     this.updateChip(dt)
     this.updateQuestions()
-    for (const p of this.pieces) if (p.glow && p.so.isEnabledInHierarchy) p.glow.update(dt)
+    for (const p of this.pieces) if (p.pill) p.pill.updateLook(dt)
     this.updateDots(dt)
     this.updateScan(dt)
     this.updateScale()
@@ -679,9 +581,8 @@ export class CutawayStationUI extends BaseScriptComponent {
     const d = this.idleDotRadius * 2
     const h = d + (this.rowHeight - d) * easeOutCubic(clamp01(p / 0.45))
     const w = Math.max(h, d + (this.chipWidth - d) * p)
-    c.glow.setShape(w, h)
-    c.glow.setOpacity(Math.min(1, p * 3) * (c.pop.isShown ? 1 : a))
-    setTextAlpha(c.label, textA)
+    c.pill.glass.setShape(w, h)
+    c.pill.setOpacities(Math.min(1, p * 3) * (c.pop.isShown ? 1 : a), textA)
   }
 
   /** Questions travel out from the dot to their slots as they fade in (fade only on the way out). */
