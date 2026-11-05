@@ -134,6 +134,10 @@ export class LampRail {
     if (t.text !== text) t.text = text
   }
 
+  getLabel(k: LampSliderKey): string {
+    return this.sliders[k].label.text
+  }
+
   isDragging(): boolean {
     return (Object.keys(this.sliders) as LampSliderKey[]).some((k) => (this.sliders[k].slider as unknown as {_isDragged?: boolean})._isDragged === true)
   }

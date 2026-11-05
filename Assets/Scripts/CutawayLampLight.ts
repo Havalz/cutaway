@@ -96,6 +96,13 @@ export function coatingShare(T: number): number {
   return 0.55 + 0.3 * kelvinToWarmth(T)
 }
 
+/** The colour the coating turns the blue into at T: yellow, shifting toward amber (the red phosphor) as it warms. */
+export function coatingColor(T: number): vec3 {
+  const w = 0.55 * kelvinToWarmth(T)
+  const y = new vec3(COAT_YELLOW.x, COAT_YELLOW.y, COAT_YELLOW.z)
+  return y.add(COAT_AMBER.sub(y).uniformScale(w))
+}
+
 /**
  * How brightly the paper glows at model height y, relative to the brightest (level with the bulb's
  * centre): light from the bulb falls off with distance, so the glow fades with height up the shade
@@ -160,6 +167,8 @@ const RAY_LEN = 12
 const SIGNAL = ENERGY.signal
 const CHIP_BLUE = new vec4(0.25, 0.5, 1, 1)
 const COAT_YELLOW = new vec4(1, 0.82, 0.22, 1)
+/** Warm LEDs add a red phosphor: the converted light shifts from yellow toward amber as the coating grows. */
+const COAT_AMBER = new vec3(1, 0.6, 0.16)
 const ZERO = new vec4(0, 0, 0, 0)
 /** Render after every part of the copy (its draw orders run 0–15), so the paper's depth hides the glow's far side. */
 const ORDER = 20
@@ -209,19 +218,23 @@ export interface LampLightInfo {
   pathStart: vec3 | null
   pathEnd: vec3 | null
   pathLength: number
-  /** Packets on the path now (world centres) and their peak strength. */
+  /** Packets on the path now (world centres) and their peak strength; their spacing (cm) and how many pass a point each second. */
   packets: vec3[]
   pulseLevel: number
+  pulseSpacing: number
+  pulseRate: number
   /** The LED's level (× Brightness). */
   led: number
   bubbleOpen: number
   /** The chip in the bubble: shown, and the colour it is drawn in. */
   chipShown: boolean
   chipColor: vec3
-  /** Photons in flight in the bubble, by colour, and the coating's share. */
+  /** Photons in flight in the bubble, by colour, and the coating's share and colour; the bubble's white light colour. */
   photonsBlue: number
   photonsYellow: number
   coatingShare: number
+  coatColor: vec3
+  bubbleColor: vec3
   /** The shade's glow (× Brightness) and its profile: level with the bulb, at the top, at the bottom ring. */
   shadeGlow: number
   shadeProfile: {bulb: number; top: number; bottom: number}
@@ -235,10 +248,12 @@ export interface LampLightInfo {
   bulbPoint: number
   /** The shade glow's drawn colour (its material colour over its level). */
   miniColor: vec3
-  /** The pool on the table: level, radius (cm) and edge width (fraction of the radius). */
+  /** The pool on the table: level, radius (cm) and edge width (fraction of the radius); its drawn colour. */
   tablePool: {level: number; radius: number; edge: number}
-  /** The thread to the real lamp. */
+  poolColor: vec3
+  /** The thread to the real lamp: how far it has come, how strongly it is drawn. */
   threadFront: number
+  threadLevel: number
   threadStart: vec3 | null
   threadEnd: vec3 | null
   threadReached: boolean
@@ -246,6 +261,7 @@ export interface LampLightInfo {
   realGlow: number
   realColor: vec3
   floorPool: number
+  floorColor: vec3
 }
 
 // =====================================================================================
@@ -721,6 +737,8 @@ class LedBubble {
   blue = 0
   yellowN = 0
   chipShown = false
+  /** The converted light's colour now (yellow, warmer toward amber). */
+  coatColor = new vec3(COAT_YELLOW.x, COAT_YELLOW.y, COAT_YELLOW.z)
 
   constructor(
     parent: SceneObject,
@@ -779,7 +797,8 @@ class LedBubble {
    * colour; `side` = the user's right (+1) or left (−1) of the copy; `shadeR` the shade's radius
    * there (world).
    */
-  update(dt: number, open: number, led: number, b: number, share: number, color: vec3, ledW: vec3, cam: vec3, side: number, shadeR: number): void {
+  update(dt: number, open: number, led: number, b: number, share: number, coat: vec3, color: vec3, ledW: vec3, cam: vec3, side: number, shadeR: number): void {
+    this.coatColor = coat
     const up = vec3.up()
     const flat = new vec3(cam.x - ledW.x, 0, cam.z - ledW.z)
     const toUser = flat.length > 1e-4 ? flat.normalize() : vec3.forward()
@@ -796,7 +815,7 @@ class LedBubble {
     this.chipShown = open > 0.5
     // The coating reads more yellow (fuller) as more of the blue is converted.
     const coatK = open * (0.35 + 0.65 * led) * (0.4 + 0.6 * clamp01((share - 0.5) / 0.4))
-    tint(this.coatMat, new vec3(COAT_YELLOW.x, COAT_YELLOW.y, COAT_YELLOW.z), coatK)
+    tint(this.coatMat, coat, coatK)
     tint(this.whiteMat, color, lit)
     setFade(this.cloud.mat, open)
     // Photons: blue from the chip; at the coating each turns yellow with the coating's share.
@@ -825,7 +844,7 @@ class LedBubble {
       if (yellow) this.yellowN++
       else this.blue++
       const a = clamp01(p.age / 0.08) * clamp01((PHOTON_MAX_R - r) / 1.5)
-      const c = yellow ? COAT_YELLOW : CHIP_BLUE
+      const c = yellow ? coat : new vec3(CHIP_BLUE.x, CHIP_BLUE.y, CHIP_BLUE.z)
       return {x: p.x, y: p.y, dx: p.dx, dy: p.dy, len: 1.3, w: 0.3, c: new vec4(c.x * a, c.y * a, c.z * a, a)}
     })
     this.cloud.update(items)
@@ -842,6 +861,11 @@ class LedBubble {
 
   get count(): number {
     return this.photons.length
+  }
+
+  /** The colour of the white light leaving the coating (the lamp's colour). */
+  whiteColor(): vec3 {
+    return tintOf(this.whiteMat)
   }
 
   /** The bubble's centre and rim radius now (world). */
@@ -1167,7 +1191,7 @@ export class LampLight {
     if (this.bubble) {
       const ledW = this.ctx.model.ledCenter()
       const yLed = G.ledY
-      this.bubble.update(this.phase === "fading" ? 0 : dt, open, ledRamp, b, share, color, ledW, cam, this.ctx.bubbleSide(), lampShadeR(yLed) * S)
+      this.bubble.update(this.phase === "fading" ? 0 : dt, open, ledRamp, b, share, coatingColor(p.kelvin), color, ledW, cam, this.ctx.bubbleSide(), lampShadeR(yLed) * S)
     }
     if (lit && !this.captionGlow && this.t - this.tBulb >= CAPTION_GLOW_AFTER && this.phase === "lit") {
       this.captionGlow = true
@@ -1259,6 +1283,8 @@ export class LampLight {
       pathLength: L,
       packets,
       pulseLevel,
+      pulseSpacing: spacing,
+      pulseRate: vPkt / spacing,
       led,
       bubbleOpen: open,
       chipShown: !!this.bubble && this.bubble.chipShown,
@@ -1266,6 +1292,8 @@ export class LampLight {
       photonsBlue: this.bubble ? this.bubble.blue : 0,
       photonsYellow: this.bubble ? this.bubble.yellowN : 0,
       coatingShare: share,
+      coatColor: this.bubble ? this.bubble.coatColor : coatingColor(p.kelvin),
+      bubbleColor: this.bubble ? this.bubble.whiteColor() : vec3.zero(),
       shadeGlow: shade,
       shadeProfile: {
         bulb: shadeGlowLifted(Math.max(G.paperY0, Math.min(G.paperY1, G.bulbCenterY - liftM)), liftM),
@@ -1279,13 +1307,16 @@ export class LampLight {
       bulbPoint: point,
       miniColor: tintOf(this.shadeMat),
       tablePool: {level: poolLevel, radius: poolR, edge: poolEdge},
+      poolColor: tintOf(this.tablePool ? this.tablePool.mat : null),
       threadFront: Lt > 0 ? tf / Lt : 0,
+      threadLevel: env * vis,
       threadStart: this.threadPts.length ? this.threadPts[0] : null,
       threadEnd: this.threadPts.length ? this.threadPts[this.threadPts.length - 1] : null,
       threadReached: this.tReal >= 0,
       realGlow: real,
       realColor: tintOf(this.realMat),
-      floorPool: real
+      floorPool: real,
+      floorColor: tintOf(this.floorPool ? this.floorPool.mat : null)
     }
   }
 
@@ -1342,6 +1373,8 @@ export class LampLight {
       pathLength: 0,
       packets: [],
       pulseLevel: 0,
+      pulseSpacing: 0,
+      pulseRate: 0,
       led: 0,
       bubbleOpen: 0,
       chipShown: false,
@@ -1349,6 +1382,8 @@ export class LampLight {
       photonsBlue: 0,
       photonsYellow: 0,
       coatingShare: coatingShare(LAMP_K_DEFAULT),
+      coatColor: coatingColor(LAMP_K_DEFAULT),
+      bubbleColor: vec3.zero(),
       shadeGlow: 0,
       shadeProfile: {bulb: 1, top: shadeGlowAt(G.paperY1), bottom: shadeGlowAt(G.paperY0)},
       shadePeak: 1,
@@ -1358,13 +1393,16 @@ export class LampLight {
       bulbPoint: 0,
       miniColor: vec3.zero(),
       tablePool: {level: 0, radius: POOL_R, edge: 0.9},
+      poolColor: vec3.zero(),
       threadFront: 0,
+      threadLevel: 0,
       threadStart: null,
       threadEnd: null,
       threadReached: false,
       realGlow: 0,
       realColor: vec3.zero(),
-      floorPool: 0
+      floorPool: 0,
+      floorColor: vec3.zero()
     }
   }
 }

@@ -121,7 +121,8 @@ export const LAMP_CAPTIONS = {
   flow: "Electric energy flows up the cord.",
   chip: "The chip glows blue. A coating turns it white.",
   glow: "The paper scatters it into a soft glow.",
-  harsh: "Without the paper, all the light comes from one tiny point. That's harsh light."
+  harsh: "Without the paper, all the light comes from one tiny point. That's harsh light.",
+  warm: "More coating, warmer light."
 }
 /**
  * Half the width of the widest caption, in caption design units: centred text runs about 0.34
@@ -140,6 +141,8 @@ const GLASS_GLOW = 1.7
 const SHADE_LEFT_CM = 0.5
 /** Released, the shade is lowered back onto its seat over this long (from the full 25 cm; less from lower). */
 const SHADE_SETTLE_S = 0.34
+/** A caption the user brought up (Warmth's) stays this long before the light's next one replaces it (s). */
+const USER_CAPTION_HOLD = 3
 
 interface Look {
   rmv: RenderMeshVisual
@@ -277,6 +280,10 @@ export class LampHero {
   /** The "harsh light" caption is up (the shade lifted past RAYS_FROM); the light's own last caption. */
   private harsh = false
   private lightCaption: string | null = null
+  /** The light asked for a caption while another was held; the Warmth caption is shown once per landing. */
+  private pendingLight = false
+  private captionHoldUntil = -1
+  private warmCaptionDone = false
 
   constructor(private ctx: LampContext) {
     ctx.rail.onChange = (k, v) => this.onSlider(k, v)
@@ -376,6 +383,9 @@ export class LampHero {
     this.shadeReleasedAt = -1
     this.harsh = false
     this.lightCaption = null
+    this.pendingLight = false
+    this.captionHoldUntil = -1
+    this.warmCaptionDone = false
     this.sEff = 0
     this.retWaiting = false
     this.railSide = 1
@@ -585,8 +595,10 @@ export class LampHero {
       caption: (stage) => {
         if (this.state !== "landed") return
         this.lightCaption = stage === 1 ? LAMP_CAPTIONS.flow : stage === 2 ? LAMP_CAPTIONS.chip : LAMP_CAPTIONS.glow
-        // While the shade is off, the harsh-light caption stays; the light's own comes back with the shade.
-        if (!this.harsh) this.showCaption(this.lightCaption)
+        // While the shade is off the harsh-light caption stays (the light's own comes back with the
+        // shade), and the Warmth caption is held a moment before the story moves on.
+        if (this.harsh || this.t < this.captionHoldUntil) this.pendingLight = true
+        else this.showCaption(this.lightCaption)
       }
     })
   }
@@ -970,7 +982,11 @@ export class LampHero {
       this.ctx.log("lamp:harsh")
     } else if (this.harsh && (!on || k < 0.05)) {
       this.harsh = false
+      this.pendingLight = false
       if (on) this.showCaption(this.lightCaption ?? LAMP_CAPTIONS.glow)
+    } else if (this.pendingLight && on && !this.harsh && this.t >= this.captionHoldUntil) {
+      this.pendingLight = false
+      if (this.lightCaption) this.showCaption(this.lightCaption)
     }
   }
 
@@ -981,7 +997,15 @@ export class LampHero {
 
   /** A slider moved: everything it drives, in the same frame. */
   private onSlider(k: LampSliderKey, v: number): void {
-    if (k === "warmth") this.ctx.rail.setLabel("warmth", "Warmth  " + Math.round(warmthToKelvin(v)) + " K")
+    if (k !== "warmth") return
+    this.ctx.rail.setLabel("warmth", "Warmth  " + Math.round(warmthToKelvin(v)) + " K")
+    // The first time Warmth moves (the lamp on): what the slider changes inside the LED.
+    if (!this.warmCaptionDone && this.state === "landed" && this.lightOn) {
+      this.warmCaptionDone = true
+      this.captionHoldUntil = this.t + USER_CAPTION_HOLD
+      this.showCaption(LAMP_CAPTIONS.warm)
+      this.ctx.log("lamp:warmCaption")
+    }
   }
 
   /** What the light follows each frame: the rail's Brightness and Warmth, the shade's lift (0..1). */
@@ -1194,6 +1218,8 @@ export class LampHero {
       this.ctx.log("lamp:on")
     } else {
       this.light.turnOff()
+      this.pendingLight = false
+      this.captionHoldUntil = -1
       this.ctx.rail.setMode("rest")
       this.showCaption(LAMP_CAPTIONS.press)
       this.ctx.log("lamp:off")
