@@ -12,6 +12,9 @@ import {RpTone} from "./CutawayRpTone"
 import {RecordPlayerHero, RpSound} from "./CutawayRpHero"
 import {RpRail, RpRailVisual} from "./CutawayRpRail"
 import {RP_GEOM} from "./CutawayRecordPlayerModel"
+import {LampHero, LampSound} from "./CutawayLampHero"
+import {LampRail, LampRailVisual} from "./CutawayLampRail"
+import {ROOM_LAMP} from "./CutawayLampModel"
 
 export type StationKey = "recordPlayer" | "camera" | "lamp"
 export type StationState = "idle" | "chip" | "questions" | "playing" | "explained"
@@ -308,6 +311,8 @@ export class CutawayMain extends BaseScriptComponent {
   private rpHero: RecordPlayerHero | null = null
   private rpRail: RpRail | null = null
   private rpTone: RpTone | null = null
+  private lampHero: LampHero | null = null
+  private lampRail: LampRail | null = null
 
   onAwake(): void {
     this.stations = [
@@ -344,6 +349,7 @@ export class CutawayMain extends BaseScriptComponent {
     this.resetUI.onPinch.add((p) => this.playAt("tick", this.tickAudio, p))
     this.setupHero()
     this.setupRpHero()
+    this.setupLampHero()
     print("Cutaway ready: 3 stations")
   }
 
@@ -432,6 +438,10 @@ export class CutawayMain extends BaseScriptComponent {
       this.hero.clear()
       this.log("rp:cameraHome")
     }
+    if (this.lampHero && this.lampHero.isOut) {
+      this.lampHero.clear()
+      this.log("rp:lampHome")
+    }
     if (!s.explained) {
       s.explained = true
       s.ui.setEnergies([ENERGY.motion, ENERGY.signal])
@@ -441,6 +451,100 @@ export class CutawayMain extends BaseScriptComponent {
     s.ui.setCloser(false)
     this.log("rp:start")
     this.rpHero.launch()
+  }
+
+  // ---------------- Lamp hero stage ----------------
+
+  private lampAudio(s: LampSound): AudioComponent | null {
+    const map: {[k in LampSound]: AudioComponent | null} = {
+      lift: this.heroLiftAudio,
+      flight: this.heroFlightAudio,
+      land: this.heroLandAudio,
+      tap: this.heroTapAudio,
+      part: this.heroPartAudio,
+      click: null,
+      rise: null,
+      rustle: null
+    }
+    return map[s] ?? null
+  }
+
+  private setupLampHero(): void {
+    if (!this.lampShellMaterial || !this.tableMarker || !this.surveyor) {
+      print("Cutaway: lamp hero stage is not wired (shell material, table marker, camera stage's surveyor)")
+      return
+    }
+    const camProvider = WorldCameraFinderProvider.getInstance()
+    this.lampRail = new LampRail(this.sceneObject, this.glowMaterial)
+    this.lampHero = new LampHero({
+      parent: this.sceneObject,
+      glowMat: this.glowMaterial,
+      shellMat: this.lampShellMaterial,
+      paperMat: this.lampPaperMaterial ?? null,
+      steelMat: this.lampSteelMaterial ?? null,
+      labels: this.labelsUI,
+      rail: this.lampRail,
+      camPos: () => this.camPos(),
+      camera: camProvider.getComponent(),
+      realOrigin: () => ROOM_LAMP.origin,
+      realShade: () => this.pos(this.lampMarker),
+      surface: () => this.surface ?? this.fallbackSurface(),
+      survey: (done) => {
+        const fb = this.fallbackSurface()
+        this.surface = fb
+        this.surveyor.survey(this.pos(this.tableMarker), fb, (s) => {
+          this.surface = s
+          done(s)
+        })
+      },
+      matter: this.heroMatter ?? null,
+      sound: (s, p) => {
+        const a = this.lampAudio(s)
+        if (a) this.playAt("lamp_" + s, a, p)
+        else this.soundLog.push({name: "lamp_" + s, time: getTime(), position: p})
+      },
+      moveSound: (s, p) => {
+        const a = this.lampAudio(s)
+        if (a) a.getSceneObject().getTransform().setWorldPosition(p)
+      },
+      log: (p) => this.log(p),
+      caption: (text, at) => this.labelsUI.setCaption(text, at)
+    })
+    this.lampRail.onPutBack = () => this.lampHero.putBack()
+    this.lampRail.onPinch = (p) => this.playAt("tick", this.tickAudio, p)
+    this.lampUI.onCloserPressed.add(() => this.launchLamp())
+  }
+
+  /**
+   * "Bring it closer" (the lamp's pill or its second question). One copy on the table at a time: a
+   * camera or record player copy that is out is sent home first, through its own public Reset path.
+   */
+  private launchLamp(): void {
+    const i = this.index("lamp")
+    const s = this.stations[i]
+    if (!this.lampHero || this.running) return
+    if (this.lampHero.isOut) {
+      if (s.mode === "questions") this.setMode(i, "rest")
+      return
+    }
+    this.phaseLog = []
+    if (this.hero && this.hero.isOut) {
+      this.hero.clear()
+      this.log("lamp:cameraHome")
+    }
+    if (this.rpHero && this.rpHero.isOut) {
+      this.rpHero.clear()
+      this.log("lamp:recordPlayerHome")
+    }
+    if (!s.explained) {
+      s.explained = true
+      s.ui.setEnergies([ENERGY.signal, ENERGY.light])
+    }
+    s.armed = false
+    this.setMode(i, "rest")
+    s.ui.setCloser(false)
+    this.log("lamp:start")
+    this.lampHero.launch()
   }
 
   // ---------------- Camera hero stage ----------------
@@ -536,6 +640,10 @@ export class CutawayMain extends BaseScriptComponent {
       this.rpHero.clear()
       this.log("hero:recordPlayerHome")
     }
+    if (this.lampHero && this.lampHero.isOut) {
+      this.lampHero.clear()
+      this.log("hero:lampHome")
+    }
     // The stage follows the camera's explanation: the camera keeps (or gets) its explained dot.
     if (!s.explained) {
       s.explained = true
@@ -569,6 +677,10 @@ export class CutawayMain extends BaseScriptComponent {
       this.launchRp()
       return
     }
+    if (s.key === "lamp" && q === 1 && this.lampHero) {
+      this.launchLamp()
+      return
+    }
     this.startExplanation(i, q)
   }
 
@@ -587,6 +699,7 @@ export class CutawayMain extends BaseScriptComponent {
   resetAll(): void {
     if (this.hero) this.hero.clear()
     if (this.rpHero) this.rpHero.clear()
+    if (this.lampHero) this.lampHero.clear()
     if (this.running) {
       this.running.exp.hideLabels()
       this.running.root.destroy()
@@ -776,6 +889,7 @@ export class CutawayMain extends BaseScriptComponent {
     if (this.surveyor) this.surveyor.update()
     if (this.hero) this.hero.update(dt)
     if (this.rpHero) this.rpHero.update(dt)
+    if (this.lampHero) this.lampHero.update(dt)
     this.updateCloser()
     this.updateGaze()
   }
@@ -786,6 +900,8 @@ export class CutawayMain extends BaseScriptComponent {
     if (s && s.ui.hasCloser) s.ui.setCloser(!!this.hero && s.explained && s.mode === "rest" && !this.running && !this.hero.isOut)
     const r = this.stations[this.index("recordPlayer")]
     if (r && r.ui.hasCloser) r.ui.setCloser(!!this.rpHero && r.explained && r.mode === "rest" && !this.running && !this.rpHero.isOut)
+    const l = this.stations[this.index("lamp")]
+    if (l && l.ui.hasCloser) l.ui.setCloser(!!this.lampHero && l.explained && l.mode === "rest" && !this.running && !this.lampHero.isOut)
   }
 
   private updateGaze(): void {
@@ -970,5 +1086,23 @@ export class CutawayMain extends BaseScriptComponent {
 
   getRpRailVisual(): RpRailVisual | null {
     return this.rpRail ? this.rpRail.getVisual() : null
+  }
+
+  /** The lamp hero stage (null if it is not wired). */
+  getLampHero(): LampHero | null {
+    return this.lampHero
+  }
+
+  getLampRail(): LampRail | null {
+    return this.lampRail
+  }
+
+  /** Test hook: true freezes the lamp stage's timeline (for screenshots of one step). */
+  setHoldLamp(v: boolean): void {
+    if (this.lampHero) this.lampHero.hold = v
+  }
+
+  getLampRailVisual(): LampRailVisual | null {
+    return this.lampRail ? this.lampRail.getVisual() : null
   }
 }

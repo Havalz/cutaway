@@ -2193,7 +2193,6 @@
     rowGap: true
     idleDotRadius: true
     stopLabel: true
-    closerLabel: true
     closerWidth: true
   ScriptTypesDefault:
     {}
@@ -2203,6 +2202,7 @@
       namePrefix: Lamp
       questions: !<string[]>
         - "How does it make light?"
+        - Bring it closer
       dotMaterial: !<reference.Material> 97459945-6047-458c-b9b8-ccd4c96fdc0a
       boundsCenter: !<Vec3> {x: 0.000000, y: -17.500000, z: 0.000000}
       boundsSize: !<Vec3> {x: 30.000000, y: 170.000000, z: 30.000000}
@@ -2216,7 +2216,7 @@
       rowGap: 0.600000
       idleDotRadius: 0.450000
       stopLabel: Stop
-      closerLabel: ""
+      closerLabel: Bring it closer
       closerWidth: !<float> 12.000000
   ScriptTypes:
     "":

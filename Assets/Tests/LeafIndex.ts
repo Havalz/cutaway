@@ -1,6 +1,9 @@
 import {scenariosIndex} from "Leaf.lspkg/Scenarios/decorator/ScenarioIndexDecorator"
 import {ScenarioMetadata} from "Leaf.lspkg/Scenarios/scenario/ScenarioMetadata"
 import {C1IdleAndGazeScenario} from "./C1IdleAndGazeScenario"
+import {L1LampLaunchScenario} from "./L1LampLaunchScenario"
+import {L2LampMoveTurnScenario} from "./L2LampMoveTurnScenario"
+import {LampCaptureScenario} from "./LampCaptureScenario"
 import {C2RecordPlayerScenario} from "./C2RecordPlayerScenario"
 import {C3CameraScenario} from "./C3CameraScenario"
 import {C3LampScenario} from "./C3LampScenario"
@@ -73,6 +76,9 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "helper-rp-capture", typename: RpCaptureScenario.getTypeName(), parameters: {beat: "rest", extraMs: ""}},
     {id: "helper-rp-model", typename: RpModelScenario.getTypeName(), parameters: {dx: "", dz: "", interior: "", hide: "", at: "", scale: "", yaw: ""}},
     {id: "l0-lamp-model", typename: L0LampModelScenario.getTypeName()},
+    {id: "l1-lamp-launch", typename: L1LampLaunchScenario.getTypeName()},
+    {id: "l2-lamp-move-turn", typename: L2LampMoveTurnScenario.getTypeName()},
+    {id: "helper-lamp-capture", typename: LampCaptureScenario.getTypeName(), parameters: {beat: "rest", extraMs: ""}},
     {id: "helper-lamp-model", typename: LampModelScenario.getTypeName(), parameters: {dx: "", dz: "", interior: "", hide: "", at: "", scale: "", yaw: ""}},
     {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer", step: "", untilPhase: "", extraMs: "", layout: ""}}
   ]

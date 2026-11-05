@@ -605,6 +605,8 @@ export class LampModel {
   private meshes: {rmv: RenderMeshVisual; part: string; interior: boolean; tris: number; lo: vec3; hi: vec3}[] = []
   private mats: Partial<Record<LampFinish, Material>> = {}
   private layer: LayerSet
+  /** The cord's centre lines (model space): base to switch, switch to plug. */
+  private cordRuns: {toBase: vec3[]; toPlug: vec3[]} = {toBase: [], toPlug: []}
 
   constructor(private ctx: LampModelCtx) {
     this.layer = ctx.layer
@@ -670,6 +672,52 @@ export class LampModel {
   /** The top of the foot switch's button, world space. */
   switchButtonTop(): vec3 {
     return this.parts["LampSwitchButton"].getTransform().getWorldTransform().multiplyPoint(new vec3(0, 0.45, 0))
+  }
+
+  /**
+   * The current's way from the foot switch to the LED chips (model space at rest): along the cord to
+   * the base, in through its grommet, under the dome to the axis, up the stem and the socket into the
+   * bulb's base, and up through the driver to the LED board. Even steps of about 1.5 cm on the cord.
+   */
+  currentPath(): vec3[] {
+    const out = yawDir(CORD_EXIT_DEG)
+    const pts: vec3[] = [SWITCH_AT.add(yawDir(SWITCH_DEG).uniformScale(-SWITCH_HALF.x * 0.5)).add(new vec3(0, CORD_R, 0))]
+    for (const p of this.cordRuns.toBase) pts.push(p)
+    pts.push(out.uniformScale(BASE_R - 0.4).add(new vec3(0, 0.95, 0)))
+    pts.push(out.uniformScale(6).add(new vec3(0, 1.0, 0)))
+    pts.push(out.uniformScale(1.2).add(new vec3(0, 1.6, 0)))
+    for (const y of [3.2, DOME_TOP, COLLAR_TOP, SHADE_Y0 * 0.5 + COLLAR_TOP * 0.5, SHADE_Y0, SOCKET_Y0, BULB_Y0 + 1.0, BULB_Y0 + SCREW_TOP + 1.0]) pts.push(new vec3(0, y, 0))
+    pts.push(new vec3(0, LAMP_GEOM.ledY, 0))
+    return pts
+  }
+
+  /** The cord from the switch on to the plug (model space at rest): the wall side. */
+  plugRun(): vec3[] {
+    return this.cordRuns.toPlug.slice()
+  }
+
+  /**
+   * What sits on the floor, seen from above (model x, z at 1x): the base disc, the cord, the switch
+   * and the plug. Its centre is the base's centre (the model origin).
+   */
+  floorOutline(): vec2[] {
+    const pts: vec2[] = []
+    for (let i = 0; i < 32; i++) {
+      const a = (i / 32) * Math.PI * 2
+      pts.push(new vec2(BASE_R * Math.cos(a), BASE_R * Math.sin(a)))
+    }
+    const box = (at: vec3, deg: number, hx: number, hz: number) => {
+      const u = yawDir(deg)
+      const v = new vec3(-u.z, 0, u.x)
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        const q = at.add(u.uniformScale(sx * hx)).add(v.uniformScale(sz * hz))
+        pts.push(new vec2(q.x, q.z))
+      }
+    }
+    box(SWITCH_AT, SWITCH_DEG, SWITCH_HALF.x, SWITCH_HALF.z)
+    box(PLUG_AT, PLUG_DEG, 2.6, 1.9)
+    for (const q of this.cordRuns.toBase.concat(this.cordRuns.toPlug)) pts.push(new vec2(q.x, q.z))
+    return pts
   }
 
   /** A part's pivot in model space at rest. */
@@ -1100,9 +1148,12 @@ export class LampModel {
     lathe(k, exit.add(out.uniformScale(0.7)), out, puck(0.36, 0, 1.2, 0.1, 0, {bottom: false, top: false}), 10, col("cord"))
     const run1 = catmull([exit.add(out.uniformScale(1.5)), exit.add(out.uniformScale(4.5)).add(new vec3(0, lay - 0.95, 0)), new vec3(20.5, lay, 15.6), sIn.sub(su.uniformScale(2.5)), sIn], 6)
     const onFloor = (pts: vec3[]) => pts.map((p) => new vec3(p.x, Math.max(lay, p.y), p.z))
-    tube(k, onFloor(even(run1, 1.5)), CORD_R, 8, col("cord"), false)
+    const r1 = onFloor(even(run1, 1.5))
+    tube(k, r1, CORD_R, 8, col("cord"), false)
     const run2 = catmull([sOut, sOut.add(su.uniformScale(2.5)), new vec3(46, lay, 21.5), new vec3(56, lay, 18.0), pIn.sub(pu.uniformScale(3)), pIn], 6)
-    tube(k, onFloor(even(run2, 1.5)), CORD_R, 8, col("cord"), false)
+    const r2 = onFloor(even(run2, 1.5))
+    tube(k, r2, CORD_R, 8, col("cord"), false)
+    this.cordRuns = {toBase: r1.slice().reverse(), toPlug: r2}
     this.mesh(C, "Mesh", k, "cord", ORDER.cord)
 
     // Inline foot switch: a soft rounded box the cord runs through, with a round button on top.
