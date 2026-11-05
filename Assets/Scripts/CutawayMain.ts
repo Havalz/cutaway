@@ -8,7 +8,7 @@ import {easeIn} from "./CutawayTween"
 import {CameraHero, HeroSound} from "./CutawayHero"
 import {TableSurface, TableSurveyor} from "./CutawayHeroSurface"
 import {CutawayHeroUI} from "./CutawayHeroUI"
-import {ENERGY, HALO, OBJECT_ENERGY, OPENING} from "./CutawayStyle"
+import {ENERGY, FINALE, HALO, OBJECT_ENERGY, OPENING} from "./CutawayStyle"
 import {RpTone} from "./CutawayRpTone"
 import {RecordPlayerHero, RpSound} from "./CutawayRpHero"
 import {RpRail, RpRailVisual} from "./CutawayRpRail"
@@ -19,6 +19,7 @@ import {cameraShell, HaloInfo, HaloKey, Halos, lampShell, recordPlayerShell} fro
 import {ROOM_LAMP} from "./CutawayLampModel"
 import {Opening, OpeningInfo} from "./CutawayOpening"
 import {TrioSlot} from "./CutawayResetUI"
+import {Finale, FinaleInfo} from "./CutawayFinale"
 
 export type StationKey = "recordPlayer" | "camera" | "lamp"
 export type StationState = "idle" | "chip" | "questions" | "playing" | "explained"
@@ -304,6 +305,21 @@ export class CutawayMain extends BaseScriptComponent {
   @allowUndefined
   @hint("Spatial AudioComponent for the scan sweep (moved to the scanned object)")
   scanAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent for the finale chord's root, played from the record player")
+  finaleRootAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent for the finale chord's third, played from the camera")
+  finaleThirdAudio: AudioComponent
+
+  @input
+  @allowUndefined
+  @hint("Spatial AudioComponent for the finale chord's fifth, played from the lamp")
+  finaleFifthAudio: AudioComponent
   @ui.group_end
 
   @ui.group_start("Looking")
@@ -334,6 +350,11 @@ export class CutawayMain extends BaseScriptComponent {
   private surface: TableSurface | null = null
   private halos: Halos | null = null
   private opening: Opening | null = null
+  private finale: Finale | null = null
+  /** It plays once, then not again until Reset. */
+  private finaleArmed = true
+  /** Seconds with all three found and nothing else going on. */
+  private finaleQuiet = 0
   /** The pinch tick's volume in the scene: the opening's ticks play softer than it. */
   private tickVolume = 1
   private rpHero: RecordPlayerHero | null = null
@@ -348,7 +369,7 @@ export class CutawayMain extends BaseScriptComponent {
       {key: "camera", ui: this.cameraUI, target: this.cameraMarker, mode: "rest", explained: false, armed: true},
       {key: "lamp", ui: this.lampUI, target: this.lampMarker, mode: "rest", explained: false, armed: true}
     ]
-    for (const a of [this.chimeAudio, this.clickAudio, this.powerUpAudio, this.crackleAudio, this.tickAudio, this.scanAudio, this.lampClickAudio, this.lampRiseAudio, this.lampRustleAudio, ...this.heroAudios()]) {
+    for (const a of [this.chimeAudio, this.clickAudio, this.powerUpAudio, this.crackleAudio, this.tickAudio, this.scanAudio, this.lampClickAudio, this.lampRiseAudio, this.lampRustleAudio, this.finaleRootAudio, this.finaleThirdAudio, this.finaleFifthAudio, ...this.heroAudios()]) {
       if (!a) continue
       try {
         a.playbackMode = Audio.PlaybackMode.LowLatency
@@ -380,6 +401,7 @@ export class CutawayMain extends BaseScriptComponent {
     this.setupLampHero()
     this.setupHalos()
     this.setupOpening()
+    this.setupFinale()
     print("Cutaway ready: 3 stations")
   }
 
@@ -415,6 +437,62 @@ export class CutawayMain extends BaseScriptComponent {
 
   private onAnyPinch(): void {
     if (this.opening) this.opening.skip()
+  }
+
+  // ---------------- Finale ----------------
+
+  private setupFinale(): void {
+    if (!this.tableMarker || !this.glowMaterial) {
+      print("Cutaway: the finale is not wired (table marker)")
+      return
+    }
+    const meet = this.pos(this.tableMarker).add(FINALE.meetFromTable)
+    const objects: {key: StationKey; marker: SceneObject; waved: boolean}[] = [
+      {key: "recordPlayer", marker: this.recordPlayerMarker, waved: true},
+      {key: "camera", marker: this.cameraMarker, waved: false},
+      {key: "lamp", marker: this.lampMarker, waved: false}
+    ]
+    this.finale = new Finale({
+      parent: this.sceneObject,
+      glowMat: this.glowMaterial,
+      camera: () => this.camTransform,
+      meet,
+      threads: objects.map((o) => ({key: o.key, from: this.pos(o.marker), color: OBJECT_ENERGY[o.key], waved: o.waved})),
+      setCaption: (text, at) => this.labelsUI.setCaption(text, at),
+      chord: () => {
+        this.playAt("finaleRoot", this.finaleRootAudio, this.pos(this.recordPlayerMarker))
+        this.playAt("finaleThird", this.finaleThirdAudio, this.pos(this.cameraMarker))
+        this.playAt("finaleFifth", this.finaleFifthAudio, this.pos(this.lampMarker))
+      },
+      glowSlots: () => this.resetUI.glowSlots()
+    })
+  }
+
+  /** A stage, a copy, or an object with its questions open: the finale waits, or gives way. */
+  private isBusy(): boolean {
+    return !!this.running || this.stations.some((s) => s.mode !== "rest") || (!!this.hero && this.hero.isOut) || (!!this.rpHero && this.rpHero.isOut) || (!!this.lampHero && this.lampHero.isOut)
+  }
+
+  private updateFinale(dt: number): void {
+    if (!this.finale) return
+    const busy = this.isBusy()
+    if (this.finale.isPlaying) {
+      if (busy) {
+        // It hasn't been seen through, so it comes back when things are quiet again.
+        this.finale.stop(false)
+        this.finaleArmed = true
+        this.finaleQuiet = 0
+      }
+    } else if (this.finaleArmed && !busy && this.resetUI.getSlots().every((s) => s.filled)) {
+      this.finaleQuiet += dt
+      if (this.finaleQuiet >= FINALE.delayS) {
+        this.finaleArmed = false
+        this.finaleQuiet = 0
+        if (this.opening) this.opening.skip()
+        this.finale.start()
+      }
+    } else this.finaleQuiet = 0
+    this.finale.update(dt)
   }
 
   // ---------------- Halos ----------------
@@ -823,6 +901,9 @@ export class CutawayMain extends BaseScriptComponent {
     })
     this.focused = -1
     this.resetUI.emptySlots()
+    if (this.finale) this.finale.stop(true)
+    this.finaleArmed = true
+    this.finaleQuiet = 0
     if (this.opening) this.opening.start()
     this.log("reset")
   }
@@ -1008,6 +1089,7 @@ export class CutawayMain extends BaseScriptComponent {
     this.updateGaze()
     this.updateHalos(dt)
     if (this.opening) this.opening.update(dt)
+    this.updateFinale(dt)
   }
 
   /** The "Bring it closer" pills: under the camera / the record player once explained and idle. */
@@ -1176,6 +1258,25 @@ export class CutawayMain extends BaseScriptComponent {
   /** Test hook: freeze the opening at this moment, or null to let it run (screenshots). */
   holdOpeningAt(t: number | null): void {
     if (this.opening) this.opening.holdAt = t
+  }
+
+  /** Where the finale's threads meet (world). */
+  getFinaleMeet(): vec3 {
+    return this.pos(this.tableMarker).add(FINALE.meetFromTable)
+  }
+
+  getFinaleInfo(): FinaleInfo | null {
+    return this.finale ? this.finale.info() : null
+  }
+
+  /** Test hook: freeze the finale at this moment, or null to let it run (screenshots). */
+  holdFinaleAt(t: number | null): void {
+    if (this.finale) this.finale.holdAt = t
+  }
+
+  /** Test hook: every slot found, without playing the explanations. */
+  fillTrioForTest(): void {
+    this.stations.forEach((s, i) => this.resetUI.fillSlot(i, OBJECT_ENERGY[s.key]))
   }
 
   /** Test hook: a pinch that lands on nothing. */

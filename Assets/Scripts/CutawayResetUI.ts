@@ -14,6 +14,8 @@ export interface TrioSlot {
   peak: number
   /** Seconds from filling until the pop came to rest (negative while it's going). */
   settledS: number
+  /** Times it has glowed since it was emptied. */
+  glows: number
 }
 
 interface Slot {
@@ -30,6 +32,11 @@ interface Slot {
   /** Seconds into the pop, or negative when none is running. */
   popT: number
   settledS: number
+  glowSo: SceneObject
+  glowMat: Material
+  /** Seconds into the glow, or negative when none is running. */
+  glowT: number
+  glows: number
 }
 
 /**
@@ -167,11 +174,27 @@ export class CutawayResetUI extends BaseScriptComponent {
   }
 
   emptySlots(): void {
-    this.slots.forEach((s) => (s.color = null))
+    this.slots.forEach((s) => {
+      s.color = null
+      s.glowT = -1
+      s.glows = 0
+      s.glowSo.enabled = false
+    })
+  }
+
+  /** Every full slot glows once. */
+  glowSlots(): void {
+    this.slots.forEach((s) => {
+      if (!s.color) return
+      s.glowT = 0
+      s.glows++
+      s.glowSo.enabled = true
+      setTint(s.glowMat, s.tint, 0)
+    })
   }
 
   getSlots(): TrioSlot[] {
-    return this.slots.map((s) => ({filled: !!s.color, color: s.color, scale: s.pop.value, peak: s.peak, settledS: s.settledS}))
+    return this.slots.map((s) => ({filled: !!s.color, color: s.color, scale: s.pop.value, peak: s.peak, settledS: s.settledS, glows: s.glows}))
   }
 
   private trioCenter(): number {
@@ -195,7 +218,11 @@ export class CutawayResetUI extends BaseScriptComponent {
       const fill = spawnMesh(slot, "TrioFill", fillKit.build(), this.glowMaterial)
       setTint(fill.mat, INK, 0)
       fill.so.enabled = false
-      this.slots.push({ringMat: ring.mat, fillSo: fill.so, fillMat: fill.mat, color: null, tint: INK, amount: 0, pop: new Spring(TRIO.popStiffness, 1, 1), peak: 1, popT: -1, settledS: -1})
+      const glowKit = new MeshKit()
+      glowKit.addFanXY(0, 0, TRIO.radius * TRIO.glowRadius, 0, Math.PI * 2, VERTEX_WHITE, NO_LIGHT, 32)
+      const glow = spawnMesh(slot, "TrioGlow", glowKit.build(), this.glowMaterial)
+      glow.so.enabled = false
+      this.slots.push({ringMat: ring.mat, fillSo: fill.so, fillMat: fill.mat, color: null, tint: INK, amount: 0, pop: new Spring(TRIO.popStiffness, 1, 1), peak: 1, popT: -1, settledS: -1, glowSo: glow.so, glowMat: glow.mat, glowT: -1, glows: 0})
     }
   }
 
@@ -211,6 +238,14 @@ export class CutawayResetUI extends BaseScriptComponent {
       }
       const step = dt / TRIO.fadeS
       s.amount = s.color ? Math.min(1, s.amount + step) : Math.max(0, s.amount - step)
+      if (s.glowT >= 0) {
+        s.glowT += dt
+        const k = s.glowT / TRIO.glowS
+        if (k >= 1) {
+          s.glowT = -1
+          s.glowSo.enabled = false
+        } else setTint(s.glowMat, s.tint, TRIO.glowLevel * Math.sin(Math.PI * k))
+      }
       if (!s.fillSo.enabled) return
       setTint(s.fillMat, s.tint, TRIO.fillLevel * s.amount)
       s.fillSo.getTransform().setLocalScale(vec3.one().uniformScale(s.pop.value))

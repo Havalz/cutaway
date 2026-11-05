@@ -227,7 +227,55 @@ export const TRIO = {
   popScale: 1.15,
   /** Critically damped: settled by 200 ms. */
   popStiffness: 800,
-  fadeS: 0.12
+  fadeS: 0.12,
+  /** The glow at the end of the finale. */
+  glowS: 0.6,
+  glowLevel: 0.6,
+  glowRadius: 2.2
+}
+
+/** The finale: its timeline in seconds, and its threads (cm, polish-pass.md §5). */
+export const FINALE = {
+  /** How long all must be quiet, with all three found, before it starts. */
+  delayS: 1,
+  durationS: 8,
+  growS: 2.2,
+  pulseS: 3.2,
+  pulseLenS: 0.7,
+  captionS: 3,
+  captionEndS: 7,
+  retractS: 6,
+  retractEndS: 7.4,
+  slotsS: 7.4,
+  stopS: 0.22,
+  /** Above the coffee table, and in clear air from the default pose: between the posters, at their top edge. */
+  meetFromTable: new vec3(-10, 119, 0),
+  captionAbove: 26,
+  threadWidth: 4,
+  threadLevel: 0.85,
+  wavedPoints: 150,
+  plainPoints: 70,
+  /** How far each thread rises as it leaves, and how far below the braid it swings in from. */
+  liftOut: 30,
+  liftIn: 38,
+  waveHeight: 4,
+  waveLength: 38,
+  waveSpeed: 5,
+  braidHeight: 42,
+  /** The share of each thread's points that make the braid. */
+  braidShare: 0.32,
+  braidRadius: 3.6,
+  braidTurns: 2.5,
+  /** radians a second */
+  braidSpin: 0.9,
+  pointRadius: 11,
+  pointLevel: 0.5,
+  pulseLevel: 1,
+  pulseGrow: 0.7,
+  /** How long before the threads arrive it starts to show, and how long it takes to rise and to fall. */
+  pointLeadS: 0.25,
+  pointRiseS: 0.6,
+  pointFallS: 0.6
 }
 
 // ---- Typography: one typeface (UI Kit default), two sizes only. ----

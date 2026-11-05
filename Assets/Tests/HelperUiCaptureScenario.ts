@@ -27,6 +27,10 @@ export class HelperUiCaptureScenario extends Scenario {
         await sleep(800)
       }
     }
+    if (beat === "finale") {
+      main.holdFinaleAt(Number(get("holdAt") || "3.5"))
+      main.fillTrioForTest()
+    }
     await sleep(extra)
   }
 }
