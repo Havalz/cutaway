@@ -57,7 +57,8 @@ export interface LampContext {
   sound: (s: LampSound, p: vec3) => void
   moveSound: (s: LampSound, p: vec3) => void
   log: (p: string) => void
-  caption: (text: string | null, topCenter?: vec3) => void
+  /** The one caption, at the top of the rail. */
+  caption: (text: string | null) => void
 }
 
 // =====================================================================================
@@ -126,10 +127,6 @@ export const LAMP_CAPTIONS = {
   warm: "More coating, warmer light.",
   driver: "The driver turns wall power into steady current."
 }
-/**
- * Half the width of the widest caption, in caption design units: centred text runs about 0.34
- * units a character at the caption's size (measured), plus a little margin.
- */
 /** How fast the parts follow the "Take apart" slider (slider units per second), as the other stages. */
 const APART_RATE = 1.6
 /** The foot switch's button (model cm): its stroke when pinched, and how far it stays down while on (push-push latch). */
@@ -253,8 +250,6 @@ export class LampHero {
   private railCheckT = 0
   private lookByRmv = new Map<RenderMeshVisual, Look>()
   private caption: string | null = null
-  /** Where the caption was last placed (it is re-placed when the rail moves). */
-  private captionAt: vec3 | null = null
   private grab: {kind: "slide" | "turn" | "lift"; p0: vec3; usePlane: boolean; foot0: vec3; yaw0: number; angPrev: number; turned: number; accum: vec3; lift0: number; dy: number} | null = null
   private contactGlow: SceneObject | null = null
   private contactGlowMat: Material | null = null
@@ -412,7 +407,6 @@ export class LampHero {
     this.railFwd = 0
     this.railFwdTarget = 0
     this.railCheckT = 0
-    this.captionAt = null
     this.caption = null
     this.lookByRmv.clear()
     if (this.root) this.root.destroy()
@@ -1150,9 +1144,7 @@ export class LampHero {
   /** The caption above the rail (null hides it). */
   private showCaption(text: string | null): void {
     this.caption = text
-    const at = this.captionAnchor(this.railRows())
-    this.captionAt = text ? at : null
-    this.ctx.caption(text, at)
+    this.ctx.caption(text)
   }
 
   // =====================================================================================
@@ -1481,10 +1473,6 @@ export class LampHero {
   // Rail and caption placement
   // =====================================================================================
 
-  /** Slider rows showing above "Put it back". */
-  private railRows(): number {
-    return this.ctx.rail.getMode() === "on" ? 3 : 1
-  }
 
   private placeRail(): void {
     if (this.state !== "landed" && !(this.state === "returning" && this.ctx.rail.isVisible())) return
@@ -1497,7 +1485,7 @@ export class LampHero {
   /**
    * Keep the rail and its caption clear of the copy as the user sees it: a few times a second, while
    * nothing is held and the copy is assembled, find the place that clears every visible mesh of the
-   * copy (findRailShift) and glide there; the caption follows once the rail settles.
+   * copy (findRailShift) and glide there; the caption is on the rail and goes with it.
    */
   private updateRailShift(dt: number): void {
     this.railCheckT -= dt
@@ -1519,11 +1507,6 @@ export class LampHero {
     this.railFwd += (this.railFwdTarget - this.railFwd) * k
     if (Math.abs(this.railShiftTarget - this.railShift) < 0.05) this.railShift = this.railShiftTarget
     if (Math.abs(this.railFwdTarget - this.railFwd) < 0.05) this.railFwd = this.railFwdTarget
-    // Once the rail has settled somewhere new, the caption moves with it (one cross-fade).
-    if (this.caption && this.captionAt && this.railShift === this.railShiftTarget && this.railFwd === this.railFwdTarget) {
-      const want = this.captionAnchor(this.railRows())
-      if (want.distance(this.captionAt) > 2) this.showCaption(this.caption)
-    }
   }
 
   /** Snap the rail's place now (on landing, before the rail and caption appear). */
@@ -1603,10 +1586,6 @@ export class LampHero {
     return c.add(toUser.uniformScale(reach + 13 + this.railFwd)).add(right.uniformScale(this.railSide * (reach + 4 + this.railShift))).add(new vec3(0, 2, 0))
   }
 
-  /** The caption has the top slot of the rail; `rows` = slider rows showing above "Put it back". */
-  private captionAnchor(rows: number): vec3 {
-    return this.ctx.rail.getRail().captionPoint(this.railAnchor(), rows > 1 ? "on" : "rest")
-  }
 
   private replicaCenter(): vec3 {
     return this.replica.getTransform().getWorldTransform().multiplyPoint(CENTER)

@@ -24,6 +24,19 @@ function checkInView(rail: RailColumn, what: string): void {
     y0 = Math.min(y0, s.y)
     y1 = Math.max(y1, s.y)
   }
+  const main = getMain()
+  let rx0 = 1
+  let rx1 = 0
+  let ry0 = 1
+  let ry1 = 0
+  for (const c of main.getResetPillCorners()) {
+    const s = cam.worldSpaceToScreenSpace(c)
+    rx0 = Math.min(rx0, s.x)
+    rx1 = Math.max(rx1, s.x)
+    ry0 = Math.min(ry0, s.y)
+    ry1 = Math.max(ry1, s.y)
+  }
+  check(x1 < rx0 || x0 > rx1 || y1 < ry0 || y0 > ry1, () => `${what}: the rail (x ${x0.toFixed(3)}..${x1.toFixed(3)}, y ${y0.toFixed(3)}..${y1.toFixed(3)}) covers the Reset pill (x ${rx0.toFixed(3)}..${rx1.toFixed(3)}, y ${ry0.toFixed(3)}..${ry1.toFixed(3)})`)
   print(`Cutaway U4: ${what}: rail on screen x ${x0.toFixed(3)}..${x1.toFixed(3)}, y ${y0.toFixed(3)}..${y1.toFixed(3)}`)
   check(x0 > 0.01 && x1 < 0.99 && y0 > 0.01 && y1 < 0.96, () => `${what}: the rail is not fully in view: x ${x0.toFixed(3)}..${x1.toFixed(3)}, y ${y0.toFixed(3)}..${y1.toFixed(3)}`)
 }

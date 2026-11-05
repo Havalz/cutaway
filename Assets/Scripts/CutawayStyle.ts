@@ -105,9 +105,40 @@ export function keyWord(text: string, color: vec4): string {
   return text.replace(/\*([^*]+)\*/, (_m: string, w: string) => "<color=" + hexOf(color) + ">" + w + "</color>")
 }
 
-/** A caption's key-word colour tags, ready for an alpha to fade them ({A}); null if it has none. */
-export function colorTagsWithAlpha(text: string): string | null {
-  return /<color=#[0-9A-Fa-f]{6}>/.test(text) ? text.replace(/<color=(#[0-9A-Fa-f]{6})>/g, "<color=$1{A}>") : null
+/**
+ * A caption's words with their colours: `<color=#RRGGBB>` runs (see keyWord) or ink. Punctuation
+ * touching a word stays with that word, so nothing has to be kerned by hand.
+ */
+export function captionWords(text: string): {word: string; color: vec4}[] {
+  const out: {word: string; color: vec4}[] = []
+  let spaced = true
+  const add = (run: string, color: vec4) => {
+    for (const piece of run.split(/(\s+)/)) {
+      if (piece.length === 0) continue
+      if (/^\s+$/.test(piece)) spaced = true
+      else {
+        if (spaced || out.length === 0) out.push({word: piece, color})
+        else out[out.length - 1].word += piece
+        spaced = false
+      }
+    }
+  }
+  const tag = /<color=#([0-9A-Fa-f]{6})>(.*?)<\/color>/g
+  let last = 0
+  let m = tag.exec(text)
+  while (m) {
+    add(text.substring(last, m.index), INK)
+    add(m[2], hex(parseInt(m[1], 16)))
+    last = m.index + m[0].length
+    m = tag.exec(text)
+  }
+  add(text.substring(last), INK)
+  return out
+}
+
+/** The same colour at another alpha. */
+export function withAlpha(c: vec4, a: number): vec4 {
+  return new vec4(c.x, c.y, c.z, a)
 }
 
 /** Additive "ink": color scaled by k (additive blending ignores alpha, so scale rgb too). */
@@ -141,6 +172,17 @@ export function setTextAlpha(t: Text, a: number, base: number = ALPHA.text): voi
 }
 
 // ---- Motion ----
+/** Word-by-word captions: a 40 ms stagger, each word fading in and rising 2 mm; out in 220 ms. */
+export const CAPTION = {
+  staggerS: 0.04,
+  wordS: 0.18,
+  rise: 0.2,
+  fadeS: 0.22,
+  /** Line pitch: two lines fit the rail's caption slot with a gap under them. */
+  line: 1.25 * SPACE,
+  /** A word's text box (design cm): wide enough never to wrap on its own. */
+  wordBox: 30
+}
 export const ENTER_S = 0.3
 export const EXIT_S = 0.22
 export const STAGGER_S = 0.07

@@ -45,6 +45,7 @@ import {L0LampModelScenario} from "./L0LampModelScenario"
 import {LampModelScenario} from "./LampModelScenario"
 import {U1TokensScenario} from "./U1TokensScenario"
 import {U2SlidersScenario} from "./U2SlidersScenario"
+import {U3CaptionScenario} from "./U3CaptionScenario"
 import {U3StatesScenario} from "./U3StatesScenario"
 import {U4RailInViewScenario} from "./U4RailInViewScenario"
 
@@ -97,6 +98,7 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "u1-ui-tokens", typename: U1TokensScenario.getTypeName()},
     {id: "u2-ui-sliders", typename: U2SlidersScenario.getTypeName()},
     {id: "u3-ui-states", typename: U3StatesScenario.getTypeName()},
+    {id: "u3-ui-caption", typename: U3CaptionScenario.getTypeName()},
     {id: "u4-rail-in-view", typename: U4RailInViewScenario.getTypeName()},
     {id: "helper-demo-play", typename: DemoPlayScenario.getTypeName(), parameters: {station: "recordPlayer", step: "", untilPhase: "", extraMs: "", layout: ""}}
   ]

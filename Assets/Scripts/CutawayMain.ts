@@ -429,8 +429,9 @@ export class CutawayMain extends BaseScriptComponent {
         if (a) a.getSceneObject().getTransform().setWorldPosition(p)
       },
       log: (p) => this.log(p),
-      caption: (text, at) => this.labelsUI.setCaption(text, at)
+      caption: (text) => this.labelsUI.setCaption(text, undefined, this.rpRail.getRail())
     })
+    this.rpRail.getRail().keepClearOf = () => this.resetUI.getCorners()
     this.rpRail.onPutBack = () => this.rpHero.putBack()
     this.rpRail.onPinch = (p) => this.playAt("tick", this.tickAudio, p)
     this.recordPlayerUI.onCloserPressed.add(() => this.launchRp())
@@ -524,8 +525,9 @@ export class CutawayMain extends BaseScriptComponent {
         if (a) a.getSceneObject().getTransform().setWorldPosition(p)
       },
       log: (p) => this.log(p),
-      caption: (text, at) => this.labelsUI.setCaption(text, at)
+      caption: (text) => this.labelsUI.setCaption(text, undefined, this.lampRail.getRail())
     })
+    this.lampRail.getRail().keepClearOf = () => this.resetUI.getCorners()
     this.lampRail.onPutBack = () => this.lampHero.putBack()
     this.lampRail.onPinch = (p) => this.playAt("tick", this.tickAudio, p)
     this.lampUI.onCloserPressed.add(() => this.launchLamp())
@@ -627,9 +629,10 @@ export class CutawayMain extends BaseScriptComponent {
         if (a) a.getSceneObject().getTransform().setWorldPosition(p)
       },
       log: (p) => this.log(p),
-      caption: (text, at) => this.labelsUI.setCaption(text, at),
+      caption: (text, at) => this.labelsUI.setCaption(text, at, at ? undefined : this.heroUI.getRail()),
       avoid: () => (this.resetUI ? [this.resetUI.getCorners()] : [])
     })
+    this.heroUI.getRail().keepClearOf = () => this.resetUI.getCorners()
     this.heroUI.onPutBack.add(() => this.hero.putBack())
     this.heroUI.onPhoto.add(() => this.hero.photo())
     this.heroUI.onPinch.add((p) => this.playAt("tick", this.tickAudio, p))

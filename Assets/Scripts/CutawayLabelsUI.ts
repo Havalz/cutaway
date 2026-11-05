@@ -1,7 +1,15 @@
 import WorldCameraFinderProvider from "SpectaclesInteractionKit.lspkg/Providers/CameraProvider/WorldCameraFinderProvider"
+import {CaptionHost, CaptionInfo, WordCaption} from "./CutawayCaption"
 import {MeshKit, setFade, spawnMesh} from "./CutawayGeometry"
-import {applyType, colorTagsWithAlpha, ink, INK, setTextAlpha} from "./CutawayStyle"
+import {ALPHA, applyType, ink, INK, lit, setTextAlpha, STROKE} from "./CutawayStyle"
 import {clamp01, easeOutCubic, Fader, faceToward} from "./CutawayTween"
+
+/** Until a character has been measured (design cm). */
+const AVG_ADVANCE = 0.38
+/** Leaves room in the five-a-frame limit for anything else that needs a bounding box. */
+const CHARS_PER_FRAME = 3
+/** What every character is measured between. */
+const PAIR = "nn"
 
 interface Label {
   so: SceneObject
@@ -13,23 +21,17 @@ interface Label {
   dot: SceneObject | null
   leaderLen: number
   drawT: number
-  /** Caption with a coloured key word: the text with `{A}` where the key word's alpha goes. */
-  rich: string | null
-  richA: string
   /** Callouts: the text sits right (+1) or left (-1) of the leader's end. */
   side: number
 }
 
-function alphaHex(a: number): string {
-  const n = Math.max(0, Math.min(255, Math.round(a * 255)))
-  return (n < 16 ? "0" : "") + n.toString(16).toUpperCase()
-}
-
 /**
  * Words placed in the room during an explanation:
- * - Callout labels: a small anchor dot on the part, a hairline leader line, and four words or
- *   fewer. Without an anchor a label is plain text at its spot.
- * - The caption: one line of narration per beat (nine words or fewer). Only one shows at a time.
+ * - Callout labels: secondary text, an ink anchor dot on the part, a hairline leader line, and four
+ *   words or fewer. Without an anchor a label is plain text at its spot. An explanation clears its
+ *   labels at each beat, so the labels showing are always those of the active step.
+ * - The caption: one line of narration per beat (nine words or fewer), revealed word by word. Only
+ *   one shows at a time (CutawayCaption).
  * Text faces the user and is scaled with distance so it reads the same from ~3–5 m.
  */
 @component
@@ -57,19 +59,31 @@ export class CutawayLabelsUI extends BaseScriptComponent {
   captionWidth: number = 21
 
   private labels = new Map<string, Label>()
-  private sizes = new Map<string, vec2>()
+  /** Character widths at design scale (cm). */
+  private advances = new Map<string, number>()
+  /** Characters still to measure, last first: the pair they are measured against goes first. */
+  private pendingChars: string[] = [PAIR]
+  private pairWidth = 0
+  private lineBox = 1
   private ruler: Label | null = null
-  private captionCache: {key: string; rect: Rect} | null = null
-  private captions: Label[] = []
+  private caption: WordCaption
   private camTransform: Transform | null = null
   private lineMaterial: Material | null = null
 
   onAwake(): void {
     this.sceneObject.createComponent("Component.Canvas")
+    for (let c = 32; c <= 126; c++) this.pendingChars.unshift(String.fromCharCode(c))
     this.createEvent("OnStartEvent").bind(() => {
       this.camTransform = WorldCameraFinderProvider.getInstance().getTransform()
     })
+    this.caption = new WordCaption(this.sceneObject, {
+      measure: (w) => this.measure(w).x,
+      scaleAt: (p) => this.scaleAt(p),
+      camera: () => this.camTransform
+    })
     this.createEvent("UpdateEvent").bind(() => this.onUpdate())
+    // After the rail has moved this frame, so words on it don't trail behind it.
+    this.createEvent("LateUpdateEvent").bind(() => this.caption.follow())
   }
 
   /** Additive material for leader lines and anchor dots (set by CutawayMain). */
@@ -139,36 +153,28 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     if (label) label.fader.show(false)
   }
 
-  /** Show the one caption (hanging below `topCenter`), replacing any other; null hides it. */
-  setCaption(text: string | null, topCenter?: vec3): void {
-    for (const c of this.captions) c.fader.show(false)
-    if (!text || !topCenter) return
-    let c = this.captions.find((x) => !x.fader.isShown && !x.so.enabled)
-    if (!c) {
-      c = this.makeLabel("Caption")
-      c.text.verticalAlignment = VerticalAlignment.Top
-      c.text.horizontalAlignment = HorizontalAlignment.Center
-      c.text.layoutRect = Rect.create(-this.captionWidth / 2, this.captionWidth / 2, -6, 0)
-      this.captions.push(c)
-    }
-    c.text.enableRichText = true
-    // The key word's colour tag (#RRGGBB) gets an alpha byte that follows the caption's fade, so
-    // the coloured word fades in and out with the white words around it.
-    c.rich = colorTagsWithAlpha(text)
-    c.richA = ""
-    c.text.text = c.rich ? c.rich.split("{A}").join("00") : text
-    const tr = c.so.getTransform()
-    tr.setWorldPosition(topCenter)
-    tr.setLocalScale(vec3.one().uniformScale(this.scaleAt(topCenter)))
-    this.face(c.so)
-    c.so.enabled = true
-    // Cross-fade: the new caption waits for the old one to clear.
-    c.fader.show(true, false, 0.12)
+  /**
+   * The one caption, replacing any other once it has faded; null hides it. With `host` it lives on
+   * the rail; otherwise it hangs below `topCenter`.
+   */
+  setCaption(text: string | null, topCenter?: vec3, host?: CaptionHost): void {
+    this.caption.set(text, topCenter ?? null, this.captionWidth, host ?? null)
+  }
+
+  /** A line that isn't part of the story (the opening): any real caption replaces it. */
+  setAmbientCaption(text: string | null, at?: vec3): void {
+    if (text && at) this.caption.set(text, at, this.captionWidth, null, true)
+    else this.caption.clearAmbient()
+  }
+
+  /** The caption on screen, word by word (tests). */
+  getCaptionInfo(): CaptionInfo | null {
+    return this.caption.info()
   }
 
   hideAll(instant: boolean = false): void {
     this.labels.forEach((l) => l.fader.show(false, instant))
-    for (const c of this.captions) c.fader.show(false, instant)
+    this.caption.hide(instant)
     if (instant) this.onUpdate()
   }
 
@@ -187,8 +193,7 @@ export class CutawayLabelsUI extends BaseScriptComponent {
 
   /** The caption currently showing, as plain words (for tests / tools), or null. */
   captionText(): string | null {
-    const c = this.captions.find((x) => x.fader.isShown)
-    return c ? c.text.text.replace(/<[^>]*>/g, "") : null
+    return this.caption.text()
   }
 
   /** Distance (cm) at which labels show 1:1; their angular size is constant beyond 1/minScale of it. */
@@ -196,54 +201,53 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     return this.designDistance
   }
 
-  /** A callout's words at design scale (cm): width and height of the glyphs. */
+  /**
+   * Words at design scale (cm): width and height of the glyphs. Text.getBoundingBox is limited to
+   * five calls a frame, so widths come from a table of character advances filled over the first
+   * frames (see measureChars); words are a plain sum of them, the type having no kerning to speak of.
+   */
   measure(text: string): vec2 {
-    const cached = this.sizes.get(text)
-    if (cached) return cached
+    let w = 0
+    for (let i = 0; i < text.length; i++) w += this.advances.get(text[i]) ?? AVG_ADVANCE
+    return new vec2(w, this.lineBox)
+  }
+
+  /** A few characters a frame, until the table is full. */
+  private measureChars(): void {
+    if (!this.pendingChars.length) return
     if (!this.ruler) {
       this.ruler = this.makeLabel("LabelRuler")
       this.ruler.text.horizontalAlignment = HorizontalAlignment.Left
       this.ruler.text.layoutRect = Rect.create(0, this.maxWidth, -3, 3)
     }
-    this.ruler.text.text = text
-    let size = new vec2(text.length * 0.55, 1.1)
-    try {
-      const r = this.ruler.text.getBoundingBox()
-      if (r.right > r.left) size = new vec2(r.right - r.left, r.top - r.bottom)
-    } catch (e) {
-      // keep the estimate
+    for (let i = 0; i < CHARS_PER_FRAME && this.pendingChars.length; i++) {
+      const c = this.pendingChars[this.pendingChars.length - 1]
+      // A glyph's bounds are tight, so its advance is what it adds between two letters. That also
+      // covers the space, which has no glyph at all.
+      this.ruler.text.text = c === PAIR ? PAIR : "n" + c + "n"
+      let r: Rect
+      try {
+        r = this.ruler.text.getBoundingBox()
+      } catch (e) {
+        return
+      }
+      this.pendingChars.pop()
+      if (r.right <= r.left) continue
+      this.lineBox = r.top - r.bottom
+      if (c === PAIR) this.pairWidth = r.right - r.left
+      else this.advances.set(c, r.right - r.left - this.pairWidth)
     }
-    this.sizes.set(text, size)
-    return size
   }
 
   /** The caption's words as a world quad (4 corners), or null when no caption shows. */
   getCaptionQuad(): vec3[] | null {
-    const c = this.captions.find((x) => x.fader.isShown && x.so.enabled)
-    if (!c) return null
-    const r = this.localRect(c)
-    const m = c.so.getTransform().getWorldTransform()
-    return [new vec3(r.left, r.bottom, 0), new vec3(r.right, r.bottom, 0), new vec3(r.right, r.top, 0), new vec3(r.left, r.top, 0)].map((q) => m.multiplyPoint(q))
+    return this.caption.quad()
   }
 
-  /**
-   * A label's glyph bounds in its own space. Rich text (the caption) has none, so its plain words
-   * are measured once (same frame: nothing renders in between) and the result is kept.
-   */
+  /** A label's glyph bounds in its own space (its text box, past the bounding-box rate limit). */
   private localRect(l: Label): Rect {
     try {
-      if (!l.text.enableRichText) return l.text.getBoundingBox()
-      const plain = l.text.text.replace(/<[^>]*>/g, "")
-      const key = plain + "|" + l.text.horizontalAlignment + "|" + l.text.verticalAlignment
-      if (this.captionCache && this.captionCache.key === key) return this.captionCache.rect
-      const rich = l.text.text
-      l.text.enableRichText = false
-      l.text.text = plain
-      const r = l.text.getBoundingBox()
-      l.text.text = rich
-      l.text.enableRichText = true
-      this.captionCache = {key, rect: r}
-      return r
+      return l.text.getBoundingBox()
     } catch (e) {
       return l.text.layoutRect
     }
@@ -265,10 +269,11 @@ export class CutawayLabelsUI extends BaseScriptComponent {
       const r = this.localRect(l)
       const m = l.so.getTransform().getWorldTransform()
       const corners = [new vec3(r.left, r.bottom, 0), new vec3(r.right, r.bottom, 0), new vec3(r.right, r.top, 0), new vec3(r.left, r.top, 0)].map((q) => m.multiplyPoint(q))
-      out.push({id, text: l.text.text.replace(/<[^>]*>/g, ""), corners})
+      out.push({id, text: l.text.text, corners})
     }
     this.labels.forEach((l, id) => add(id, l))
-    for (const c of this.captions) add("caption", c)
+    const quad = this.caption.quad()
+    if (quad) out.push({id: "caption", text: this.caption.text(), corners: quad})
     return out
   }
 
@@ -287,7 +292,7 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     t.verticalOverflow = VerticalOverflow.Overflow
     t.layoutRect = Rect.create(-this.maxWidth / 2, this.maxWidth / 2, -3, 3)
     so.enabled = false
-    return {so, text: t, fader: new Fader(false), leader: null, leaderMat: null, dot: null, leaderLen: 0, drawT: 0, rich: null, richA: "", side: 1}
+    return {so, text: t, fader: new Fader(false), leader: null, leaderMat: null, dot: null, leaderLen: 0, drawT: 0, side: 1}
   }
 
   private clearCallout(label: Label): void {
@@ -310,14 +315,14 @@ export class CutawayLabelsUI extends BaseScriptComponent {
     ltr.setWorldPosition(anchor)
     if (len > 1e-3) ltr.setWorldRotation(quat.lookAt(d.normalize(), Math.abs(d.normalize().y) > 0.95 ? vec3.forward() : vec3.up()))
     const lk = new MeshKit()
-    lk.addTube([new vec3(0, 0, 0), new vec3(0, 0, 1)], 0.05 * k, ink(INK, 0.45), 4, 2)
+    lk.addTube([new vec3(0, 0, 0), new vec3(0, 0, 1)], (STROKE.hairline / 2) * k, lit(INK, ALPHA.hairline), 4, 2)
     spawnMesh(leader, "Line", lk.build(), this.lineMaterial, undefined, mat)
     ltr.setLocalScale(new vec3(1, 1, 0.0001))
     const dot = global.scene.createSceneObject("AnchorDot")
     dot.setParent(this.sceneObject)
     dot.getTransform().setWorldPosition(anchor)
     const dk = new MeshKit()
-    dk.addSphere(vec3.zero(), 0.12 * k, ink(INK, 0.9), 6, 10)
+    dk.addSphere(vec3.zero(), 0.12 * k, lit(INK, ALPHA.text), 6, 10)
     dk.addSphere(vec3.zero(), 0.3 * k, ink(INK, 0.15), 6, 10)
     spawnMesh(dot, "Dot", dk.build(), this.lineMaterial, undefined, mat)
     label.leader = leader
@@ -341,14 +346,7 @@ export class CutawayLabelsUI extends BaseScriptComponent {
   private step(l: Label, dt: number): void {
     if (!l.so.enabled) return
     const a = l.fader.update(dt)
-    setTextAlpha(l.text, a)
-    if (l.rich) {
-      const h = alphaHex(a)
-      if (h !== l.richA) {
-        l.richA = h
-        l.text.text = l.rich.split("{A}").join(h)
-      }
-    }
+    setTextAlpha(l.text, a, ALPHA.secondary)
     this.face(l.so)
     if (l.leader && l.leaderMat) {
       // The leader draws out from the part (250 ms), then the words fade in.
@@ -365,7 +363,8 @@ export class CutawayLabelsUI extends BaseScriptComponent {
 
   private onUpdate(): void {
     const dt = getDeltaTime()
+    this.measureChars()
     this.labels.forEach((l) => this.step(l, dt))
-    for (const c of this.captions) this.step(c, dt)
+    this.caption.update(dt)
   }
 }

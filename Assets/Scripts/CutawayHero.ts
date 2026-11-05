@@ -58,6 +58,7 @@ export interface HeroContext {
   /** Move a (looping) sound with its source without restarting it. */
   moveSound: (s: HeroSound, p: vec3) => void
   log: (p: string) => void
+  /** The one caption: on the rail, or hanging below `topCenter` when one is given. */
   caption: (text: string | null, topCenter?: vec3) => void
   /** Other UI the photo print keeps clear of when there is room (world quads: the Reset pill). */
   avoid?: () => vec3[][]
@@ -2715,8 +2716,7 @@ export class CameraHero {
 
   /**
    * Show the current caption where it belongs: hidden while a print develops, then hanging below
-   * the print while it is there; otherwise above the rail (every caption after the first once the
-   * rail has its light-path layout).
+   * the print while it is there; otherwise at the top of the rail.
    */
   private showCaption(): void {
     const texts: {[k: string]: string} = {
@@ -2729,7 +2729,7 @@ export class CameraHero {
     const text = texts[this.captionKey] ?? null
     if (this.captionWaiting()) this.ctx.caption(null)
     else if (this.print) this.ctx.caption(text, this.printCaptionAnchor())
-    else this.ctx.caption(text, this.captionAnchor(this.captionKey !== "vf"))
+    else this.ctx.caption(text)
   }
 
   /**
@@ -3780,14 +3780,6 @@ export class CameraHero {
     const toUser = flatDir(head.sub(c))
     const right = toUser.uniformScale(-1).cross(vec3.up()).normalize()
     return c.add(toUser.uniformScale(34)).add(right.uniformScale(42)).add(new vec3(0, -8, 0))
-  }
-
-  /**
-   * The caption has the top slot of the rail; `raised` = the light-path layout, where the rail has
-   * all its rows.
-   */
-  private captionAnchor(raised: boolean): vec3 {
-    return this.ctx.rail.getRail().captionPoint(this.railAnchor(), raised ? "light" : "apart")
   }
 
   /** World centre of the assembled body (where the thread and trail attach). */

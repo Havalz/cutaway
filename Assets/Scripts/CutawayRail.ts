@@ -10,6 +10,7 @@
  * The rail stays fully inside the view: place() pulls it in from where the stage wants it, keeping
  * its depth and so its apparent size. It stays put while a slider is held.
  */
+import {CaptionPlace} from "./CutawayCaption"
 import {Slider} from "SpectaclesUIKit.lspkg/Scripts/Components/Slider/Slider"
 import WorldCameraFinderProvider from "SpectaclesInteractionKit.lspkg/Providers/CameraProvider/WorldCameraFinderProvider"
 import {MeshKit, setLevel, setTint, spawnMesh, UnitLine} from "./CutawayGeometry"
@@ -409,6 +410,8 @@ export class RailColumn {
   private leaderOn = false
   private camTransform: Transform | null = null
   private camera: Camera | null = null
+  /** World corners of something the plate must not cover (Reset), set by CutawayMain. */
+  keepClearOf: (() => vec3[]) | null = null
   private tan: {h: number; v: number} | null = null
   private cur: vec3 | null = null
   private offset = vec3.zero()
@@ -540,14 +543,15 @@ export class RailColumn {
     return Math.min(6, Math.max(0.3, p.distance(cam) / DESIGN_D))
   }
 
-  /** The top centre of the caption's slot (world), for a rail wanted at `p`, in a step's layout. */
-  captionPoint(p: vec3, layout: string): vec3 {
-    if (!this.findCamera()) return p
-    const at = this.clampToView(p)
-    const cam = this.camTransform.getWorldPosition()
-    const k = RailColumn.scaleAt(at, cam)
-    const up = faceToward(cam.sub(at), this.camTransform.up).multiplyVec3(vec3.up())
-    return at.add(up.uniformScale(k * (this.topOf(layout) - RAIL.padding)))
+  /** Words on the rail start at the top left of the caption's slot, wherever the plate has got to. */
+  readonly captionWidth = RAIL.column
+  captionPlace(): CaptionPlace {
+    const tr = this.panel.getTransform()
+    return {
+      position: tr.getWorldTransform().multiplyPoint(new vec3(-RAIL.column / 2, this.topY.value - RAIL.padding, 0)),
+      rotation: tr.getWorldRotation(),
+      scale: tr.getWorldScale().x
+    }
   }
 
   /** The plate's four world corners as laid out for the current step (U4). */
@@ -644,6 +648,25 @@ export class RailColumn {
     const hi = tan.v * VIEW_Y - (k * this.tallest()) / z
     let ty = v.dot(up) / z
     ty = lo <= hi ? Math.max(lo, Math.min(hi, ty)) : (lo + hi) / 2
+    // Never over what must stay pinchable on its own (Reset): lift until it clears, inside the view.
+    const clear = this.keepClearOf ? this.keepClearOf() : null
+    if (clear) {
+      let x0 = Infinity
+      let x1 = -Infinity
+      let y1 = -Infinity
+      let y0 = Infinity
+      for (const q of clear) {
+        const d = q.sub(cam)
+        const qz = Math.max(1, d.dot(look))
+        x0 = Math.min(x0, d.dot(right) / qz)
+        x1 = Math.max(x1, d.dot(right) / qz)
+        y0 = Math.min(y0, d.dot(up) / qz)
+        y1 = Math.max(y1, d.dot(up) / qz)
+      }
+      const bottom = ty + (k * RAIL.bottom) / z
+      const top = ty + (k * this.tallest()) / z
+      if (tx - hw < x1 && tx + hw > x0 && bottom < y1 && top > y0) ty = Math.min(hi, ty + y1 + (k * RAIL.gap) / z - bottom)
+    }
     return cam.add(look.uniformScale(z)).add(right.uniformScale(tx * z)).add(up.uniformScale(ty * z))
   }
 

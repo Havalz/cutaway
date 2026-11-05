@@ -55,7 +55,8 @@ export interface RpContext {
   sound: (s: RpSound, p: vec3) => void
   moveSound: (s: RpSound, p: vec3) => void
   log: (p: string) => void
-  caption: (text: string | null, topCenter?: vec3) => void
+  /** The one caption, at the top of the rail. */
+  caption: (text: string | null) => void
 }
 
 // =====================================================================================
@@ -145,10 +146,6 @@ const CAPTIONS = [
   keyWord("The speaker pushes *air*. That's the sound you hear.", ENERGY.motion),
   keyWord("Wiggle a magnet near a coil, and *current* flows.", ENERGY.signal)
 ]
-/**
- * Half the width of the widest caption, in caption design units: centred text runs about 0.34
- * units a character at the caption's size (measured), plus a little margin.
- */
 /** Taken apart: the caption for the live detail. */
 const CAPTION_APART = 4
 /** How fast the parts follow the "Take apart" slider (slider units per second), as the camera. */
@@ -288,8 +285,6 @@ export class RecordPlayerHero {
   /** The tonearm in the hand: where its handle and the hand were at the grab, the yaw then, the hand's vertical travel. */
   private armGrab: {h0: vec3; q0: vec3 | null; accum: vec3; dy: number; ang0: number; yaw0: number} | null = null
   private captionStage = -1
-  /** Where the caption was last placed (it is re-placed when the rail moves). */
-  private captionAt: vec3 | null = null
   private grab: {kind: "slide" | "turn"; p0: vec3; usePlane: boolean; foot0: vec3; yaw0: number; angPrev: number; turned: number; accum: vec3} | null = null
   private contactGlow: SceneObject | null = null
   private contactGlowMat: Material | null = null
@@ -392,7 +387,6 @@ export class RecordPlayerHero {
     this.railFwd = 0
     this.railFwdTarget = 0
     this.railCheckT = 0
-    this.captionAt = null
     this.lookByRmv.clear()
     this.deck = null
     this.armGrab = null
@@ -1082,10 +1076,7 @@ export class RecordPlayerHero {
   /** The caption for a stage of the story (0 = place the needle; 1–3 while it plays), above the rail. */
   private showCaption(stage: number): void {
     this.captionStage = stage
-    const rows = this.ctx.rail.getMode() === "play" ? 2 : 1
-    const at = this.captionAnchor(rows)
-    this.captionAt = stage >= 0 ? at : null
-    this.ctx.caption(stage >= 0 && stage < CAPTIONS.length ? CAPTIONS[stage] : null, at)
+    this.ctx.caption(stage >= 0 && stage < CAPTIONS.length ? CAPTIONS[stage] : null)
   }
 
   private canArm(): boolean {
@@ -1386,7 +1377,7 @@ export class RecordPlayerHero {
   /**
    * Keep the rail and its caption clear of the copy as the user sees it: a few times a second, while
    * nothing is held and the copy is assembled, find the place that clears every visible mesh of the
-   * copy (findRailShift) and glide there; the caption follows once the rail settles.
+   * copy (findRailShift) and glide there; the caption is on the rail and goes with it.
    */
   private updateRailShift(dt: number): void {
     this.railCheckT -= dt
@@ -1410,11 +1401,6 @@ export class RecordPlayerHero {
     this.railFwd += (this.railFwdTarget - this.railFwd) * k
     if (Math.abs(this.railShiftTarget - this.railShift) < 0.05) this.railShift = this.railShiftTarget
     if (Math.abs(this.railFwdTarget - this.railFwd) < 0.05) this.railFwd = this.railFwdTarget
-    // Once the rail has settled somewhere new, the caption moves with it (one cross-fade).
-    if (this.captionStage >= 0 && this.captionAt && this.railShift === this.railShiftTarget && this.railFwd === this.railFwdTarget) {
-      const want = this.captionAnchor(this.ctx.rail.getMode() === "play" ? 2 : 1)
-      if (want.distance(this.captionAt) > 2) this.showCaption(this.captionStage)
-    }
   }
 
   /** Snap the rail's place now (on landing, before the rail and caption appear). */
@@ -1498,10 +1484,6 @@ export class RecordPlayerHero {
     return c.add(toUser.uniformScale(reach + 13 + this.railFwd)).add(right.uniformScale(this.railSide * (reach + 4 + this.railShift))).add(new vec3(0, 2, 0))
   }
 
-  /** The caption has the top slot of the rail; `rows` = slider rows showing above "Put it back". */
-  private captionAnchor(rows: number): vec3 {
-    return this.ctx.rail.getRail().captionPoint(this.railAnchor(), rows > 1 ? "play" : "rest")
-  }
 
   private replicaCenter(): vec3 {
     return this.replica.getTransform().getWorldTransform().multiplyPoint(CENTER)
