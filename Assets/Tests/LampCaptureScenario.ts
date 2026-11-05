@@ -1,6 +1,7 @@
 import {Scenario} from "Leaf.lspkg/Scenarios/scenario/Scenario"
 import {ScenarioConfig} from "Leaf.lspkg/Scenarios/scenario/ScenarioConfig"
 import {sleep} from "Leaf.lspkg/Utils/common/Utils"
+import {kelvinToWarmth} from "../Scripts/CutawayLampLight"
 import {drag, getMain, waitForPhase, waitUntil} from "./CutawayTestUtils"
 import {getLamp, lampCleanStart, landLamp, pressLampSwitch} from "./LampHeroTestUtils"
 
@@ -8,7 +9,8 @@ import {getLamp, lampCleanStart, landLamp, pressLampSwitch} from "./LampHeroTest
  * Helper (not a test): drive the lamp stage to one beat and freeze it there for the _review/lamp_*
  * captures. Beats: rest; on (the real lamp lit too, 1.2 s after it came on); bubble (the bubble open,
  * 1.4 s after the bulb lit); shade_off (the shade lifted 25 cm, held in the hand); hover (up, not yet
- * apart); apart (fully apart with the lamp on: the driver's live detail); apart_off (apart, lamp off). The stage stays frozen (setHoldLamp) until the
+ * apart); apart (fully apart with the lamp on: the driver's live detail); apart_off (apart, lamp off); warm / cool
+ * (lit at 2700 K / 6500 K); dim (lit at Brightness 30%). The stage stays frozen (setHoldLamp) until the
  * next scenario's lampCleanStart.
  */
 @component
@@ -44,6 +46,21 @@ export class LampCaptureScenario extends Scenario {
         main.setHoldLamp(true)
         print(`Cutaway lamp capture: beat ${beat} held`)
         return
+      }
+      case "warm":
+      case "cool":
+      case "dim": {
+        // Lit and settled, then Warmth to 2700 K or 6500 K, or Brightness down to 30%.
+        await sleep(300)
+        await pressLampSwitch()
+        await waitForPhase(main, "lamp:scatter", 6000)
+        await sleep(400)
+        const rail = main.getLampRail()
+        if (beat === "warm") rail.setValue("warmth", kelvinToWarmth(2700))
+        else if (beat === "cool") rail.setValue("warmth", kelvinToWarmth(6500))
+        else rail.setValue("brightness", 0.3)
+        await sleep(900)
+        break
       }
       case "hover":
         // Up at the hover, the parts not yet apart.
