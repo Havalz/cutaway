@@ -2,7 +2,7 @@
 
 See how everyday objects work. Cutaway is a Snap Spectacles lens for the Learn AR with SPECS hackathon. Look at a camera, a record player or a lamp in the room, and a light copy lands on your table. Take it apart, focus it, play it, light it, with just your hands.
 
-Demo video: [VIDEO_URL](https://youtu.be/APZkHGdODLE)
+Demo video: [Link](https://youtu.be/APZkHGdODLE)
 
 ## What it does
 - **Camera:** take it apart with one slider, put a candle in front of the lens, turn the focus, and take a photo. The image is computed with the real thin-lens equation.
